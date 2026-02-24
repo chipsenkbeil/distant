@@ -1,3 +1,9 @@
+//! Integration tests for the `watch` JSON API endpoint.
+//!
+//! Tests watching a single file, watching a directory recursively, verifying
+//! that change notifications use the correct request ID, and error handling
+//! when watching a non-existent path.
+
 use std::time::Duration;
 
 use assert_fs::prelude::*;
@@ -5,7 +11,7 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 async fn wait_a_bit() {
     wait_millis(250).await;

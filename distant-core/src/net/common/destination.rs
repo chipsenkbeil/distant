@@ -142,7 +142,110 @@ impl<'de> Deserialize<'de> for Destination {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Destination: scheme_eq case-insensitivity, AsRef/AsMut, Display formatting
+    //! with credentials, FromStr for Box<Destination>, and serde round-trips.
+
     use super::*;
+
+    #[test]
+    fn scheme_eq_matches_case_insensitively() {
+        let dest = Destination {
+            scheme: Some("SSH".to_string()),
+            username: None,
+            password: None,
+            host: Host::Name("host".to_string()),
+            port: None,
+        };
+        assert!(dest.scheme_eq("ssh"));
+        assert!(dest.scheme_eq("SSH"));
+        assert!(dest.scheme_eq("Ssh"));
+        assert!(!dest.scheme_eq("http"));
+    }
+
+    #[test]
+    fn scheme_eq_returns_false_when_no_scheme() {
+        let dest = Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: Host::Name("host".to_string()),
+            port: None,
+        };
+        assert!(!dest.scheme_eq("ssh"));
+    }
+
+    #[test]
+    fn as_ref_returns_self() {
+        let dest = Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: Host::Name("host".to_string()),
+            port: None,
+        };
+        // Exercise AsRef<Destination> for &Destination through a generic function
+        fn check_as_ref(r: impl AsRef<Destination>) {
+            assert_eq!(r.as_ref().host, Host::Name("host".to_string()));
+        }
+        check_as_ref(&dest);
+    }
+
+    #[test]
+    fn as_mut_returns_self() {
+        let mut dest = Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: Host::Name("host".to_string()),
+            port: None,
+        };
+        // Exercise AsMut<Destination> for &mut Destination through a generic function
+        fn check_as_mut(mut r: impl AsMut<Destination>) {
+            r.as_mut().port = Some(22);
+        }
+        check_as_mut(&mut dest);
+        assert_eq!(dest.port, Some(22));
+    }
+
+    #[test]
+    fn display_with_username_and_password() {
+        let dest = Destination {
+            scheme: Some("ssh".to_string()),
+            username: Some("user".to_string()),
+            password: Some("pass".to_string()),
+            host: Host::Name("example.com".to_string()),
+            port: Some(22),
+        };
+        assert_eq!(dest.to_string(), "ssh://user:pass@example.com:22");
+    }
+
+    #[test]
+    fn display_with_username_only() {
+        let dest = Destination {
+            scheme: Some("ssh".to_string()),
+            username: Some("user".to_string()),
+            password: None,
+            host: Host::Name("example.com".to_string()),
+            port: None,
+        };
+        assert_eq!(dest.to_string(), "ssh://user@example.com");
+    }
+
+    #[test]
+    fn from_str_for_box_destination() {
+        let boxed: Box<Destination> = "ssh://host:22".parse().unwrap();
+        assert_eq!(boxed.scheme.as_deref(), Some("ssh"));
+        assert_eq!(boxed.host, Host::Name("host".to_string()));
+        assert_eq!(boxed.port, Some(22));
+    }
+
+    #[test]
+    fn serde_round_trip() {
+        let dest: Destination = "ssh://user@host:22".parse().unwrap();
+        let json = serde_json::to_string(&dest).unwrap();
+        let restored: Destination = serde_json::from_str(&json).unwrap();
+        assert_eq!(dest, restored);
+    }
 
     #[test]
     fn display_should_output_using_available_components() {

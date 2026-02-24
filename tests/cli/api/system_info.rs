@@ -1,10 +1,14 @@
+//! Integration tests for the `system_info` JSON API endpoint.
+//!
+//! Tests retrieving system information and verifying it matches the local environment.
+
 use std::env;
 
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test(tokio::test)]

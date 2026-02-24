@@ -57,3 +57,131 @@ impl DerefMut for TcpServerRef {
         &mut self.inner
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for TcpServerRef: construction, ip_addr/port accessors, into_inner, Deref/DerefMut,
+    //! and shutdown. The `make_server_ref` tests use a no-op task for testing accessor wiring.
+    //! The `shutdown_stops_real_server` test uses a real `Server` instance to verify that
+    //! shutdown actually stops an active server.
+
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use tokio::sync::broadcast;
+
+    fn make_server_ref() -> ServerRef {
+        let (shutdown, _) = broadcast::channel(1);
+        let task = tokio::spawn(async {});
+        ServerRef { shutdown, task }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn new_stores_addr_and_port() {
+        let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let port = 8080;
+        let tcp_ref = TcpServerRef::new(addr, port, make_server_ref());
+        assert_eq!(tcp_ref.ip_addr(), addr);
+        assert_eq!(tcp_ref.port(), port);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn ip_addr_returns_ipv6_address() {
+        let addr = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
+        let tcp_ref = TcpServerRef::new(addr, 3000, make_server_ref());
+        assert_eq!(tcp_ref.ip_addr(), addr);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn port_returns_correct_value() {
+        let tcp_ref = TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 12345, make_server_ref());
+        assert_eq!(tcp_ref.port(), 12345);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn into_inner_returns_server_ref() {
+        let (shutdown_tx, _) = broadcast::channel(1);
+        let task = tokio::spawn(async {});
+        let inner = ServerRef {
+            shutdown: shutdown_tx.clone(),
+            task,
+        };
+        let tcp_ref = TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9999, inner);
+        let recovered = tcp_ref.into_inner();
+        // Let the spawned empty task complete
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(recovered.is_finished());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn deref_delegates_to_inner_server_ref() {
+        let tcp_ref = TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080, make_server_ref());
+        // Deref gives us access to ServerRef methods like is_finished and shutdown
+        // The spawned empty task should finish quickly
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(tcp_ref.is_finished());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn deref_mut_delegates_to_inner_server_ref() {
+        let mut tcp_ref =
+            TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080, make_server_ref());
+        // DerefMut allows mutable access to the inner ServerRef
+        let inner: &mut ServerRef = &mut tcp_ref;
+        inner.shutdown();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(tcp_ref.is_finished());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn shutdown_via_deref_stops_server() {
+        let tcp_ref = TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080, make_server_ref());
+        tcp_ref.shutdown();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(tcp_ref.is_finished());
+    }
+
+    // --- Real server shutdown test ---
+
+    use crate::auth::{AuthenticationMethod, NoneAuthenticationMethod, Verifier};
+    use crate::net::common::{InmemoryTransport, MpscListener, Version};
+    use crate::net::server::{RequestCtx, Server, ServerConfig, ServerHandler};
+
+    struct TestServerHandler;
+
+    impl ServerHandler for TestServerHandler {
+        type Request = u16;
+        type Response = String;
+
+        async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
+            ctx.reply.send("hello".to_string()).unwrap();
+        }
+    }
+
+    fn start_real_server() -> (TcpServerRef, tokio::sync::mpsc::Sender<InmemoryTransport>) {
+        let (tx, listener) = MpscListener::channel(100);
+        let methods: Vec<Box<dyn AuthenticationMethod>> =
+            vec![Box::new(NoneAuthenticationMethod::new())];
+        let server_ref = Server {
+            config: ServerConfig::default(),
+            handler: TestServerHandler,
+            verifier: Verifier::new(methods),
+            version: Version::new(1, 2, 3),
+        }
+        .start(listener)
+        .expect("Failed to start server");
+        (
+            TcpServerRef::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080, server_ref),
+            tx,
+        )
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn shutdown_stops_real_server() {
+        let (server_ref, listener_tx) = start_real_server();
+        assert!(!server_ref.is_finished());
+        server_ref.shutdown();
+        drop(listener_tx); // Close listener so accept loop exits
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(server_ref.is_finished());
+    }
+}

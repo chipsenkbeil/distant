@@ -405,6 +405,10 @@ impl FromStr for LspContent {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for LSP message types: FromStr/Display parsing, to_bytes round-trips,
+    //! from_buf_reader streaming, header parsing errors, error type conversions,
+    //! LspContent Deref/DerefMut, and Display round-trips.
+
     use test_log::test;
 
     use super::*;
@@ -830,6 +834,288 @@ mod tests {
                 "key11": 123,
                 "key12": true,
             })
+        );
+    }
+
+    #[test]
+    fn msg_from_str_should_parse_valid_lsp_message() {
+        let input = concat!(
+            "Content-Length: 22\r\n",
+            "Content-Type: some content type\r\n",
+            "\r\n",
+            "{\n",
+            "  \"hello\": \"world\"\n",
+            "}",
+        );
+        let msg: LspMsg = input.parse().unwrap();
+        assert_eq!(msg.header().content_length, 22);
+        assert_eq!(
+            msg.header().content_type.as_deref(),
+            Some("some content type")
+        );
+        assert_eq!(msg.content().as_ref(), &make_obj!({"hello": "world"}));
+    }
+
+    #[test]
+    fn msg_from_str_should_fail_on_empty_string() {
+        let err = "".parse::<LspMsg>().unwrap_err();
+        assert!(matches!(err, LspMsgParseError::UnexpectedEof), "{:?}", err);
+    }
+
+    #[test]
+    fn msg_to_bytes_should_produce_valid_utf8_bytes() {
+        let msg = LspMsg {
+            header: LspHeader {
+                content_length: 22,
+                content_type: None,
+            },
+            content: LspContent(make_obj!({"hello": "world"})),
+        };
+        let bytes = msg.to_bytes();
+        let as_string = String::from_utf8(bytes).unwrap();
+        assert!(as_string.starts_with("Content-Length: 22\r\n"));
+        assert!(as_string.contains("\"hello\""));
+    }
+
+    #[test]
+    fn msg_to_bytes_should_round_trip_through_from_buf_reader() {
+        let original = LspMsg {
+            header: LspHeader {
+                content_length: 22,
+                content_type: None,
+            },
+            content: LspContent(make_obj!({"hello": "world"})),
+        };
+        let bytes = original.to_bytes();
+        let parsed = LspMsg::from_buf_reader(&mut io::Cursor::new(bytes)).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn msg_refresh_content_length_should_update_header_to_match_content() {
+        let mut msg = LspMsg {
+            header: LspHeader {
+                content_length: 0,
+                content_type: None,
+            },
+            content: LspContent(make_obj!({"hello": "world"})),
+        };
+        assert_eq!(msg.header().content_length, 0);
+
+        msg.refresh_content_length();
+
+        let expected_len = msg.content().to_string().len();
+        assert_eq!(msg.header().content_length, expected_len);
+        assert_ne!(msg.header().content_length, 0);
+    }
+
+    #[test]
+    fn msg_header_and_content_accessors_should_work() {
+        let mut msg = LspMsg {
+            header: LspHeader {
+                content_length: 10,
+                content_type: Some("text/plain".to_string()),
+            },
+            content: LspContent(make_obj!({"key": "val"})),
+        };
+
+        // Immutable accessors
+        assert_eq!(msg.header().content_length, 10);
+        assert_eq!(msg.content().get("key").unwrap(), "val");
+
+        // Mutable accessors
+        msg.mut_header().content_length = 20;
+        assert_eq!(msg.header().content_length, 20);
+
+        msg.mut_content()
+            .insert("new_key".to_string(), Value::Bool(true));
+        assert_eq!(msg.content().get("new_key").unwrap(), true);
+    }
+
+    #[test]
+    fn msg_from_buf_reader_should_read_multiple_messages_consecutively() {
+        let msg1 = concat!(
+            "Content-Length: 22\r\n",
+            "\r\n",
+            "{\n",
+            "  \"hello\": \"world\"\n",
+            "}",
+        );
+        let msg2 = concat!(
+            "Content-Length: 14\r\n",
+            "\r\n",
+            "{\n",
+            "  \"a\": \"b\"\n",
+            "}",
+        );
+        let combined = format!("{msg1}{msg2}");
+        let mut cursor = io::Cursor::new(combined);
+
+        let parsed1 = LspMsg::from_buf_reader(&mut cursor).unwrap();
+        assert_eq!(parsed1.content().as_ref(), &make_obj!({"hello": "world"}));
+
+        let parsed2 = LspMsg::from_buf_reader(&mut cursor).unwrap();
+        assert_eq!(parsed2.content().as_ref(), &make_obj!({"a": "b"}));
+    }
+
+    #[test]
+    fn msg_from_buf_reader_should_succeed_with_content_length_zero_and_empty_json_object() {
+        let input = "Content-Length: 2\r\n\r\n{}";
+        let msg = LspMsg::from_buf_reader(&mut io::Cursor::new(input)).unwrap();
+        assert_eq!(msg.header().content_length, 2);
+        assert!(msg.content().is_empty());
+    }
+
+    #[test]
+    fn msg_from_buf_reader_should_fail_if_content_shorter_than_content_length() {
+        // content-length says 100 but only 2 bytes of content
+        let input = "Content-Length: 100\r\n\r\n{}";
+        let err = LspMsg::from_buf_reader(&mut io::Cursor::new(input)).unwrap_err();
+        assert!(matches!(err, LspMsgParseError::UnexpectedEof), "{:?}", err);
+    }
+
+    #[test]
+    fn header_parse_should_fail_if_line_has_no_colon() {
+        let err = "Content-Length 123\r\n\r\n"
+            .parse::<LspHeader>()
+            .unwrap_err();
+        assert!(
+            matches!(err, LspHeaderParseError::BadHeaderField),
+            "{:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn header_parse_should_fail_if_colon_is_last_char() {
+        // "X:" has colon at index 1, but idx+1 == line.len() so the condition fails
+        let err = "X:\r\n\r\n".parse::<LspHeader>().unwrap_err();
+        assert!(
+            matches!(err, LspHeaderParseError::BadHeaderField),
+            "{:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn header_parse_should_succeed_with_only_content_length_no_trailing_crlf() {
+        // FromStr should handle the case where there is no trailing \r\n\r\n
+        // because split("\r\n") + filter(empty) still yields the header line
+        let header = "Content-Length: 42".parse::<LspHeader>().unwrap();
+        assert_eq!(header.content_length, 42);
+        assert_eq!(header.content_type, None);
+    }
+
+    #[test]
+    fn lsp_msg_parse_error_should_convert_to_io_error_for_all_variants() {
+        // BadContent
+        let bad_content_err: LspMsgParseError = LspMsgParseError::BadContent(
+            serde_json::from_str::<LspContent>("!!!")
+                .unwrap_err()
+                .into(),
+        );
+        let io_err: io::Error = bad_content_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+
+        // BadHeader
+        let bad_header_err: LspMsgParseError =
+            LspMsgParseError::BadHeader(LspHeaderParseError::MissingContentLength);
+        let io_err: io::Error = bad_header_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+
+        // BadHeaderTermination
+        let io_err: io::Error = LspMsgParseError::BadHeaderTermination.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+
+        // BadInput
+        let bad_utf8 = String::from_utf8(vec![0, 159, 146, 150]).unwrap_err();
+        let io_err: io::Error = LspMsgParseError::BadInput(bad_utf8).into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+
+        // IoError
+        let io_err: io::Error = LspMsgParseError::IoError(io::Error::other("test")).into();
+        assert_eq!(io_err.kind(), io::ErrorKind::Other);
+
+        // UnexpectedEof
+        let io_err: io::Error = LspMsgParseError::UnexpectedEof.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn lsp_header_parse_error_should_convert_to_io_error() {
+        let io_err: io::Error = LspHeaderParseError::MissingContentLength.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn lsp_content_parse_error_should_convert_to_io_error() {
+        let content_err = "not json".parse::<LspContent>().unwrap_err();
+        let io_err: io::Error = content_err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn content_deref_should_expose_map_methods() {
+        let content = LspContent(make_obj!({"a": 1, "b": 2}));
+        // Deref to Map<String, Value>
+        assert_eq!(content.len(), 2);
+        assert!(content.contains_key("a"));
+    }
+
+    #[test]
+    fn content_deref_mut_should_allow_modification() {
+        let mut content = LspContent(make_obj!({"a": 1}));
+        content.insert("b".to_string(), Value::from(2));
+        assert_eq!(content.len(), 2);
+    }
+
+    #[test]
+    fn content_as_ref_should_return_inner_map() {
+        let content = LspContent(make_obj!({"x": "y"}));
+        let map: &Map<String, Value> = content.as_ref();
+        assert_eq!(map.get("x").unwrap(), "y");
+    }
+
+    #[test]
+    fn header_display_round_trip_through_parse() {
+        let header = LspHeader {
+            content_length: 456,
+            content_type: Some("application/json".to_string()),
+        };
+        let displayed = header.to_string();
+        let parsed: LspHeader = displayed.parse().unwrap();
+        assert_eq!(parsed.content_length, 456);
+        assert_eq!(parsed.content_type.as_deref(), Some("application/json"));
+    }
+
+    #[test]
+    fn msg_display_round_trip_through_from_str() {
+        let msg = LspMsg {
+            header: LspHeader {
+                content_length: 22,
+                content_type: None,
+            },
+            content: LspContent(make_obj!({"hello": "world"})),
+        };
+        let displayed = msg.to_string();
+        let parsed: LspMsg = displayed.parse().unwrap();
+        assert_eq!(parsed, msg);
+    }
+
+    #[test]
+    fn msg_from_buf_reader_should_handle_content_type_with_charset() {
+        let input = concat!(
+            "Content-Length: 22\r\n",
+            "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n",
+            "\r\n",
+            "{\n",
+            "  \"hello\": \"world\"\n",
+            "}",
+        );
+        let msg = LspMsg::from_buf_reader(&mut io::Cursor::new(input)).unwrap();
+        assert_eq!(
+            msg.header().content_type.as_deref(),
+            Some("application/vscode-jsonrpc; charset=utf-8")
         );
     }
 }

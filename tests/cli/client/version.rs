@@ -1,8 +1,13 @@
+//! Integration tests for the `distant version` CLI subcommand.
+//!
+//! Tests displaying client/server version information, protocol version,
+//! and capability support.
+
 use distant_core::protocol::{semver, PROTOCOL_VERSION};
 use rstest::*;
 
-use crate::common::fixtures::*;
-use crate::common::utils::TrimmedLinesMatchPredicate;
+use distant_test_harness::manager::*;
+use distant_test_harness::utils::predicates_ext::TrimmedLinesMatchPredicate;
 
 #[rstest]
 #[test_log::test]

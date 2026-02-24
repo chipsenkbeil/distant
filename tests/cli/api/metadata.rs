@@ -1,9 +1,14 @@
+//! Integration tests for the `metadata` JSON API endpoint.
+//!
+//! Tests retrieving metadata for files, directories, and symlinks (with canonicalization
+//! and file type resolution), and error handling for missing paths.
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::{json, Value};
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = r#"
 some text

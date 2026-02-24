@@ -1,10 +1,15 @@
+//! Integration tests for the `remove` JSON API endpoint.
+//!
+//! Tests removing files, empty directories, force-removing non-empty directories,
+//! and error handling when force is not specified for non-empty directories.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test(tokio::test)]
@@ -84,9 +89,10 @@ async fn should_support_json_removing_nonempty_directory_if_force_specified(
 
     let temp = assert_fs::TempDir::new().unwrap();
 
-    // Make an empty directory
+    // Make a non-empty directory so we actually test force removal of contents
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
+    dir.child("file").touch().unwrap();
 
     let id = rand::random::<u64>().to_string();
     let req = json!({

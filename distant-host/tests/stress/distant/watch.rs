@@ -4,7 +4,7 @@ use distant_core::ChannelExt;
 use rstest::*;
 use test_log::test;
 
-use crate::stress::fixtures::*;
+use distant_test_harness::host::*;
 
 const MAX_FILES: usize = 500;
 

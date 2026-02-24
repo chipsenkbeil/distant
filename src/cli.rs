@@ -85,3 +85,120 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `Cli::initialize_from` argument parsing, log file defaults,
+    //! Debug output, and options field accessibility.
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // Cli::initialize_from — valid args
+    // -------------------------------------------------------
+    #[test]
+    fn initialize_from_server_listen() {
+        let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
+        assert!(cli.options.command.is_server());
+    }
+
+    #[test]
+    fn initialize_from_manager_listen() {
+        let cli = Cli::initialize_from(["distant", "manager", "listen"]).unwrap();
+        assert!(cli.options.command.is_manager());
+    }
+
+    #[test]
+    fn initialize_from_ssh_basic() {
+        let cli = Cli::initialize_from(["distant", "ssh", "user@host"]).unwrap();
+        assert!(cli.options.command.is_client());
+    }
+
+    #[test]
+    fn initialize_from_generate_config() {
+        let cli = Cli::initialize_from(["distant", "generate", "config"]).unwrap();
+        assert!(cli.options.command.is_generate());
+    }
+
+    // -------------------------------------------------------
+    // Cli::initialize_from — invalid args
+    // -------------------------------------------------------
+    #[test]
+    fn initialize_from_invalid_subcommand_is_err() {
+        let result = Cli::initialize_from(["distant", "nonexistent"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn initialize_from_no_subcommand_is_err() {
+        let result = Cli::initialize_from(["distant"]);
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------
+    // Cli — log file defaults are set
+    // -------------------------------------------------------
+    #[test]
+    fn log_file_is_set_for_server_listen() {
+        let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
+        assert!(
+            cli.options.logging.log_file.is_some(),
+            "log_file should be set by load_from"
+        );
+    }
+
+    #[test]
+    fn log_file_is_set_for_manager_listen() {
+        let cli = Cli::initialize_from(["distant", "manager", "listen"]).unwrap();
+        assert!(
+            cli.options.logging.log_file.is_some(),
+            "log_file should be set by load_from"
+        );
+    }
+
+    #[test]
+    fn log_file_is_set_for_generate_config() {
+        let cli = Cli::initialize_from(["distant", "generate", "config"]).unwrap();
+        assert!(
+            cli.options.logging.log_file.is_some(),
+            "log_file should be set by load_from"
+        );
+    }
+
+    // -------------------------------------------------------
+    // Cli — Debug impl
+    // -------------------------------------------------------
+    #[test]
+    fn cli_debug_impl() {
+        let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
+        let debug_output = format!("{cli:?}");
+        assert!(debug_output.contains("Cli"));
+        assert!(debug_output.contains("options"));
+    }
+
+    // -------------------------------------------------------
+    // Cli — options field is accessible
+    // -------------------------------------------------------
+    #[test]
+    fn cli_options_field_accessible() {
+        let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
+        // Access the public options field and check command
+        let _command = &cli.options.command;
+        let _logging = &cli.options.logging;
+    }
+
+    // -------------------------------------------------------
+    // Cli — with log level flag
+    // -------------------------------------------------------
+    #[test]
+    fn initialize_from_with_log_level() {
+        let cli =
+            Cli::initialize_from(["distant", "server", "listen", "--log-level", "trace"]).unwrap();
+        assert_eq!(
+            cli.options.logging.log_level,
+            Some(crate::options::LogLevel::Trace)
+        );
+    }
+}

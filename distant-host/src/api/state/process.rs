@@ -211,3 +211,308 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `ProcessChannel` (closed-channel errors) and `ProcessState` (spawn, kill,
+    //! stdin, pty resize, abort lifecycle, and operations on nonexistent processes).
+
+    use super::*;
+    use test_log::test;
+
+    // ---- ProcessChannel::default ----
+
+    #[test(tokio::test)]
+    async fn default_channel_spawn_should_fail_with_closed_error() {
+        let channel = ProcessChannel::default();
+        let (reply, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let result = channel
+            .spawn(
+                "echo hello".to_string(),
+                Environment::new(),
+                None,
+                None,
+                Box::new(reply),
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Internal process task closed"),
+            "Unexpected error: {}",
+            err
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn default_channel_resize_pty_should_fail_with_closed_error() {
+        let channel = ProcessChannel::default();
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let result = channel.resize_pty(1, size).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal process task closed"));
+    }
+
+    #[test(tokio::test)]
+    async fn default_channel_send_stdin_should_fail_with_closed_error() {
+        let channel = ProcessChannel::default();
+        let result = channel.send_stdin(1, b"data".to_vec()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal process task closed"));
+    }
+
+    #[test(tokio::test)]
+    async fn default_channel_kill_should_fail_with_closed_error() {
+        let channel = ProcessChannel::default();
+        let result = channel.kill(1).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal process task closed"));
+    }
+
+    // ---- ProcessState ----
+
+    #[test(tokio::test)]
+    async fn process_state_new_should_create_working_channel() {
+        let state = ProcessState::new();
+
+        // Should be able to spawn a real process (e.g., echo)
+        let (reply, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let cmd = if cfg!(windows) {
+            "cmd /C echo hello".to_string()
+        } else {
+            "echo hello".to_string()
+        };
+
+        let id = state
+            .spawn(cmd, Environment::new(), None, None, Box::new(reply))
+            .await
+            .unwrap();
+
+        assert!(id > 0);
+
+        // Collect responses - we should get at least ProcStdout and ProcDone
+        let mut got_done = false;
+        while let Some(resp) = rx.recv().await {
+            match resp {
+                Response::ProcDone { id: done_id, .. } => {
+                    assert_eq!(done_id, id);
+                    got_done = true;
+                    break;
+                }
+                Response::ProcStdout { id: stdout_id, .. } => {
+                    assert_eq!(stdout_id, id);
+                }
+                _ => {}
+            }
+        }
+        assert!(got_done, "Never received ProcDone response");
+    }
+
+    #[test(tokio::test)]
+    async fn process_state_deref_provides_channel() {
+        let state = ProcessState::new();
+
+        // Verify Deref works by accessing channel methods
+        let (reply, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let cmd = if cfg!(windows) {
+            "cmd /C echo test".to_string()
+        } else {
+            "echo test".to_string()
+        };
+
+        // This uses Deref to call spawn on the ProcessChannel
+        let result = state
+            .spawn(cmd, Environment::new(), None, None, Box::new(reply))
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn process_state_abort_should_close_the_internal_task() {
+        let state = ProcessState::new();
+        state.abort();
+
+        // After aborting, operations should fail
+        // Give a brief moment for the abort to propagate
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let (reply, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = state
+            .spawn(
+                "echo test".to_string(),
+                Environment::new(),
+                None,
+                None,
+                Box::new(reply),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test(tokio::test)]
+    async fn resize_pty_should_fail_for_nonexistent_process() {
+        let state = ProcessState::new();
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let result = state.resize_pty(99999, size).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No process found with id 99999"));
+    }
+
+    #[test(tokio::test)]
+    async fn send_stdin_should_fail_for_nonexistent_process() {
+        let state = ProcessState::new();
+        let result = state.send_stdin(99999, b"data".to_vec()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No process found with id 99999"));
+    }
+
+    #[test(tokio::test)]
+    async fn kill_should_fail_for_nonexistent_process() {
+        let state = ProcessState::new();
+        let result = state.kill(99999).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No process found with id 99999"));
+    }
+
+    #[test(tokio::test)]
+    async fn kill_should_succeed_for_running_process() {
+        let state = ProcessState::new();
+        let (reply, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Spawn a long-running process
+        let cmd = if cfg!(windows) {
+            "cmd /C ping -n 100 127.0.0.1".to_string()
+        } else {
+            "sleep 60".to_string()
+        };
+
+        let id = state
+            .spawn(cmd, Environment::new(), None, None, Box::new(reply))
+            .await
+            .unwrap();
+
+        // Give it a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Kill should succeed
+        let result = state.kill(id).await;
+        assert!(result.is_ok());
+
+        // Should eventually get a ProcDone
+        let mut got_done = false;
+        while let Some(resp) = rx.recv().await {
+            if matches!(resp, Response::ProcDone { .. }) {
+                got_done = true;
+                break;
+            }
+        }
+        assert!(got_done, "Never received ProcDone after kill");
+    }
+
+    #[test(tokio::test)]
+    async fn send_stdin_should_succeed_for_running_process() {
+        let state = ProcessState::new();
+        let (reply, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Spawn cat which reads from stdin
+        let cmd = if cfg!(windows) {
+            "cmd /C findstr x]^[".to_string()
+        } else {
+            "cat".to_string()
+        };
+
+        let id = state
+            .spawn(cmd, Environment::new(), None, None, Box::new(reply))
+            .await
+            .unwrap();
+
+        // Give it a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Send some stdin
+        let result = state.send_stdin(id, b"hello\n".to_vec()).await;
+        assert!(result.is_ok());
+
+        // Kill process to clean up
+        let _ = state.kill(id).await;
+
+        // Drain responses
+        while rx.recv().await.is_some() {}
+    }
+
+    #[test(tokio::test)]
+    async fn spawn_should_fail_for_empty_command() {
+        let state = ProcessState::new();
+        let (reply, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let result = state
+            .spawn(
+                "".to_string(),
+                Environment::new(),
+                None,
+                None,
+                Box::new(reply),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Command was empty"));
+    }
+
+    #[test(tokio::test)]
+    async fn process_channel_clone_should_work() {
+        let state = ProcessState::new();
+        let channel: ProcessChannel = state.channel.clone();
+
+        // The cloned channel should still be able to communicate
+        let (reply, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let cmd = if cfg!(windows) {
+            "cmd /C echo clone_test".to_string()
+        } else {
+            "echo clone_test".to_string()
+        };
+
+        let result = channel
+            .spawn(cmd, Environment::new(), None, None, Box::new(reply))
+            .await;
+        assert!(result.is_ok());
+    }
+}

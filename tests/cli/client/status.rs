@@ -1,6 +1,11 @@
+//! Integration tests for the `distant status` CLI subcommand.
+//!
+//! Tests displaying active connections in JSON format and querying detail
+//! for a specific connection by ID.
+
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]

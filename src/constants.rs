@@ -122,3 +122,139 @@ pub mod global {
     /// Name of the pipe used by Windows.
     pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| "distant".to_string());
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for module-level constants (`MAX_PIPE_CHUNK_SIZE`, `SOCKET_FILE_STR`)
+    //! and the `Lazy`-initialized path/name constants in `user` and `global` sub-modules.
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // MAX_PIPE_CHUNK_SIZE
+    // -------------------------------------------------------
+    #[test]
+    fn max_pipe_chunk_size_is_16k() {
+        assert_eq!(MAX_PIPE_CHUNK_SIZE, 16384);
+        assert_eq!(MAX_PIPE_CHUNK_SIZE, 16 * 1024);
+    }
+
+    // -------------------------------------------------------
+    // SOCKET_FILE_STR
+    // -------------------------------------------------------
+    #[test]
+    fn socket_file_str_is_distant_sock() {
+        assert_eq!(SOCKET_FILE_STR, "distant.sock");
+    }
+
+    // -------------------------------------------------------
+    // user paths are non-empty
+    // -------------------------------------------------------
+    #[test]
+    fn user_config_file_path_ends_with_config_toml() {
+        let path = user::CONFIG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("config.toml"),
+            "Expected path to end with config.toml, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_cache_file_path_ends_with_cache_toml() {
+        let path = user::CACHE_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("cache.toml"),
+            "Expected path to end with cache.toml, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_cache_file_path_str_matches_path() {
+        let path_str = user::CACHE_FILE_PATH_STR.as_str();
+        let path = user::CACHE_FILE_PATH.to_string_lossy();
+        assert_eq!(path_str, &*path);
+    }
+
+    #[test]
+    fn user_client_log_file_path_ends_with_client_log() {
+        let path = user::CLIENT_LOG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("client.log"),
+            "Expected path to end with client.log, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_manager_log_file_path_ends_with_manager_log() {
+        let path = user::MANAGER_LOG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("manager.log"),
+            "Expected path to end with manager.log, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_server_log_file_path_ends_with_server_log() {
+        let path = user::SERVER_LOG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("server.log"),
+            "Expected path to end with server.log, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_generate_log_file_path_ends_with_generate_log() {
+        let path = user::GENERATE_LOG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("generate.log"),
+            "Expected path to end with generate.log, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn user_unix_socket_path_contains_distant_sock() {
+        let path = user::UNIX_SOCKET_PATH.as_path();
+        let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            file_name.ends_with("distant.sock"),
+            "Expected file name to end with distant.sock, got: {file_name}"
+        );
+    }
+
+    #[test]
+    fn user_windows_pipe_name_contains_distant() {
+        let name = user::WINDOWS_PIPE_NAME.as_str();
+        assert!(
+            name.ends_with(".distant"),
+            "Expected pipe name to end with .distant, got: {name}"
+        );
+    }
+
+    // -------------------------------------------------------
+    // global paths
+    // -------------------------------------------------------
+    #[test]
+    fn global_config_file_path_ends_with_config_toml() {
+        let path = global::CONFIG_FILE_PATH.as_path();
+        assert!(
+            path.ends_with("config.toml"),
+            "Expected path to end with config.toml, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn global_unix_socket_path_ends_with_distant_sock() {
+        let path = global::UNIX_SOCKET_PATH.as_path();
+        assert!(
+            path.ends_with("distant.sock"),
+            "Expected path to end with distant.sock, got: {path:?}"
+        );
+    }
+
+    #[test]
+    fn global_windows_pipe_name_is_distant() {
+        assert_eq!(global::WINDOWS_PIPE_NAME.as_str(), "distant");
+    }
+}

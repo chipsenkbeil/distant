@@ -55,3 +55,58 @@ impl Handshake {
         matches!(self, Self::Server { .. })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for Handshake: client/server variant discrimination and default field values
+    //! for compression and encryption preferences.
+
+    use super::*;
+
+    #[test]
+    fn client_handshake_is_client() {
+        let hs = Handshake::client();
+        assert!(hs.is_client());
+        assert!(!hs.is_server());
+    }
+
+    #[test]
+    fn server_handshake_is_server() {
+        let hs = Handshake::server();
+        assert!(hs.is_server());
+        assert!(!hs.is_client());
+    }
+
+    #[test]
+    fn client_handshake_defaults() {
+        match Handshake::client() {
+            Handshake::Client {
+                preferred_compression_type,
+                preferred_compression_level,
+                preferred_encryption_type,
+            } => {
+                assert!(preferred_compression_type.is_none());
+                assert!(preferred_compression_level.is_none());
+                assert_eq!(
+                    preferred_encryption_type,
+                    Some(EncryptionType::XChaCha20Poly1305)
+                );
+            }
+            _ => panic!("Expected Client variant"),
+        }
+    }
+
+    #[test]
+    fn server_handshake_defaults() {
+        match Handshake::server() {
+            Handshake::Server {
+                compression_types,
+                encryption_types,
+            } => {
+                assert_eq!(compression_types, CompressionType::known_variants());
+                assert_eq!(encryption_types, EncryptionType::known_variants());
+            }
+            _ => panic!("Expected Server variant"),
+        }
+    }
+}

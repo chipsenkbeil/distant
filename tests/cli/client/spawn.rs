@@ -1,8 +1,13 @@
+//! Integration tests for the `distant spawn` CLI subcommand.
+//!
+//! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
+//! exit code reflection, and error handling for non-existent binaries.
+
 use rstest::*;
 
-use crate::cli::scripts::*;
-use crate::common::fixtures::*;
-use crate::common::utils::regex_pred;
+use distant_test_harness::manager::*;
+use distant_test_harness::scripts::*;
+use distant_test_harness::utils::regex_pred;
 
 #[rstest]
 #[test_log::test]

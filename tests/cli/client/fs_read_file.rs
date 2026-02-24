@@ -1,9 +1,13 @@
+//! Integration tests for the `distant fs read` CLI subcommand when used on files.
+//!
+//! Tests reading file contents to stdout and error handling for missing files.
+
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = indoc! {r#"
     some text

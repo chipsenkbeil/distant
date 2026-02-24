@@ -1,3 +1,7 @@
+//! Module declarations for all JSON API endpoint integration tests.
+//!
+//! Each submodule tests a specific API endpoint via JSON requests sent to an `ApiProcess`.
+
 mod copy;
 mod dir_create;
 mod dir_read;
@@ -13,6 +17,7 @@ mod proc_spawn;
 mod remove;
 mod rename;
 mod search;
+mod set_permissions;
 mod system_info;
 mod version;
 mod watch;

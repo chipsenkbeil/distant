@@ -111,3 +111,511 @@ impl Authenticator for ManagerAuthenticator {
         Box::pin(async move { self.fire(Authentication::Finished) })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for ManagerAuthenticator: fire (send-and-forget) vs send (send-and-wait),
+    //! Authenticator trait methods (initialize, challenge, verify, info, error, start_method,
+    //! finished), wrong-response-type handling, and receiver-dropped error paths.
+
+    use super::*;
+    use std::collections::HashMap;
+    use tokio::sync::mpsc;
+
+    use crate::net::common::Response;
+    use crate::net::server::ServerReply;
+
+    /// Creates a ManagerAuthenticator and returns it along with the receiver
+    /// that captures outgoing ManagerResponse messages.
+    fn make_authenticator() -> (
+        ManagerAuthenticator,
+        mpsc::UnboundedReceiver<Response<ManagerResponse>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: String::from("auth-test"),
+            tx,
+        };
+        let auth = ManagerAuthenticator {
+            reply,
+            registry: Arc::new(RwLock::new(HashMap::new())),
+        };
+        (auth, rx)
+    }
+
+    // ---------------------------------------------------------------
+    // fire() - sends without expecting a reply
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn fire_sends_authenticate_message() {
+        let (auth, mut rx) = make_authenticator();
+        auth.fire(Authentication::Finished).unwrap();
+
+        let resp = rx.recv().await.unwrap();
+        match resp.payload {
+            ManagerResponse::Authenticate { msg, .. } => {
+                assert_eq!(msg, Authentication::Finished);
+            }
+            other => panic!("Expected Authenticate, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn fire_does_not_store_callback_in_registry() {
+        let (auth, _rx) = make_authenticator();
+        auth.fire(Authentication::Finished).unwrap();
+
+        let registry = auth.registry.read().await;
+        assert!(registry.is_empty());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn fire_fails_when_receiver_dropped() {
+        let (auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth.fire(Authentication::Finished);
+        assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // send() - sends and waits for a callback response
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn send_stores_callback_and_receives_response() {
+        let (auth, mut rx) = make_authenticator();
+
+        let send_task = tokio::spawn({
+            let auth = auth.clone();
+            async move { auth.send(Authentication::Finished).await }
+        });
+
+        // Receive the outgoing message and extract the id
+        let resp = rx.recv().await.unwrap();
+        let id = match resp.payload {
+            ManagerResponse::Authenticate { id, .. } => id,
+            other => panic!("Expected Authenticate, got {other:?}"),
+        };
+
+        // Deliver the response via the registry callback
+        {
+            let mut registry = auth.registry.write().await;
+            let sender = registry.remove(&id).unwrap();
+            sender
+                .send(AuthenticationResponse::Initialization(
+                    InitializationResponse {
+                        methods: vec![String::from("none")],
+                    },
+                ))
+                .unwrap();
+        }
+
+        // The send() future should now resolve
+        let result = send_task.await.unwrap().unwrap();
+        assert_eq!(
+            result,
+            AuthenticationResponse::Initialization(InitializationResponse {
+                methods: vec![String::from("none")],
+            })
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn send_fails_when_receiver_dropped() {
+        let (auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth.send(Authentication::Finished).await;
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn send_fails_when_callback_sender_dropped() {
+        let (auth, mut rx) = make_authenticator();
+
+        let send_task = tokio::spawn({
+            let auth = auth.clone();
+            async move { auth.send(Authentication::Finished).await }
+        });
+
+        // Receive the outgoing message to get the id
+        let resp = rx.recv().await.unwrap();
+        let id = match resp.payload {
+            ManagerResponse::Authenticate { id, .. } => id,
+            other => panic!("Expected Authenticate, got {other:?}"),
+        };
+
+        // Remove and drop the sender without sending a response
+        {
+            let mut registry = auth.registry.write().await;
+            let sender = registry.remove(&id).unwrap();
+            drop(sender);
+        }
+
+        // The send() future should resolve with an error
+        let result = send_task.await.unwrap();
+        assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::initialize
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn initialize_sends_initialization_and_returns_response() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, msg } => {
+                        assert!(matches!(msg, Authentication::Initialization(_)));
+                        id
+                    }
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                sender
+                    .send(AuthenticationResponse::Initialization(
+                        InitializationResponse {
+                            methods: vec![String::from("static_key")],
+                        },
+                    ))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .initialize(Initialization {
+                methods: vec![String::from("static_key"), String::from("none")],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.methods, vec![String::from("static_key")]);
+        task.await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn initialize_returns_error_on_wrong_response_type() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, .. } => id,
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                // Send wrong response type (Challenge instead of Initialization)
+                sender
+                    .send(AuthenticationResponse::Challenge(ChallengeResponse {
+                        answers: vec![],
+                    }))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .initialize(Initialization {
+                methods: vec![String::from("test")],
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unexpected"));
+        task.await.unwrap();
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::challenge
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn challenge_sends_challenge_and_returns_response() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, msg } => {
+                        assert!(matches!(msg, Authentication::Challenge(_)));
+                        id
+                    }
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                sender
+                    .send(AuthenticationResponse::Challenge(ChallengeResponse {
+                        answers: vec![String::from("my_password")],
+                    }))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .challenge(Challenge {
+                questions: vec![],
+                options: HashMap::new(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.answers, vec![String::from("my_password")]);
+        task.await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn challenge_returns_error_on_wrong_response_type() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, .. } => id,
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                sender
+                    .send(AuthenticationResponse::Verification(VerificationResponse {
+                        valid: true,
+                    }))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .challenge(Challenge {
+                questions: vec![],
+                options: HashMap::new(),
+            })
+            .await;
+
+        assert!(result.is_err());
+        task.await.unwrap();
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::verify
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn verify_sends_verification_and_returns_response() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, msg } => {
+                        assert!(matches!(msg, Authentication::Verification(_)));
+                        id
+                    }
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                sender
+                    .send(AuthenticationResponse::Verification(VerificationResponse {
+                        valid: true,
+                    }))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .verify(Verification {
+                kind: VerificationKind::Host,
+                text: String::from("fingerprint abc"),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.valid);
+        task.await.unwrap();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn verify_returns_error_on_wrong_response_type() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        let task = tokio::spawn({
+            let registry = Arc::clone(&auth.registry);
+            async move {
+                let resp = rx.recv().await.unwrap();
+                let id = match resp.payload {
+                    ManagerResponse::Authenticate { id, .. } => id,
+                    other => panic!("Expected Authenticate, got {other:?}"),
+                };
+                let mut reg = registry.write().await;
+                let sender = reg.remove(&id).unwrap();
+                sender
+                    .send(AuthenticationResponse::Initialization(
+                        InitializationResponse { methods: vec![] },
+                    ))
+                    .unwrap();
+            }
+        });
+
+        let result = auth
+            .verify(Verification {
+                kind: VerificationKind::Host,
+                text: String::from("test"),
+            })
+            .await;
+
+        assert!(result.is_err());
+        task.await.unwrap();
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::info (fire-and-forget)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn info_sends_info_message() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        auth.info(Info {
+            text: String::from("hello"),
+        })
+        .await
+        .unwrap();
+
+        let resp = rx.recv().await.unwrap();
+        match resp.payload {
+            ManagerResponse::Authenticate { msg, .. } => {
+                assert_eq!(
+                    msg,
+                    Authentication::Info(Info {
+                        text: String::from("hello"),
+                    })
+                );
+            }
+            other => panic!("Expected Authenticate, got {other:?}"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::error (fire-and-forget)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn error_sends_error_message() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        auth.error(Error::fatal("something broke")).await.unwrap();
+
+        let resp = rx.recv().await.unwrap();
+        match resp.payload {
+            ManagerResponse::Authenticate { msg, .. } => {
+                assert_eq!(msg, Authentication::Error(Error::fatal("something broke")));
+            }
+            other => panic!("Expected Authenticate, got {other:?}"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::start_method (fire-and-forget)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn start_method_sends_start_method_message() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        auth.start_method(StartMethod {
+            method: String::from("static_key"),
+        })
+        .await
+        .unwrap();
+
+        let resp = rx.recv().await.unwrap();
+        match resp.payload {
+            ManagerResponse::Authenticate { msg, .. } => {
+                assert_eq!(
+                    msg,
+                    Authentication::StartMethod(StartMethod {
+                        method: String::from("static_key"),
+                    })
+                );
+            }
+            other => panic!("Expected Authenticate, got {other:?}"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Authenticator::finished (fire-and-forget)
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn finished_sends_finished_message() {
+        let (mut auth, mut rx) = make_authenticator();
+
+        auth.finished().await.unwrap();
+
+        let resp = rx.recv().await.unwrap();
+        match resp.payload {
+            ManagerResponse::Authenticate { msg, .. } => {
+                assert_eq!(msg, Authentication::Finished);
+            }
+            other => panic!("Expected Authenticate, got {other:?}"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // fire-and-forget methods fail when receiver is dropped
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn info_fails_when_receiver_dropped() {
+        let (mut auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth
+            .info(Info {
+                text: String::from("test"),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn error_fails_when_receiver_dropped() {
+        let (mut auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth.error(Error::fatal("test")).await;
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn start_method_fails_when_receiver_dropped() {
+        let (mut auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth
+            .start_method(StartMethod {
+                method: String::from("test"),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn finished_fails_when_receiver_dropped() {
+        let (mut auth, rx) = make_authenticator();
+        drop(rx);
+        let result = auth.finished().await;
+        assert!(result.is_err());
+    }
+}

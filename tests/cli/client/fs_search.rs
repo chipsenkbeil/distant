@@ -1,9 +1,13 @@
+//! Integration tests for the `distant fs search` CLI subcommand.
+//!
+//! Tests searching file contents using regex patterns.
+
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::Predicate;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 .*?[\\/]file1.txt

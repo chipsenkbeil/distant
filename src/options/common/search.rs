@@ -126,3 +126,91 @@ impl From<CliSearchQueryTarget> for SearchQueryTarget {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `CliSearchQueryTarget` and `CliSearchQueryOptions` conversions
+    //! to their `distant_core` counterparts, covering both default and fully
+    //! populated field mappings.
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // CliSearchQueryTarget -> SearchQueryTarget
+    // -------------------------------------------------------
+    #[test]
+    fn cli_search_query_target_contents_converts() {
+        let target: SearchQueryTarget = CliSearchQueryTarget::Contents.into();
+        assert_eq!(target, SearchQueryTarget::Contents);
+    }
+
+    #[test]
+    fn cli_search_query_target_path_converts() {
+        let target: SearchQueryTarget = CliSearchQueryTarget::Path.into();
+        assert_eq!(target, SearchQueryTarget::Path);
+    }
+
+    // -------------------------------------------------------
+    // CliSearchQueryOptions -> SearchQueryOptions
+    // -------------------------------------------------------
+    #[test]
+    fn cli_search_query_options_default_converts() {
+        let opts = CliSearchQueryOptions::default();
+        let converted: SearchQueryOptions = opts.into();
+        assert!(converted.allowed_file_types.is_empty());
+        assert!(converted.include.is_none());
+        assert!(converted.exclude.is_none());
+        assert!(!converted.upward);
+        assert!(!converted.follow_symbolic_links);
+        assert!(converted.limit.is_none());
+        assert!(converted.max_depth.is_none());
+        assert!(converted.pagination.is_none());
+        assert!(!converted.ignore_hidden);
+        assert!(!converted.use_ignore_files);
+        assert!(!converted.use_parent_ignore_files);
+        assert!(!converted.use_git_ignore_files);
+        assert!(!converted.use_global_git_ignore_files);
+        assert!(!converted.use_git_exclude_files);
+    }
+
+    #[test]
+    fn cli_search_query_options_with_values_converts() {
+        let opts = CliSearchQueryOptions {
+            allowed_file_types: {
+                let mut s = HashSet::new();
+                s.insert(FileType::File);
+                s
+            },
+            include: Some(CliSearchQueryCondition::regex("*.rs")),
+            exclude: Some(CliSearchQueryCondition::regex("target")),
+            upward: true,
+            follow_symbolic_links: true,
+            limit: Some(100),
+            max_depth: Some(5),
+            pagination: Some(10),
+            ignore_hidden: true,
+            use_ignore_files: true,
+            use_parent_ignore_files: true,
+            use_git_ignore_files: true,
+            use_global_git_ignore_files: true,
+            use_git_exclude_files: true,
+        };
+        let converted: SearchQueryOptions = opts.into();
+        assert_eq!(converted.allowed_file_types.len(), 1);
+        assert!(converted.include.is_some());
+        assert!(converted.exclude.is_some());
+        assert!(converted.upward);
+        assert!(converted.follow_symbolic_links);
+        assert_eq!(converted.limit, Some(100));
+        assert_eq!(converted.max_depth, Some(5));
+        assert_eq!(converted.pagination, Some(10));
+        assert!(converted.ignore_hidden);
+        assert!(converted.use_ignore_files);
+        assert!(converted.use_parent_ignore_files);
+        assert!(converted.use_git_ignore_files);
+        assert!(converted.use_global_git_ignore_files);
+        assert!(converted.use_git_exclude_files);
+    }
+}

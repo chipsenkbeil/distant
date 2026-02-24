@@ -260,6 +260,9 @@ impl<'a> UntypedRequest<'a> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Request<T> and UntypedRequest: serialization round-trips, field accessors,
+    //! borrowing, header/id mutation, and msgpack byte-level parsing of the wire format.
+
     use test_log::test;
 
     use super::*;
@@ -289,6 +292,59 @@ mod tests {
 
     // fixstr of 4 bytes with str "test"
     const TEST_STR_BYTES: &[u8] = &[0xa4, b't', b'e', b's', b't'];
+
+    #[test]
+    fn typed_request_from_slice_round_trip() {
+        let original = Request {
+            header: header!(),
+            id: "test-id".to_string(),
+            payload: true,
+        };
+        let bytes = original.to_vec().unwrap();
+        let restored = Request::<bool>::from_slice(&bytes).unwrap();
+        assert_eq!(restored.id, "test-id");
+        assert!(restored.payload);
+    }
+
+    #[test]
+    fn untyped_request_as_borrowed() {
+        let req = UntypedRequest {
+            header: Cow::Owned(vec![1, 2, 3]),
+            id: Cow::Owned("test".to_string()),
+            payload: Cow::Owned(vec![4, 5, 6]),
+        };
+        let borrowed = req.as_borrowed();
+        assert_eq!(borrowed.header.as_ref(), &[1, 2, 3]);
+        assert_eq!(borrowed.id.as_ref(), "test");
+        assert_eq!(borrowed.payload.as_ref(), &[4, 5, 6]);
+    }
+
+    #[test]
+    fn untyped_request_as_borrowed_from_already_borrowed() {
+        let header = vec![1, 2, 3];
+        let payload = vec![4, 5, 6];
+        let req = UntypedRequest {
+            header: Cow::Borrowed(&header),
+            id: Cow::Borrowed("test"),
+            payload: Cow::Borrowed(&payload),
+        };
+        let borrowed = req.as_borrowed();
+        // Verify all fields are preserved, not just id
+        assert_eq!(borrowed.header.as_ref(), &[1, 2, 3]);
+        assert_eq!(borrowed.id.as_ref(), "test");
+        assert_eq!(borrowed.payload.as_ref(), &[4, 5, 6]);
+    }
+
+    #[test]
+    fn untyped_request_set_header() {
+        let mut req = UntypedRequest {
+            header: Cow::Owned(vec![]),
+            id: Cow::Borrowed("test"),
+            payload: Cow::Owned(vec![]),
+        };
+        req.set_header(vec![10, 20, 30]);
+        assert_eq!(req.header.as_ref(), &[10, 20, 30]);
+    }
 
     #[test]
     fn untyped_request_should_support_converting_to_bytes() {

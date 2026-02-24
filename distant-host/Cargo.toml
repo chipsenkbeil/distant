@@ -37,9 +37,11 @@ winsplit = "0.1.0"
 
 [dev-dependencies]
 assert_fs = "1.0.13"
+distant-test-harness = { path = "../distant-test-harness" }
 env_logger = "0.10.0"
 indoc = "2.0.1"
 once_cell = "1.17.2"
 predicates = "3.0.3"
 rstest = "0.17.0"
+tempfile = "3"
 test-log = "0.2.11"

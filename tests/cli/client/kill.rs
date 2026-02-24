@@ -1,6 +1,11 @@
+//! Integration tests for the `distant kill` CLI subcommand.
+//!
+//! Tests terminating an active connection by its ID and error handling
+//! for invalid connection IDs.
+
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]

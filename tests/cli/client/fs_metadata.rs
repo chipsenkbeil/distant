@@ -1,9 +1,14 @@
+//! Integration tests for the `distant fs metadata` CLI subcommand.
+//!
+//! Tests retrieving metadata for files, directories, and symlinks, including
+//! `--canonicalize` and `--resolve-file-type` flags.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
-use crate::common::utils::regex_pred;
+use distant_test_harness::manager::*;
+use distant_test_harness::utils::regex_pred;
 
 const FILE_CONTENTS: &str = r#"
 some text

@@ -284,3 +284,488 @@ impl ReconnectStrategy {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for reconnection infrastructure: ConnectionState predicates, ConnectionWatcher
+    //! state transitions, and ReconnectStrategy variants (Fail, ExponentialBackoff,
+    //! FibonacciBackoff, FixedInterval) including timeout behavior.
+
+    use test_log::test;
+
+    use super::*;
+
+    // ---------------------------------------------------------------
+    // MockReconnectable for testing reconnect()
+    // ---------------------------------------------------------------
+
+    struct MockReconnectable(bool);
+
+    impl Reconnectable for MockReconnectable {
+        fn reconnect<'a>(
+            &'a mut self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>>
+        {
+            let success = self.0;
+            Box::pin(async move {
+                if success {
+                    Ok(())
+                } else {
+                    Err(io::Error::from(io::ErrorKind::ConnectionRefused))
+                }
+            })
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // ConnectionState tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn connection_state_is_reconnecting() {
+        assert!(ConnectionState::Reconnecting.is_reconnecting());
+        assert!(!ConnectionState::Connected.is_reconnecting());
+        assert!(!ConnectionState::Disconnected.is_reconnecting());
+    }
+
+    #[test]
+    fn connection_state_is_connected() {
+        assert!(!ConnectionState::Reconnecting.is_connected());
+        assert!(ConnectionState::Connected.is_connected());
+        assert!(!ConnectionState::Disconnected.is_connected());
+    }
+
+    #[test]
+    fn connection_state_is_disconnected() {
+        assert!(!ConnectionState::Reconnecting.is_disconnected());
+        assert!(!ConnectionState::Connected.is_disconnected());
+        assert!(ConnectionState::Disconnected.is_disconnected());
+    }
+
+    #[test]
+    fn connection_state_display_format() {
+        assert_eq!(ConnectionState::Reconnecting.to_string(), "reconnecting");
+        assert_eq!(ConnectionState::Connected.to_string(), "connected");
+        assert_eq!(ConnectionState::Disconnected.to_string(), "disconnected");
+    }
+
+    // ---------------------------------------------------------------
+    // ConnectionWatcher tests
+    // ---------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn connection_watcher_next_returns_state_after_change() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let mut watcher = ConnectionWatcher(rx);
+
+        tx.send_replace(ConnectionState::Disconnected);
+        let state = watcher.next().await;
+        assert_eq!(state, Some(ConnectionState::Disconnected));
+    }
+
+    #[test(tokio::test)]
+    async fn connection_watcher_next_returns_none_when_sender_dropped() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let mut watcher = ConnectionWatcher(rx);
+
+        drop(tx);
+        let state = watcher.next().await;
+        assert_eq!(state, None);
+    }
+
+    #[test]
+    fn connection_watcher_has_changed_returns_correct_value() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let watcher = ConnectionWatcher(rx);
+
+        // Initially no change has been detected
+        assert!(!watcher.has_changed());
+
+        // After a state update, has_changed should be true
+        tx.send_replace(ConnectionState::Reconnecting);
+        assert!(watcher.has_changed());
+    }
+
+    #[test]
+    fn connection_watcher_has_changed_returns_false_when_sender_dropped() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let watcher = ConnectionWatcher(rx);
+        drop(tx);
+
+        // When sender is dropped, has_changed returns false (the ok().unwrap_or(false) path)
+        assert!(!watcher.has_changed());
+    }
+
+    #[test]
+    fn connection_watcher_last_returns_current_state() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let watcher = ConnectionWatcher(rx);
+
+        assert_eq!(watcher.last(), ConnectionState::Connected);
+
+        tx.send_replace(ConnectionState::Disconnected);
+        assert_eq!(watcher.last(), ConnectionState::Disconnected);
+    }
+
+    #[test(tokio::test)]
+    async fn connection_watcher_on_change_invokes_callback() {
+        let (tx, rx) = watch::channel(ConnectionState::Connected);
+        let watcher = ConnectionWatcher(rx);
+
+        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(4);
+        let _handle = watcher.on_change(move |state| {
+            let _ = notify_tx.try_send(state);
+        });
+
+        tx.send_replace(ConnectionState::Reconnecting);
+        assert_eq!(notify_rx.recv().await, Some(ConnectionState::Reconnecting));
+
+        tx.send_replace(ConnectionState::Disconnected);
+        assert_eq!(notify_rx.recv().await, Some(ConnectionState::Disconnected));
+
+        // Drop the sender to end the watcher loop
+        drop(tx);
+        assert_eq!(notify_rx.recv().await, None);
+    }
+
+    // ---------------------------------------------------------------
+    // ReconnectStrategy tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn reconnect_strategy_default_is_fail() {
+        let strategy = ReconnectStrategy::default();
+        assert!(strategy.is_fail());
+    }
+
+    #[test]
+    fn reconnect_strategy_is_fail() {
+        assert!(ReconnectStrategy::Fail.is_fail());
+        assert!(!ReconnectStrategy::Fail.is_exponential_backoff());
+        assert!(!ReconnectStrategy::Fail.is_fibonacci_backoff());
+        assert!(!ReconnectStrategy::Fail.is_fixed_interval());
+    }
+
+    #[test]
+    fn reconnect_strategy_is_exponential_backoff() {
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        assert!(!strategy.is_fail());
+        assert!(strategy.is_exponential_backoff());
+        assert!(!strategy.is_fibonacci_backoff());
+        assert!(!strategy.is_fixed_interval());
+    }
+
+    #[test]
+    fn reconnect_strategy_is_fibonacci_backoff() {
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(100),
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        assert!(!strategy.is_fail());
+        assert!(!strategy.is_exponential_backoff());
+        assert!(strategy.is_fibonacci_backoff());
+        assert!(!strategy.is_fixed_interval());
+    }
+
+    #[test]
+    fn reconnect_strategy_is_fixed_interval() {
+        let strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(100),
+            max_retries: None,
+            timeout: None,
+        };
+        assert!(!strategy.is_fail());
+        assert!(!strategy.is_exponential_backoff());
+        assert!(!strategy.is_fibonacci_backoff());
+        assert!(strategy.is_fixed_interval());
+    }
+
+    #[test]
+    fn reconnect_strategy_max_duration_for_each_variant() {
+        assert_eq!(ReconnectStrategy::Fail.max_duration(), None);
+
+        let max = Duration::from_secs(30);
+        assert_eq!(
+            ReconnectStrategy::ExponentialBackoff {
+                base: Duration::from_millis(100),
+                factor: 2.0,
+                max_duration: Some(max),
+                max_retries: None,
+                timeout: None,
+            }
+            .max_duration(),
+            Some(max)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::ExponentialBackoff {
+                base: Duration::from_millis(100),
+                factor: 2.0,
+                max_duration: None,
+                max_retries: None,
+                timeout: None,
+            }
+            .max_duration(),
+            None
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FibonacciBackoff {
+                base: Duration::from_millis(100),
+                max_duration: Some(max),
+                max_retries: None,
+                timeout: None,
+            }
+            .max_duration(),
+            Some(max)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FibonacciBackoff {
+                base: Duration::from_millis(100),
+                max_duration: None,
+                max_retries: None,
+                timeout: None,
+            }
+            .max_duration(),
+            None
+        );
+
+        // FixedInterval always returns None for max_duration
+        assert_eq!(
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(100),
+                max_retries: None,
+                timeout: None,
+            }
+            .max_duration(),
+            None
+        );
+    }
+
+    #[test]
+    fn reconnect_strategy_max_retries_for_each_variant() {
+        assert_eq!(ReconnectStrategy::Fail.max_retries(), None);
+
+        assert_eq!(
+            ReconnectStrategy::ExponentialBackoff {
+                base: Duration::from_millis(100),
+                factor: 2.0,
+                max_duration: None,
+                max_retries: Some(5),
+                timeout: None,
+            }
+            .max_retries(),
+            Some(5)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FibonacciBackoff {
+                base: Duration::from_millis(100),
+                max_duration: None,
+                max_retries: Some(3),
+                timeout: None,
+            }
+            .max_retries(),
+            Some(3)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(100),
+                max_retries: Some(10),
+                timeout: None,
+            }
+            .max_retries(),
+            Some(10)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(100),
+                max_retries: None,
+                timeout: None,
+            }
+            .max_retries(),
+            None
+        );
+    }
+
+    #[test]
+    fn reconnect_strategy_timeout_for_each_variant() {
+        assert_eq!(ReconnectStrategy::Fail.timeout(), None);
+
+        let t = Duration::from_secs(5);
+        assert_eq!(
+            ReconnectStrategy::ExponentialBackoff {
+                base: Duration::from_millis(100),
+                factor: 2.0,
+                max_duration: None,
+                max_retries: None,
+                timeout: Some(t),
+            }
+            .timeout(),
+            Some(t)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FibonacciBackoff {
+                base: Duration::from_millis(100),
+                max_duration: None,
+                max_retries: None,
+                timeout: Some(t),
+            }
+            .timeout(),
+            Some(t)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(100),
+                max_retries: None,
+                timeout: Some(t),
+            }
+            .timeout(),
+            Some(t)
+        );
+
+        assert_eq!(
+            ReconnectStrategy::FixedInterval {
+                interval: Duration::from_millis(100),
+                max_retries: None,
+                timeout: None,
+            }
+            .timeout(),
+            None
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_fail_immediately_errors() {
+        let mut strategy = ReconnectStrategy::Fail;
+        let mut mock = MockReconnectable(true);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_fixed_interval_succeeds_on_first_try() {
+        let mut strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(1),
+            max_retries: Some(3),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(true);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_fixed_interval_fails_after_max_retries() {
+        let mut strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(1),
+            max_retries: Some(2),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(false);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_exponential_backoff_succeeds_on_first_try() {
+        let mut strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(1),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: Some(3),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(true);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_exponential_backoff_fails_after_max_retries() {
+        let mut strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(1),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: Some(2),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(false);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_err());
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_fibonacci_backoff_succeeds_on_first_try() {
+        let mut strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(1),
+            max_duration: None,
+            max_retries: Some(3),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(true);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_fibonacci_backoff_fails_after_max_retries() {
+        let mut strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(1),
+            max_duration: None,
+            max_retries: Some(2),
+            timeout: None,
+        };
+        let mut mock = MockReconnectable(false);
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_err());
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_strategy_with_timeout_fails_on_slow_reconnect() {
+        struct SlowReconnectable;
+        impl Reconnectable for SlowReconnectable {
+            fn reconnect<'a>(
+                &'a mut self,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>>
+            {
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    Ok(())
+                })
+            }
+        }
+
+        let mut strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(1),
+            max_retries: Some(1),
+            timeout: Some(Duration::from_millis(10)),
+        };
+        let mut mock = SlowReconnectable;
+
+        let result = strategy.reconnect(&mut mock).await;
+        assert!(result.is_err());
+    }
+}

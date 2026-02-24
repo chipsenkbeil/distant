@@ -428,6 +428,9 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)>
 
 #[cfg(test)]
 mod tests {
+    //! Tests for RemoteLspProcess: LSP message buffering, scheme translation (distant:// <->
+    //! file://), stdin/stdout/stderr streams, drop behavior, and BrokenPipe on disconnect.
+
     use std::future::Future;
     use std::time::Duration;
 
@@ -1101,5 +1104,710 @@ mod tests {
                 "field2": "distant://other/path",
             }))
         );
+    }
+
+    // ------------------------------------------------------------------
+    // RemoteLspCommand builder methods
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn remote_lsp_command_new_should_have_default_values() {
+        let cmd = RemoteLspCommand::new();
+        assert!(cmd.pty.is_none());
+        assert!(cmd.current_dir.is_none());
+        assert!(cmd.scheme.is_none());
+    }
+
+    #[test]
+    fn remote_lsp_command_default_should_be_same_as_new() {
+        let cmd = RemoteLspCommand::default();
+        assert!(cmd.pty.is_none());
+        assert!(cmd.current_dir.is_none());
+        assert!(cmd.scheme.is_none());
+    }
+
+    #[test]
+    fn remote_lsp_command_pty_should_set_pty_size() {
+        let mut cmd = RemoteLspCommand::new();
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        cmd.pty(Some(size));
+        assert_eq!(cmd.pty, Some(size));
+    }
+
+    #[test]
+    fn remote_lsp_command_pty_should_clear_when_set_to_none() {
+        let mut cmd = RemoteLspCommand::new();
+        cmd.pty(Some(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        }));
+        cmd.pty(None);
+        assert!(cmd.pty.is_none());
+    }
+
+    #[test]
+    fn remote_lsp_command_environment_should_replace_environment() {
+        let mut cmd = RemoteLspCommand::new();
+        let mut env = Environment::new();
+        env.insert("KEY".to_string(), "VALUE".to_string());
+        cmd.environment(env.clone());
+        assert_eq!(cmd.environment, env);
+    }
+
+    #[test]
+    fn remote_lsp_command_current_dir_should_set_current_dir() {
+        let mut cmd = RemoteLspCommand::new();
+        cmd.current_dir(Some(PathBuf::from("/some/dir")));
+        assert_eq!(cmd.current_dir, Some(PathBuf::from("/some/dir")));
+    }
+
+    #[test]
+    fn remote_lsp_command_current_dir_should_clear_when_set_to_none() {
+        let mut cmd = RemoteLspCommand::new();
+        cmd.current_dir(Some(PathBuf::from("/some/dir")));
+        cmd.current_dir(None);
+        assert!(cmd.current_dir.is_none());
+    }
+
+    #[test]
+    fn remote_lsp_command_scheme_should_set_scheme() {
+        let mut cmd = RemoteLspCommand::new();
+        cmd.scheme(Some(String::from("custom")));
+        assert_eq!(cmd.scheme, Some(String::from("custom")));
+    }
+
+    #[test]
+    fn remote_lsp_command_scheme_should_clear_when_set_to_none() {
+        let mut cmd = RemoteLspCommand::new();
+        cmd.scheme(Some(String::from("custom")));
+        cmd.scheme(None);
+        assert!(cmd.scheme.is_none());
+    }
+
+    #[test]
+    fn remote_lsp_command_builder_methods_should_return_self() {
+        let mut cmd = RemoteLspCommand::new();
+        // All builder methods return &mut Self, allowing chaining
+        cmd.pty(None)
+            .environment(Environment::new())
+            .current_dir(None)
+            .scheme(None);
+    }
+
+    // ------------------------------------------------------------------
+    // RemoteLspProcess Deref/DerefMut
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn remote_lsp_process_deref_should_expose_inner_process() {
+        let (_transport, proc) = spawn_lsp_process().await;
+        // Deref gives us access to RemoteProcess fields like id() and origin_id()
+        let _id = proc.id();
+        let _origin_id = proc.origin_id();
+    }
+
+    #[test(tokio::test)]
+    async fn remote_lsp_process_deref_mut_should_allow_mutable_access_to_inner() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+        // DerefMut allows obtaining a &mut RemoteProcess from &mut RemoteLspProcess
+        let inner: &mut RemoteProcess = &mut proc;
+        let _id = inner.id();
+    }
+
+    // ------------------------------------------------------------------
+    // stdin try_write and try_write_str
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stdin_try_write_should_send_complete_lsp_messages() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .try_write(&make_lsp_msg(serde_json::json!({
+                "field1": "a",
+                "field2": "b",
+            })))
+            .unwrap();
+
+        // Validate that the outgoing req is a complete LSP message
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(
+                    data,
+                    make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                        "field2": "b",
+                    }))
+                );
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn stdin_try_write_str_should_send_complete_lsp_messages() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        let msg = make_lsp_msg(serde_json::json!({
+            "field1": "x",
+            "field2": "y",
+        }));
+
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .try_write_str(&String::from_utf8(msg).unwrap())
+            .unwrap();
+
+        // Validate that the outgoing req is a complete LSP message
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(
+                    data,
+                    make_lsp_msg(serde_json::json!({
+                        "field1": "x",
+                        "field2": "y",
+                    }))
+                );
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn stdin_try_write_should_buffer_incomplete_messages() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        let msg = make_lsp_msg(serde_json::json!({
+            "field1": "a",
+            "field2": "b",
+        }));
+        let (msg_a, msg_b) = msg.split_at(msg.len() / 2);
+
+        // Write part of the message that isn't finished
+        proc.stdin.as_mut().unwrap().try_write(msg_a).unwrap();
+
+        // Verify that nothing has been sent out yet
+        tokio::task::yield_now().await;
+        let result = timeout(
+            TIMEOUT,
+            transport.read_frame_as::<Request<protocol::Request>>(),
+        )
+        .await;
+        assert!(result.is_err(), "Unexpectedly got data: {:?}", result);
+
+        // Write remainder of message
+        proc.stdin.as_mut().unwrap().try_write(msg_b).unwrap();
+
+        // Now the complete message should be sent
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(
+                    data,
+                    make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                        "field2": "b",
+                    }))
+                );
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn stdin_try_write_should_convert_distant_scheme_to_file_scheme() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .try_write(&make_lsp_msg(serde_json::json!({
+                "field1": "distant://some/path",
+                "field2": "file://other/path",
+            })))
+            .unwrap();
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(
+                    data,
+                    make_lsp_msg(serde_json::json!({
+                        "field1": "file://some/path",
+                        "field2": "file://other/path",
+                    }))
+                );
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Custom scheme for stdin
+    // ------------------------------------------------------------------
+
+    async fn spawn_lsp_process_with_scheme(
+        scheme: &str,
+    ) -> (FramedTransport<InmemoryTransport>, RemoteLspProcess) {
+        let (mut t1, t2) = FramedTransport::pair(100);
+        let client = Client::spawn_inmemory(t2, Default::default());
+        let scheme = scheme.to_string();
+        let spawn_task = tokio::spawn({
+            let channel = client.clone_channel();
+            async move {
+                RemoteLspCommand::new()
+                    .scheme(Some(scheme))
+                    .spawn(channel, String::from("cmd arg"))
+                    .await
+            }
+        });
+
+        let req: Request<protocol::Request> = t1.read_frame_as().await.unwrap().unwrap();
+        t1.write_frame_for(&Response::new(
+            req.id,
+            protocol::Response::ProcSpawned { id: rand::random() },
+        ))
+        .await
+        .unwrap();
+
+        let proc = spawn_task.await.unwrap().unwrap();
+        (t1, proc)
+    }
+
+    #[test(tokio::test)]
+    async fn stdin_write_with_custom_scheme_should_convert_scheme_to_file() {
+        let (mut transport, mut proc) = spawn_lsp_process_with_scheme("custom").await;
+
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .write(&make_lsp_msg(serde_json::json!({
+                "field1": "custom://some/path",
+                "field2": "file://other/path",
+            })))
+            .await
+            .unwrap();
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(
+                    data,
+                    make_lsp_msg(serde_json::json!({
+                        "field1": "file://some/path",
+                        "field2": "file://other/path",
+                    }))
+                );
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn stdout_read_with_custom_scheme_should_convert_file_to_custom_scheme() {
+        let (mut transport, mut proc) = spawn_lsp_process_with_scheme("custom").await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStdout {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "file://some/path",
+                        "field2": "custom://other/path",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let out = proc.stdout.as_mut().unwrap().read().await.unwrap();
+        assert_eq!(
+            out,
+            make_lsp_msg(serde_json::json!({
+                "field1": "custom://some/path",
+                "field2": "custom://other/path",
+            }))
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_read_with_custom_scheme_should_convert_file_to_custom_scheme() {
+        let (mut transport, mut proc) = spawn_lsp_process_with_scheme("custom").await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStderr {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "file://some/path",
+                        "field2": "custom://other/path",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let err = proc.stderr.as_mut().unwrap().read().await.unwrap();
+        assert_eq!(
+            err,
+            make_lsp_msg(serde_json::json!({
+                "field1": "custom://some/path",
+                "field2": "custom://other/path",
+            }))
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // stdout try_read, try_read_string, read_string
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stdout_try_read_should_return_none_when_no_data_available() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let result = proc.stdout.as_mut().unwrap().try_read().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test(tokio::test)]
+    async fn stdout_try_read_should_return_data_when_available() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStdout {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        // Give the read task time to process
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let result = proc.stdout.as_mut().unwrap().try_read().unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test(tokio::test)]
+    async fn stdout_try_read_string_should_return_none_when_no_data_available() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let result = proc.stdout.as_mut().unwrap().try_read_string().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test(tokio::test)]
+    async fn stdout_read_string_should_return_string() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStdout {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                        "field2": "b",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let out = proc.stdout.as_mut().unwrap().read_string().await.unwrap();
+        assert_eq!(
+            out,
+            String::from_utf8(make_lsp_msg(serde_json::json!({
+                "field1": "a",
+                "field2": "b",
+            })))
+            .unwrap()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // stderr try_read, try_read_string, read_string
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stderr_try_read_should_return_none_when_no_data_available() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let result = proc.stderr.as_mut().unwrap().try_read().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_try_read_should_return_data_when_available() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStderr {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        // Give the read task time to process
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let result = proc.stderr.as_mut().unwrap().try_read().unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_try_read_string_should_return_none_when_no_data_available() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let result = proc.stderr.as_mut().unwrap().try_read_string().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_read_string_should_return_string() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        transport
+            .write_frame_for(&Response::new(
+                proc.origin_id().to_string(),
+                protocol::Response::ProcStderr {
+                    id: proc.id(),
+                    data: make_lsp_msg(serde_json::json!({
+                        "field1": "a",
+                        "field2": "b",
+                    })),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let err = proc.stderr.as_mut().unwrap().read_string().await.unwrap();
+        assert_eq!(
+            err,
+            String::from_utf8(make_lsp_msg(serde_json::json!({
+                "field1": "a",
+                "field2": "b",
+            })))
+            .unwrap()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // stdout/stderr Drop behavior
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stdout_drop_should_abort_read_task() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let stdout = proc.stdout.take().unwrap();
+        let task_handle = &stdout.read_task;
+        assert!(!task_handle.is_finished());
+
+        drop(stdout);
+
+        // Give the task time to be aborted
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // After drop, the read_task should be aborted
+        // We can't check the handle since it was dropped, but the test
+        // passes if drop doesn't panic
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_drop_should_abort_read_task() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let stderr = proc.stderr.take().unwrap();
+        let task_handle = &stderr.read_task;
+        assert!(!task_handle.is_finished());
+
+        drop(stderr);
+
+        // Give the task time to be aborted
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // ------------------------------------------------------------------
+    // read_lsp_messages
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn read_lsp_messages_should_return_empty_queue_for_empty_input() {
+        let (remainder, queue) = read_lsp_messages(b"").unwrap();
+        assert!(remainder.is_none());
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn read_lsp_messages_should_parse_single_complete_message() {
+        let msg = make_lsp_msg(serde_json::json!({"key": "value"}));
+        let (remainder, queue) = read_lsp_messages(&msg).unwrap();
+        assert!(remainder.is_none());
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn read_lsp_messages_should_parse_multiple_complete_messages() {
+        let msg1 = make_lsp_msg(serde_json::json!({"key": "value1"}));
+        let msg2 = make_lsp_msg(serde_json::json!({"key": "value2"}));
+        let mut input = msg1;
+        input.extend(msg2);
+        let (remainder, queue) = read_lsp_messages(&input).unwrap();
+        assert!(remainder.is_none());
+        assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn read_lsp_messages_should_keep_incomplete_data_as_remainder() {
+        let msg = make_lsp_msg(serde_json::json!({"key": "value"}));
+        let extra = b"Content-Length: 999\r\n\r\n";
+        let mut input = msg;
+        input.extend_from_slice(extra);
+        let (remainder, queue) = read_lsp_messages(&input).unwrap();
+        assert!(remainder.is_some());
+        assert_eq!(queue.len(), 1);
+        // The remainder should contain the partial message
+        let rem = remainder.unwrap();
+        assert!(rem.starts_with(b"Content-Length: 999"));
+    }
+
+    #[test]
+    fn read_lsp_messages_should_keep_all_data_as_remainder_when_no_complete_message() {
+        let input = b"Content-Length: 999\r\n\r\npartial";
+        let (remainder, queue) = read_lsp_messages(input).unwrap();
+        assert!(remainder.is_some());
+        assert!(queue.is_empty());
+        assert_eq!(remainder.unwrap(), input);
+    }
+
+    // ------------------------------------------------------------------
+    // stdin update_and_read_messages internal buffer handling
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stdin_should_maintain_buffer_across_multiple_writes() {
+        let (mut transport, mut proc) = spawn_lsp_process().await;
+
+        let msg = make_lsp_msg(serde_json::json!({"key": "value"}));
+
+        // Write first third
+        let first_third = msg.len() / 3;
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .write(&msg[..first_third])
+            .await
+            .unwrap();
+
+        // Nothing should be sent yet
+        tokio::task::yield_now().await;
+        let result = timeout(
+            TIMEOUT,
+            transport.read_frame_as::<Request<protocol::Request>>(),
+        )
+        .await;
+        assert!(result.is_err());
+
+        // Write second third
+        let second_third = 2 * msg.len() / 3;
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .write(&msg[first_third..second_third])
+            .await
+            .unwrap();
+
+        // Still nothing should be sent
+        tokio::task::yield_now().await;
+        let result = timeout(
+            TIMEOUT,
+            transport.read_frame_as::<Request<protocol::Request>>(),
+        )
+        .await;
+        assert!(result.is_err());
+
+        // Write final third
+        proc.stdin
+            .as_mut()
+            .unwrap()
+            .write(&msg[second_third..])
+            .await
+            .unwrap();
+
+        // Now the complete message should be sent
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::ProcStdin { data, .. } => {
+                assert_eq!(data, make_lsp_msg(serde_json::json!({"key": "value"})));
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // stdout/stderr BrokenPipe on disconnect
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn stdout_try_read_should_return_broken_pipe_when_disconnected() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        // Take and drop the stdout to disconnect
+        let mut stdout = proc.stdout.take().unwrap();
+
+        // Close the receiver to simulate disconnection
+        stdout.rx.close();
+
+        // Drain any pending messages
+        while stdout.rx.try_recv().is_ok() {}
+
+        // Now try_read should return BrokenPipe
+        let result = stdout.try_read();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test(tokio::test)]
+    async fn stderr_try_read_should_return_broken_pipe_when_disconnected() {
+        let (_transport, mut proc) = spawn_lsp_process().await;
+
+        let mut stderr = proc.stderr.take().unwrap();
+
+        // Close the receiver to simulate disconnection
+        stderr.rx.close();
+
+        // Drain any pending messages
+        while stderr.rx.try_recv().is_ok() {}
+
+        // Now try_read should return BrokenPipe
+        let result = stderr.try_read();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
     }
 }

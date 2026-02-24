@@ -1,10 +1,14 @@
+//! Integration tests for the `version` JSON API endpoint.
+//!
+//! Tests retrieving protocol version and capabilities from the server.
+
 use distant_core::protocol::semver::Version as SemVer;
 use distant_core::protocol::{Version, PROTOCOL_VERSION};
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test(tokio::test)]

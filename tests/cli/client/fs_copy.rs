@@ -1,8 +1,13 @@
+//! Integration tests for the `distant fs copy` CLI subcommand.
+//!
+//! Tests copying files, copying non-empty directories, and error handling
+//! when the source does not exist.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = r#"
 some text

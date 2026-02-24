@@ -290,6 +290,9 @@ impl PartialEq<HeapSecretKey> for &str {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for SecretKey<N> and HeapSecretKey: construction, hex Display/FromStr round-trips,
+    //! accessors, conversions, Debug redaction, error types, and PartialEq impls.
+
     use test_log::test;
 
     use super::*;
@@ -318,5 +321,300 @@ mod tests {
         //       takes a lot of time to do so
         let key = HeapSecretKey::generate(100).unwrap();
         assert_eq!(key.len(), 100);
+    }
+
+    // --- SecretKey: from_slice ---
+
+    #[test]
+    fn secret_key_from_slice_should_succeed_with_correct_length() {
+        let data = [1u8, 2, 3, 4];
+        let key = SecretKey::<4>::from_slice(&data).unwrap();
+        assert_eq!(key.unprotected_as_bytes(), &data);
+    }
+
+    #[test]
+    fn secret_key_from_slice_should_fail_with_wrong_length() {
+        let data = [1u8, 2, 3];
+        let result = SecretKey::<4>::from_slice(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn secret_key_from_slice_should_fail_with_empty_slice_for_nonzero_key() {
+        let data: &[u8] = &[];
+        let result = SecretKey::<4>::from_slice(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn secret_key_from_slice_should_fail_with_longer_slice() {
+        let data = [1u8, 2, 3, 4, 5];
+        let result = SecretKey::<4>::from_slice(&data);
+        assert!(result.is_err());
+    }
+
+    // --- SecretKey: FromStr / Display round-trip ---
+
+    #[test]
+    fn secret_key_display_should_produce_hex_string() {
+        let key = SecretKey::<4>::from([0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(key.to_string(), "deadbeef");
+    }
+
+    #[test]
+    fn secret_key_from_str_should_parse_hex_string() {
+        let key: SecretKey<4> = "deadbeef".parse().unwrap();
+        assert_eq!(key.unprotected_as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn secret_key_from_str_and_display_should_round_trip() {
+        let original = SecretKey::<16>::generate().unwrap();
+        let hex_str = original.to_string();
+        let recovered: SecretKey<16> = hex_str.parse().unwrap();
+        assert_eq!(
+            original.unprotected_as_bytes(),
+            recovered.unprotected_as_bytes()
+        );
+    }
+
+    #[test]
+    fn secret_key_from_str_should_fail_on_invalid_hex() {
+        let result = "not_valid_hex!".parse::<SecretKey<4>>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn secret_key_from_str_should_fail_on_wrong_length_hex() {
+        // "aabb" is 2 bytes, but we need 4
+        let result = "aabb".parse::<SecretKey<4>>();
+        assert!(result.is_err());
+    }
+
+    // --- SecretKey: unprotected accessors ---
+
+    #[test]
+    fn secret_key_unprotected_as_bytes_should_return_slice() {
+        let key = SecretKey::<3>::from([10, 20, 30]);
+        let bytes = key.unprotected_as_bytes();
+        assert_eq!(bytes, &[10, 20, 30]);
+        assert_eq!(bytes.len(), 3);
+    }
+
+    #[test]
+    fn secret_key_unprotected_as_byte_array_should_return_array_ref() {
+        let key = SecretKey::<3>::from([10, 20, 30]);
+        let arr: &[u8; 3] = key.unprotected_as_byte_array();
+        assert_eq!(arr, &[10, 20, 30]);
+    }
+
+    #[test]
+    fn secret_key_unprotected_into_byte_array_should_consume_and_return_array() {
+        let key = SecretKey::<3>::from([10, 20, 30]);
+        let arr: [u8; 3] = key.unprotected_into_byte_array();
+        assert_eq!(arr, [10, 20, 30]);
+    }
+
+    // --- SecretKey: into_heap_secret_key ---
+
+    #[test]
+    fn secret_key_into_heap_secret_key_should_preserve_bytes() {
+        let key = SecretKey::<4>::from([1, 2, 3, 4]);
+        let heap_key = key.into_heap_secret_key();
+        assert_eq!(heap_key.unprotected_as_bytes(), &[1, 2, 3, 4]);
+        assert_eq!(heap_key.len(), 4);
+    }
+
+    // --- SecretKey: From<[u8; N]> ---
+
+    #[test]
+    fn secret_key_from_array_should_create_key_with_given_bytes() {
+        let arr = [0xAAu8, 0xBB, 0xCC, 0xDD];
+        let key: SecretKey<4> = SecretKey::from(arr);
+        assert_eq!(key.unprotected_as_bytes(), &arr);
+    }
+
+    // --- SecretKey: Debug ---
+
+    #[test]
+    fn secret_key_debug_should_omit_key_content() {
+        let key = SecretKey::<4>::from([1, 2, 3, 4]);
+        let debug_str = format!("{:?}", key);
+        assert!(
+            debug_str.contains("OMITTED"),
+            "Debug output should contain OMITTED but was: {}",
+            debug_str
+        );
+        assert!(
+            !debug_str.contains("01"),
+            "Debug output should not contain key bytes"
+        );
+    }
+
+    // --- SecretKeyError ---
+
+    #[test]
+    fn secret_key_error_should_convert_to_io_error() {
+        let io_err: std::io::Error = SecretKeyError.into();
+        assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(io_err.to_string().contains("not valid secret key format"));
+    }
+
+    // --- HeapSecretKey: From<Vec<u8>> ---
+
+    #[test]
+    fn heap_secret_key_from_vec_should_preserve_bytes() {
+        let v = vec![10u8, 20, 30, 40];
+        let key = HeapSecretKey::from(v.clone());
+        assert_eq!(key.unprotected_as_bytes(), &v[..]);
+        assert_eq!(key.len(), 4);
+    }
+
+    // --- HeapSecretKey: From<[u8; N]> ---
+
+    #[test]
+    fn heap_secret_key_from_array_should_preserve_bytes() {
+        let arr = [5u8, 10, 15, 20, 25];
+        let key = HeapSecretKey::from(arr);
+        assert_eq!(key.unprotected_as_bytes(), &arr);
+        assert_eq!(key.len(), 5);
+    }
+
+    // --- HeapSecretKey: From<SecretKey<N>> ---
+
+    #[test]
+    fn heap_secret_key_from_secret_key_should_preserve_bytes() {
+        let sk = SecretKey::<4>::from([0xAA, 0xBB, 0xCC, 0xDD]);
+        let hk: HeapSecretKey = HeapSecretKey::from(sk);
+        assert_eq!(hk.unprotected_as_bytes(), &[0xAA, 0xBB, 0xCC, 0xDD]);
+    }
+
+    // --- HeapSecretKey: FromStr / Display round-trip ---
+
+    #[test]
+    fn heap_secret_key_display_should_produce_hex_string() {
+        let key = HeapSecretKey::from(vec![0xca, 0xfe, 0xba, 0xbe]);
+        assert_eq!(key.to_string(), "cafebabe");
+    }
+
+    #[test]
+    fn heap_secret_key_from_str_should_parse_hex_string() {
+        let key: HeapSecretKey = "cafebabe".parse().unwrap();
+        assert_eq!(key.unprotected_as_bytes(), &[0xca, 0xfe, 0xba, 0xbe]);
+    }
+
+    #[test]
+    fn heap_secret_key_from_str_and_display_should_round_trip() {
+        let original = HeapSecretKey::generate(32).unwrap();
+        let hex_str = original.to_string();
+        let recovered: HeapSecretKey = hex_str.parse().unwrap();
+        assert_eq!(
+            original.unprotected_as_bytes(),
+            recovered.unprotected_as_bytes()
+        );
+    }
+
+    #[test]
+    fn heap_secret_key_from_str_should_fail_on_invalid_hex() {
+        let result = "xyz_not_hex!!".parse::<HeapSecretKey>();
+        assert!(result.is_err());
+    }
+
+    // --- HeapSecretKey: unprotected accessors ---
+
+    #[test]
+    fn heap_secret_key_unprotected_as_bytes_should_return_slice() {
+        let key = HeapSecretKey::from(vec![1, 2, 3]);
+        assert_eq!(key.unprotected_as_bytes(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn heap_secret_key_unprotected_into_bytes_should_consume_and_return_vec() {
+        let key = HeapSecretKey::from(vec![7, 8, 9]);
+        let bytes = key.unprotected_into_bytes();
+        assert_eq!(bytes, vec![7, 8, 9]);
+    }
+
+    // --- HeapSecretKey: Debug ---
+
+    #[test]
+    fn heap_secret_key_debug_should_omit_key_content() {
+        let key = HeapSecretKey::from(vec![0xFF, 0xFE, 0xFD]);
+        let debug_str = format!("{:?}", key);
+        assert!(
+            debug_str.contains("OMITTED"),
+            "Debug output should contain OMITTED but was: {}",
+            debug_str
+        );
+        assert!(
+            !debug_str.contains("ff") && !debug_str.contains("FF"),
+            "Debug output should not contain key bytes"
+        );
+    }
+
+    // --- HeapSecretKey: PartialEq impls ---
+
+    #[test]
+    fn heap_secret_key_should_eq_byte_array() {
+        let key = HeapSecretKey::from(vec![1, 2, 3, 4]);
+        let arr: [u8; 4] = [1, 2, 3, 4];
+        assert!(key == arr);
+        assert!(arr == key);
+    }
+
+    #[test]
+    fn heap_secret_key_should_eq_byte_array_ref() {
+        let key = HeapSecretKey::from(vec![1, 2, 3, 4]);
+        let arr: &[u8; 4] = &[1, 2, 3, 4];
+        assert!(arr == key);
+    }
+
+    #[test]
+    fn heap_secret_key_should_eq_byte_slice() {
+        let key = HeapSecretKey::from(vec![5, 6, 7]);
+        let slice: &[u8] = &[5, 6, 7];
+        assert!(key == *slice);
+        assert!(*slice == key);
+        assert!(slice == key);
+    }
+
+    #[test]
+    fn heap_secret_key_should_not_eq_different_byte_slice() {
+        let key = HeapSecretKey::from(vec![5, 6, 7]);
+        let slice: &[u8] = &[5, 6, 8];
+        assert!(key != *slice);
+    }
+
+    #[test]
+    fn heap_secret_key_should_eq_string() {
+        // HeapSecretKey compares raw bytes to string bytes
+        let raw_bytes = b"hello".to_vec();
+        let key = HeapSecretKey::from(raw_bytes);
+        let s = String::from("hello");
+        assert!(key == s);
+        assert!(s == key);
+        assert!(s == key);
+    }
+
+    #[test]
+    fn heap_secret_key_should_not_eq_different_string() {
+        let key = HeapSecretKey::from(b"hello".to_vec());
+        let s = String::from("world");
+        assert!(key != s);
+    }
+
+    #[test]
+    fn heap_secret_key_should_eq_str() {
+        let raw_bytes = b"test".to_vec();
+        let key = HeapSecretKey::from(raw_bytes);
+        assert!(key == *"test");
+        assert!(*"test" == key);
+        assert!("test" == &key);
+    }
+
+    #[test]
+    fn heap_secret_key_should_not_eq_different_str() {
+        let key = HeapSecretKey::from(b"test".to_vec());
+        assert!(key != *"other");
     }
 }

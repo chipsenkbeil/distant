@@ -175,3 +175,183 @@ impl RawChannel {
         Ok(RawChannel { transport, task })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for RawChannel: accessor methods, abort, Deref/DerefMut, into_client conversions,
+    //! and spawn() constructor with success/error/unexpected/abort response paths.
+
+    use super::*;
+    use crate::net::client::UntypedClient;
+    use crate::net::common::{Connection, Request, Response};
+
+    type ManagerClient = Client<ManagerRequest, ManagerResponse>;
+
+    fn setup() -> (ManagerClient, Connection<InmemoryTransport>) {
+        let (client_conn, server_conn) = Connection::pair(100);
+        let client = UntypedClient::spawn(client_conn, Default::default()).into_typed_client();
+        (client, server_conn)
+    }
+
+    fn make_raw_channel() -> RawChannel {
+        let (transport, _other) = FramedTransport::pair(1);
+        let task = tokio::spawn(async {});
+        RawChannel { transport, task }
+    }
+
+    // ---- RawChannel accessors ----
+
+    #[test_log::test(tokio::test)]
+    async fn abort_cancels_task() {
+        let channel = make_raw_channel();
+        channel.abort();
+        // Give time for the abort to propagate
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(channel.task.is_finished());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn as_framed_transport_returns_reference() {
+        let channel = make_raw_channel();
+        let _transport: &FramedTransport<InmemoryTransport> = channel.as_framed_transport();
+        // Just verify it compiles and returns a reference
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn as_mut_framed_transport_returns_mutable_reference() {
+        let mut channel = make_raw_channel();
+        let _transport: &mut FramedTransport<InmemoryTransport> = channel.as_mut_framed_transport();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn into_framed_transport_consumes_channel() {
+        let channel = make_raw_channel();
+        let _transport: FramedTransport<InmemoryTransport> = channel.into_framed_transport();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn deref_returns_transport_reference() {
+        let channel = make_raw_channel();
+        let _transport: &FramedTransport<InmemoryTransport> = &channel;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn deref_mut_returns_mutable_transport_reference() {
+        let mut channel = make_raw_channel();
+        let _transport: &mut FramedTransport<InmemoryTransport> = &mut channel;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn into_client_returns_typed_client() {
+        let channel = make_raw_channel();
+        let _client: Client<String, String> = channel.into_client();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn into_untyped_client_returns_untyped_client() {
+        let channel = make_raw_channel();
+        let _client: UntypedClient = channel.into_untyped_client();
+    }
+
+    // ---- RawChannel::spawn ----
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_returns_channel_on_successful_channel_opened_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ChannelOpened { id: 42 },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let channel = RawChannel::spawn(123, &mut client).await.unwrap();
+        // Verify we got a working channel by checking we can abort it
+        channel.abort();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_returns_error_on_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::Error {
+                        description: "channel open failed".to_string(),
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        match RawChannel::spawn(123, &mut client).await {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::Other);
+                assert!(err.to_string().contains("channel open failed"));
+            }
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_returns_error_on_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        match RawChannel::spawn(123, &mut client).await {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::InvalidData),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_returns_error_on_mailbox_abort() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let _request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Drop transport without sending a response
+            drop(transport);
+        });
+
+        match RawChannel::spawn(123, &mut client).await {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+}

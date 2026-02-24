@@ -138,3 +138,92 @@ impl Authenticator for TestAuthenticator {
         Box::pin(async move { (self.finished)() })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for TestAuthenticator default callbacks. These exercise the test infrastructure
+    //! itself (echo question text as answers, valid=true, etc.), not production Authenticator
+    //! implementations.
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_authenticator_default_initialize() {
+        let mut auth = TestAuthenticator::default();
+        let init = Initialization {
+            methods: vec!["none".to_string()],
+        };
+        let resp = auth.initialize(init).await.unwrap();
+        assert_eq!(resp.methods, vec!["none".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_challenge() {
+        let mut auth = TestAuthenticator::default();
+        let challenge = Challenge {
+            questions: vec![
+                Question {
+                    label: "q1".to_string(),
+                    text: "password".to_string(),
+                    options: Default::default(),
+                },
+                Question {
+                    label: "q2".to_string(),
+                    text: "token".to_string(),
+                    options: Default::default(),
+                },
+            ],
+            options: Default::default(),
+        };
+        let resp = auth.challenge(challenge).await.unwrap();
+        assert_eq!(
+            resp.answers,
+            vec!["password".to_string(), "token".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_verify() {
+        let mut auth = TestAuthenticator::default();
+        let verification = Verification {
+            kind: VerificationKind::Host,
+            text: "some host".to_string(),
+        };
+        let resp = auth.verify(verification).await.unwrap();
+        assert!(resp.valid);
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_info() {
+        let mut auth = TestAuthenticator::default();
+        let info = Info {
+            text: "info message".to_string(),
+        };
+        auth.info(info).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_error() {
+        let mut auth = TestAuthenticator::default();
+        let error = Error {
+            kind: ErrorKind::Fatal,
+            text: "error message".to_string(),
+        };
+        auth.error(error).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_start_method() {
+        let mut auth = TestAuthenticator::default();
+        let start = StartMethod {
+            method: "none".to_string(),
+        };
+        auth.start_method(start).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_authenticator_default_finished() {
+        let mut auth = TestAuthenticator::default();
+        auth.finished().await.unwrap();
+    }
+}

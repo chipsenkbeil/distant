@@ -1,8 +1,13 @@
+//! Integration tests for the `distant fs remove` CLI subcommand.
+//!
+//! Tests removing files, empty directories, non-empty directories with `--force`,
+//! and error handling when force is not specified for non-empty directories.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]

@@ -183,6 +183,10 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Searcher: setup error handling (missing confirmation, error response,
+    //! unexpected response), result queuing before started confirmation, is_active lifecycle,
+    //! and iteration via next().
+
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -612,5 +616,312 @@ mod tests {
             }))
         );
         assert_eq!(searcher.lock().await.next().await, None);
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_debug_should_include_id_and_query() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task = {
+            let test_query = test_query.clone();
+            tokio::spawn(async move { Searcher::search(session.clone_channel(), test_query).await })
+        };
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        let id: SearchId = 42;
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::SearchStarted { id },
+            ))
+            .await
+            .unwrap();
+
+        let searcher = search_task.await.unwrap().unwrap();
+        let debug_str = format!("{:?}", searcher);
+        assert!(debug_str.contains("Searcher"));
+        assert!(debug_str.contains("42"));
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_is_active_should_return_true_while_task_is_running() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task = {
+            let test_query = test_query.clone();
+            tokio::spawn(async move { Searcher::search(session.clone_channel(), test_query).await })
+        };
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        let id: SearchId = rand::random();
+        transport
+            .write_frame_for(&Response::new(
+                req.id.clone(),
+                protocol::Response::SearchStarted { id },
+            ))
+            .await
+            .unwrap();
+
+        let searcher = search_task.await.unwrap().unwrap();
+
+        // Task should be active since we have not sent SearchDone
+        assert!(searcher.is_active());
+
+        // Send SearchDone to complete the background task
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::SearchDone { id },
+            ))
+            .await
+            .unwrap();
+
+        // Give background task time to finish
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert!(!searcher.is_active());
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_should_fail_when_no_started_confirmation_received() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task =
+            tokio::spawn(
+                async move { Searcher::search(session.clone_channel(), test_query).await },
+            );
+
+        // Wait until we get the request
+        let _req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+
+        // Drop the transport so the mailbox closes without sending SearchStarted
+        drop(transport);
+
+        let err = search_task.await.unwrap().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Search query missing started confirmation"));
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_should_fail_when_error_response_received_during_setup() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task =
+            tokio::spawn(
+                async move { Searcher::search(session.clone_channel(), test_query).await },
+            );
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+
+        // Send an error response instead of SearchStarted
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::Error(protocol::Error {
+                    kind: protocol::ErrorKind::Other,
+                    description: String::from("search failed"),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let err = search_task.await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_should_fail_when_unexpected_response_received_during_setup() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task =
+            tokio::spawn(
+                async move { Searcher::search(session.clone_channel(), test_query).await },
+            );
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+
+        // Send an unexpected response
+        transport
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
+            .await
+            .unwrap();
+
+        let err = search_task.await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("Unexpected response"));
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_should_queue_results_received_before_started_confirmation() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task =
+            tokio::spawn(
+                async move { Searcher::search(session.clone_channel(), test_query).await },
+            );
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        let id: SearchId = rand::random();
+
+        // Send results BEFORE SearchStarted (this can happen in batched responses)
+        transport
+            .write_frame_for(&Response::new(
+                req.id.clone(),
+                vec![
+                    protocol::Response::SearchResults {
+                        id,
+                        matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
+                            path: PathBuf::from("/queued/path"),
+                            submatches: vec![SearchQuerySubmatch {
+                                r#match: SearchQueryMatchData::Text("queued".to_string()),
+                                start: 0,
+                                end: 6,
+                            }],
+                        })],
+                    },
+                    protocol::Response::SearchStarted { id },
+                ],
+            ))
+            .await
+            .unwrap();
+
+        let mut searcher = search_task.await.unwrap().unwrap();
+
+        // The queued match should be delivered
+        let m = searcher.next().await.expect("Searcher closed unexpectedly");
+        assert_eq!(
+            m,
+            SearchQueryMatch::Path(SearchQueryPathMatch {
+                path: PathBuf::from("/queued/path"),
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text("queued".to_string()),
+                    start: 0,
+                    end: 6,
+                }],
+            })
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn searcher_should_return_none_after_search_done() {
+        let (mut transport, session) = make_session();
+        let test_query = SearchQuery {
+            paths: vec![PathBuf::from("/some/test/path")],
+            target: SearchQueryTarget::Path,
+            condition: SearchQueryCondition::Regex {
+                value: String::from("."),
+            },
+            options: SearchQueryOptions::default(),
+        };
+
+        let search_task =
+            tokio::spawn(
+                async move { Searcher::search(session.clone_channel(), test_query).await },
+            );
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        let id: SearchId = rand::random();
+
+        transport
+            .write_frame_for(&Response::new(
+                req.id.clone(),
+                protocol::Response::SearchStarted { id },
+            ))
+            .await
+            .unwrap();
+
+        let mut searcher = search_task.await.unwrap().unwrap();
+
+        // Send one match followed by SearchDone
+        transport
+            .write_frame_for(&Response::new(
+                req.id.clone(),
+                protocol::Response::SearchResults {
+                    id,
+                    matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
+                        path: PathBuf::from("/done/path"),
+                        submatches: vec![SearchQuerySubmatch {
+                            r#match: SearchQueryMatchData::Text("done".to_string()),
+                            start: 0,
+                            end: 4,
+                        }],
+                    })],
+                },
+            ))
+            .await
+            .unwrap();
+
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::SearchDone { id },
+            ))
+            .await
+            .unwrap();
+
+        // Get the match
+        let m = searcher.next().await.expect("Searcher closed unexpectedly");
+        assert_eq!(
+            m,
+            SearchQueryMatch::Path(SearchQueryPathMatch {
+                path: PathBuf::from("/done/path"),
+                submatches: vec![SearchQuerySubmatch {
+                    r#match: SearchQueryMatchData::Text("done".to_string()),
+                    start: 0,
+                    end: 4,
+                }],
+            })
+        );
+
+        // After SearchDone and the task finishes, next() should return None
+        assert_eq!(searcher.next().await, None);
     }
 }

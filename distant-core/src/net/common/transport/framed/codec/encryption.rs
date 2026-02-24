@@ -181,6 +181,10 @@ impl Codec for EncryptionCodec {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for EncryptionType and EncryptionCodec: key generation, codec construction,
+    //! encode/decode round-trips, nonce randomness, wrong-key rejection, edge cases
+    //! (empty frame, nonce-only frame), Debug redaction, and Clone independence.
+
     use test_log::test;
 
     use super::*;
@@ -255,5 +259,275 @@ mod tests {
 
         let frame = codec.decode(frame).expect("Failed to decode");
         assert_eq!(frame, b"hello, world");
+    }
+
+    // --- EncryptionType tests ---
+
+    #[test]
+    fn encryption_type_display_xchacha20poly1305() {
+        assert_eq!(
+            EncryptionType::XChaCha20Poly1305.to_string(),
+            "xchacha20poly1305"
+        );
+    }
+
+    #[test]
+    fn encryption_type_display_unknown() {
+        assert_eq!(EncryptionType::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn encryption_type_known_variants_should_not_include_unknown() {
+        let variants = EncryptionType::known_variants();
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0], EncryptionType::XChaCha20Poly1305);
+        assert!(!variants.iter().any(|v| v.is_unknown()));
+    }
+
+    #[test]
+    fn encryption_type_is_unknown_should_return_true_for_unknown() {
+        assert!(EncryptionType::Unknown.is_unknown());
+    }
+
+    #[test]
+    fn encryption_type_is_unknown_should_return_false_for_xchacha20poly1305() {
+        assert!(!EncryptionType::XChaCha20Poly1305.is_unknown());
+    }
+
+    #[test]
+    fn encryption_type_generate_secret_key_bytes_should_produce_32_bytes_for_xchacha20() {
+        let bytes = EncryptionType::XChaCha20Poly1305
+            .generate_secret_key_bytes()
+            .unwrap();
+        assert_eq!(bytes.len(), 32);
+    }
+
+    #[test]
+    fn encryption_type_generate_secret_key_bytes_should_fail_for_unknown() {
+        let result = EncryptionType::Unknown.generate_secret_key_bytes();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn encryption_type_generate_secret_key_bytes_should_produce_unique_keys() {
+        let key1 = EncryptionType::XChaCha20Poly1305
+            .generate_secret_key_bytes()
+            .unwrap();
+        let key2 = EncryptionType::XChaCha20Poly1305
+            .generate_secret_key_bytes()
+            .unwrap();
+        assert_ne!(key1, key2, "Two generated keys should differ");
+    }
+
+    #[test]
+    fn encryption_type_new_codec_should_succeed_for_xchacha20() {
+        let key = EncryptionType::XChaCha20Poly1305
+            .generate_secret_key_bytes()
+            .unwrap();
+        let result = EncryptionType::XChaCha20Poly1305.new_codec(&key);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn encryption_type_new_codec_should_fail_for_unknown() {
+        let result = EncryptionType::Unknown.new_codec(&[0u8; 32]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encryption_type_serde_round_trip_xchacha20poly1305() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let json = serde_json::to_string(&ty).unwrap();
+        let deserialized: EncryptionType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ty);
+    }
+
+    #[test]
+    fn encryption_type_serde_unknown_variant_should_deserialize_as_unknown() {
+        let json = r#""SomeNewType""#;
+        let deserialized: EncryptionType = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized, EncryptionType::Unknown);
+    }
+
+    // --- EncryptionCodec construction tests ---
+
+    #[test]
+    fn from_type_and_key_should_fail_for_unknown_type() {
+        let result = EncryptionCodec::from_type_and_key(EncryptionType::Unknown, &[0u8; 32]);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn from_type_and_key_should_fail_for_invalid_key_length() {
+        // XChaCha20Poly1305 requires 32 bytes; provide 16
+        let result =
+            EncryptionCodec::from_type_and_key(EncryptionType::XChaCha20Poly1305, &[0u8; 16]);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn from_type_and_key_should_fail_for_empty_key() {
+        let result = EncryptionCodec::from_type_and_key(EncryptionType::XChaCha20Poly1305, &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn new_xchacha20poly1305_should_create_codec() {
+        let secret_key = SecretKey32::generate().unwrap();
+        let codec = EncryptionCodec::new_xchacha20poly1305(secret_key);
+        assert_eq!(codec.ty(), EncryptionType::XChaCha20Poly1305);
+    }
+
+    // --- EncryptionCodec accessor tests ---
+
+    #[test]
+    fn ty_should_return_xchacha20poly1305_for_xchacha20_codec() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+        assert_eq!(codec.ty(), EncryptionType::XChaCha20Poly1305);
+    }
+
+    #[test]
+    fn nonce_size_should_return_24_for_xchacha20poly1305() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+        assert_eq!(codec.nonce_size(), 24);
+    }
+
+    // --- EncryptionCodec Debug ---
+
+    #[test]
+    fn debug_should_omit_cipher_details() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+        let debug_str = format!("{:?}", codec);
+        assert!(debug_str.contains("**OMITTED**"));
+        assert!(debug_str.contains("nonce_size"));
+        assert!(debug_str.contains("24"));
+        assert!(debug_str.contains("xchacha20poly1305"));
+    }
+
+    // --- EncryptionCodec Clone ---
+
+    #[test]
+    fn clone_should_produce_independently_usable_codec() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+        let mut cloned = codec.clone();
+
+        // Encode with original, decode with clone
+        let frame = codec
+            .encode(Frame::new(b"test clone"))
+            .expect("Failed to encode");
+        let decoded = cloned.decode(frame).expect("Failed to decode");
+        assert_eq!(decoded, b"test clone");
+    }
+
+    // --- Encode/Decode edge cases ---
+
+    #[test]
+    fn encode_then_decode_single_byte_should_round_trip() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        let frame = codec.encode(Frame::new(&[42])).expect("Failed to encode");
+        let frame = codec.decode(frame).expect("Failed to decode");
+        assert_eq!(frame, [42]);
+    }
+
+    #[test]
+    fn encode_then_decode_large_data_should_round_trip() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        let data: Vec<u8> = (0..10_000).map(|i| (i % 256) as u8).collect();
+        let frame = codec.encode(Frame::new(&data)).expect("Failed to encode");
+        let frame = codec.decode(frame).expect("Failed to decode");
+        assert_eq!(frame.as_item(), data.as_slice());
+    }
+
+    #[test]
+    fn decode_should_fail_if_frame_is_empty() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        let result = codec.decode(Frame::empty());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn decode_should_fail_if_frame_is_exactly_nonce_size() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        // Exactly nonce_size bytes means no ciphertext at all
+        let frame = Frame::from(vec![0u8; codec.nonce_size()]);
+        let result = codec.decode(frame);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn decode_with_wrong_key_should_fail() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key1 = ty.generate_secret_key_bytes().unwrap();
+        let key2 = ty.generate_secret_key_bytes().unwrap();
+
+        let mut encoder = EncryptionCodec::from_type_and_key(ty, &key1).unwrap();
+        let mut decoder = EncryptionCodec::from_type_and_key(ty, &key2).unwrap();
+
+        let frame = encoder
+            .encode(Frame::new(b"secret message"))
+            .expect("Failed to encode");
+
+        let result = decoder.decode(frame);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn encode_produces_different_ciphertext_each_time_due_to_random_nonce() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        let frame1 = codec
+            .encode(Frame::new(b"same input"))
+            .expect("Failed to encode");
+        let frame2 = codec
+            .encode(Frame::new(b"same input"))
+            .expect("Failed to encode");
+
+        // The nonces should differ, making the ciphertext different
+        assert_ne!(frame1.as_item(), frame2.as_item());
+    }
+
+    #[test]
+    fn encoded_frame_should_be_larger_than_original_due_to_nonce_and_auth_tag() {
+        let ty = EncryptionType::XChaCha20Poly1305;
+        let key = ty.generate_secret_key_bytes().unwrap();
+        let mut codec = EncryptionCodec::from_type_and_key(ty, &key).unwrap();
+
+        let original = Frame::new(b"hello");
+        let encoded = codec.encode(original).expect("Failed to encode");
+
+        // Encoded should be: nonce (24) + plaintext (5) + auth tag (16) = 45
+        assert!(
+            encoded.len() > 5,
+            "Encoded frame should be larger than original"
+        );
+        assert_eq!(encoded.len(), 24 + 5 + 16);
     }
 }

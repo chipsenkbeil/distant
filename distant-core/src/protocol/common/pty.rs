@@ -109,6 +109,9 @@ impl FromStr for PtySize {
 }
 #[cfg(test)]
 mod tests {
+    //! Tests for PtySize: from_rows_and_cols constructor, Default, Display (conditional pixel
+    //! fields), FromStr parsing with error variants, round-trips, and parse error Display.
+
     use super::*;
 
     #[test]
@@ -237,5 +240,169 @@ mod tests {
                 pixel_height: 40,
             }
         );
+    }
+
+    #[test]
+    fn from_rows_and_cols_should_set_rows_and_cols_with_zero_pixels() {
+        let size = PtySize::from_rows_and_cols(48, 120);
+        assert_eq!(size.rows, 48);
+        assert_eq!(size.cols, 120);
+        assert_eq!(size.pixel_width, 0);
+        assert_eq!(size.pixel_height, 0);
+    }
+
+    #[test]
+    fn default_should_return_24_rows_80_cols() {
+        let size = PtySize::default();
+        assert_eq!(size.rows, 24);
+        assert_eq!(size.cols, 80);
+        assert_eq!(size.pixel_width, 0);
+        assert_eq!(size.pixel_height, 0);
+    }
+
+    #[test]
+    fn display_should_print_rows_and_cols_without_pixels_when_both_zero() {
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        assert_eq!(size.to_string(), "24,80");
+    }
+
+    #[test]
+    fn display_should_include_pixels_when_pixel_width_is_nonzero() {
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 640,
+            pixel_height: 0,
+        };
+        assert_eq!(size.to_string(), "24,80,640,0");
+    }
+
+    #[test]
+    fn display_should_include_pixels_when_pixel_height_is_nonzero() {
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 480,
+        };
+        assert_eq!(size.to_string(), "24,80,0,480");
+    }
+
+    #[test]
+    fn display_should_include_pixels_when_both_nonzero() {
+        let size = PtySize {
+            rows: 10,
+            cols: 20,
+            pixel_width: 640,
+            pixel_height: 480,
+        };
+        assert_eq!(size.to_string(), "10,20,640,480");
+    }
+
+    #[test]
+    fn from_str_should_parse_rows_and_cols_only() {
+        let size: PtySize = "48,120".parse().unwrap();
+        assert_eq!(size.rows, 48);
+        assert_eq!(size.cols, 120);
+        assert_eq!(size.pixel_width, 0);
+        assert_eq!(size.pixel_height, 0);
+    }
+
+    #[test]
+    fn from_str_should_parse_all_four_fields() {
+        let size: PtySize = "10,20,640,480".parse().unwrap();
+        assert_eq!(size.rows, 10);
+        assert_eq!(size.cols, 20);
+        assert_eq!(size.pixel_width, 640);
+        assert_eq!(size.pixel_height, 480);
+    }
+
+    #[test]
+    fn from_str_should_trim_whitespace() {
+        let size: PtySize = " 10 , 20 , 30 , 40 ".parse().unwrap();
+        assert_eq!(size.rows, 10);
+        assert_eq!(size.cols, 20);
+        assert_eq!(size.pixel_width, 30);
+        assert_eq!(size.pixel_height, 40);
+    }
+
+    #[test]
+    fn from_str_should_fail_with_missing_columns() {
+        let result: Result<PtySize, _> = "10".parse();
+        assert_eq!(result.unwrap_err(), PtySizeParseError::MissingColumns);
+    }
+
+    #[test]
+    fn from_str_should_fail_with_invalid_rows() {
+        let result: Result<PtySize, _> = "abc,80".parse();
+        assert!(matches!(
+            result.unwrap_err(),
+            PtySizeParseError::InvalidRows(_)
+        ));
+    }
+
+    #[test]
+    fn from_str_should_fail_with_invalid_columns() {
+        let result: Result<PtySize, _> = "24,xyz".parse();
+        assert!(matches!(
+            result.unwrap_err(),
+            PtySizeParseError::InvalidColumns(_)
+        ));
+    }
+
+    #[test]
+    fn from_str_should_fail_with_invalid_pixel_width() {
+        let result: Result<PtySize, _> = "24,80,bad,0".parse();
+        assert!(matches!(
+            result.unwrap_err(),
+            PtySizeParseError::InvalidPixelWidth(_)
+        ));
+    }
+
+    #[test]
+    fn from_str_should_fail_with_invalid_pixel_height() {
+        let result: Result<PtySize, _> = "24,80,0,bad".parse();
+        assert!(matches!(
+            result.unwrap_err(),
+            PtySizeParseError::InvalidPixelHeight(_)
+        ));
+    }
+
+    #[test]
+    fn from_str_roundtrip_without_pixels() {
+        let original = PtySize::from_rows_and_cols(30, 100);
+        let parsed: PtySize = original.to_string().parse().unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn from_str_roundtrip_with_pixels() {
+        let original = PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 800,
+            pixel_height: 600,
+        };
+        let parsed: PtySize = original.to_string().parse().unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn parse_error_missing_rows_should_display() {
+        let err = PtySizeParseError::MissingRows;
+        let s = err.to_string();
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn parse_error_missing_columns_should_display() {
+        let err = PtySizeParseError::MissingColumns;
+        let s = err.to_string();
+        assert!(!s.is_empty());
     }
 }

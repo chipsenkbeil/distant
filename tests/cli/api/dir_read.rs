@@ -1,3 +1,8 @@
+//! Integration tests for the `dir_read` JSON API endpoint.
+//!
+//! Tests reading directory contents at various depths, with/without absolute paths,
+//! with/without root inclusion, and error handling for missing directories.
+
 use std::path::PathBuf;
 
 use assert_fs::prelude::*;
@@ -5,7 +10,7 @@ use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 /// Creates a directory in the form
 ///

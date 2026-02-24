@@ -1,3 +1,8 @@
+//! Integration tests for the `distant --help` and `distant manager --help` output.
+//!
+//! Verifies that top-level and manager subcommand help text contains expected
+//! commands and does not expose removed/internal commands.
+
 use assert_cmd::Command;
 
 #[test]

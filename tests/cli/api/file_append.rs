@@ -1,9 +1,14 @@
+//! Integration tests for the `file_append` (binary/byte) JSON API endpoint.
+//!
+//! Tests appending raw byte data to an existing file and error handling
+//! when the target file's parent directory is missing.
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = r#"
 some text

@@ -137,7 +137,7 @@ impl Args for Cmd {
 } */
 
 /* #[cfg(test)]
-mod tests {
+mod tests_old {
     use super::*;
 
     #[test]
@@ -145,3 +145,133 @@ mod tests {
         Cmd::augment_args(Command::new("distant")).debug_assert();
     }
 } */
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the `Cmd` type: construction, `Display`, `From`/`FromStr`,
+    //! round-trips, `PartialEq`, and platform-specific quoted-arg parsing.
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // Cmd::new
+    // -------------------------------------------------------
+    #[test]
+    fn new_creates_cmd_with_args() {
+        let cmd = Cmd::new("echo", vec!["hello", "world"].into_iter());
+        assert_eq!(cmd.cmd, "echo");
+        assert_eq!(cmd.args, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn new_creates_cmd_with_no_args() {
+        let cmd = Cmd::new("ls", std::iter::empty::<String>());
+        assert_eq!(cmd.cmd, "ls");
+        assert!(cmd.args.is_empty());
+    }
+
+    // -------------------------------------------------------
+    // Display
+    // -------------------------------------------------------
+    #[test]
+    fn display_cmd_only() {
+        let cmd = Cmd::new("ls", std::iter::empty::<String>());
+        assert_eq!(cmd.to_string(), "ls");
+    }
+
+    #[test]
+    fn display_cmd_with_args() {
+        let cmd = Cmd::new("echo", vec!["hello", "world"].into_iter());
+        assert_eq!(cmd.to_string(), "echo hello world");
+    }
+
+    #[test]
+    fn display_cmd_with_single_arg() {
+        let cmd = Cmd::new("cat", vec!["file.txt"].into_iter());
+        assert_eq!(cmd.to_string(), "cat file.txt");
+    }
+
+    // -------------------------------------------------------
+    // From<Cmd> for String
+    // -------------------------------------------------------
+    #[test]
+    fn from_cmd_to_string() {
+        let cmd = Cmd::new("echo", vec!["hi"].into_iter());
+        let s: String = cmd.into();
+        assert_eq!(s, "echo hi");
+    }
+
+    // -------------------------------------------------------
+    // FromStr (platform-dependent parsing)
+    // -------------------------------------------------------
+    #[test]
+    fn from_str_simple_command() {
+        let cmd: Cmd = "echo hello world".parse().unwrap();
+        assert_eq!(cmd.cmd, "echo");
+        assert_eq!(cmd.args, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn from_str_empty_string() {
+        let cmd: Cmd = "".parse().unwrap();
+        assert_eq!(cmd.cmd, "");
+        assert!(cmd.args.is_empty());
+    }
+
+    #[test]
+    fn from_str_command_no_args() {
+        let cmd: Cmd = "ls".parse().unwrap();
+        assert_eq!(cmd.cmd, "ls");
+        assert!(cmd.args.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_str_quoted_args_unix() {
+        let cmd: Cmd = r#"echo "hello world" foo"#.parse().unwrap();
+        assert_eq!(cmd.cmd, "echo");
+        assert_eq!(cmd.args, vec!["hello world".to_string(), "foo".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_str_single_quoted_args_unix() {
+        let cmd: Cmd = "echo 'hello world' bar".parse().unwrap();
+        assert_eq!(cmd.cmd, "echo");
+        assert_eq!(cmd.args, vec!["hello world".to_string(), "bar".to_string()]);
+    }
+
+    // -------------------------------------------------------
+    // From<&str> for Cmd (panics on failure)
+    // -------------------------------------------------------
+    #[test]
+    fn from_str_ref_simple() {
+        let cmd: Cmd = Cmd::from("echo hello");
+        assert_eq!(cmd.cmd, "echo");
+        assert_eq!(cmd.args, vec!["hello".to_string()]);
+    }
+
+    // -------------------------------------------------------
+    // round-trip: parse then display
+    // -------------------------------------------------------
+    #[test]
+    fn round_trip_simple_command() {
+        let original = "ls -la /tmp";
+        let cmd: Cmd = original.parse().unwrap();
+        assert_eq!(cmd.to_string(), original);
+    }
+
+    // -------------------------------------------------------
+    // PartialEq
+    // -------------------------------------------------------
+    #[test]
+    fn equality_check() {
+        let cmd1 = Cmd::new("echo", vec!["hi"].into_iter());
+        let cmd2 = Cmd::new("echo", vec!["hi"].into_iter());
+        let cmd3 = Cmd::new("echo", vec!["bye"].into_iter());
+        assert_eq!(cmd1, cmd2);
+        assert_ne!(cmd1, cmd3);
+    }
+}

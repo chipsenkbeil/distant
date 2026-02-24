@@ -296,6 +296,9 @@ impl<'a> UntypedResponse<'a> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Response<T> and UntypedResponse: serialization round-trips, field accessors,
+    //! borrowing, header/id/origin_id mutation, and msgpack byte-level parsing of the wire format.
+
     use test_log::test;
 
     use super::*;
@@ -329,6 +332,63 @@ mod tests {
 
     /// fixstr of 4 bytes with str "test"
     const TEST_STR_BYTES: &[u8] = &[0xa4, b't', b'e', b's', b't'];
+
+    #[test]
+    fn untyped_response_as_borrowed() {
+        let resp = UntypedResponse {
+            header: Cow::Owned(vec![1, 2]),
+            id: Cow::Owned("id1".to_string()),
+            origin_id: Cow::Owned("oid1".to_string()),
+            payload: Cow::Owned(vec![3, 4]),
+        };
+        let borrowed = resp.as_borrowed();
+        assert_eq!(borrowed.header.as_ref(), &[1, 2]);
+        assert_eq!(borrowed.id.as_ref(), "id1");
+        assert_eq!(borrowed.origin_id.as_ref(), "oid1");
+        assert_eq!(borrowed.payload.as_ref(), &[3, 4]);
+    }
+
+    #[test]
+    fn untyped_response_set_header() {
+        let mut resp = UntypedResponse {
+            header: Cow::Owned(vec![]),
+            id: Cow::Borrowed("id"),
+            origin_id: Cow::Borrowed("oid"),
+            payload: Cow::Owned(vec![]),
+        };
+        resp.set_header(vec![10, 20]);
+        assert_eq!(resp.header.as_ref(), &[10, 20]);
+    }
+
+    #[test]
+    fn untyped_response_set_id() {
+        let mut resp = UntypedResponse {
+            header: Cow::Owned(vec![]),
+            id: Cow::Borrowed("old"),
+            origin_id: Cow::Borrowed("oid"),
+            payload: Cow::Owned(vec![]),
+        };
+        resp.set_id("new-id");
+        assert_eq!(resp.id.as_ref(), "new-id");
+    }
+
+    #[test]
+    fn typed_response_to_untyped_with_header() {
+        let resp = Response {
+            header: header!("key" -> 123),
+            id: "id1".to_string(),
+            origin_id: "oid1".to_string(),
+            payload: true,
+        };
+        let untyped = resp.to_untyped_response().unwrap();
+        assert!(!untyped.header.is_empty());
+        // Deserialize the header bytes back and verify actual content
+        let header: Header = utils::deserialize_from_slice(&untyped.header)
+            .expect("header bytes should deserialize back to Header");
+        assert_eq!(header, header!("key" -> 123));
+        assert_eq!(untyped.id.as_ref(), "id1");
+        assert_eq!(untyped.origin_id.as_ref(), "oid1");
+    }
 
     #[test]
     fn untyped_response_should_support_converting_to_bytes() {

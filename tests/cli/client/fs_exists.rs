@@ -1,7 +1,11 @@
+//! Integration tests for the `distant fs exists` CLI subcommand.
+//!
+//! Tests checking whether a path exists on the filesystem.
+
 use assert_fs::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]

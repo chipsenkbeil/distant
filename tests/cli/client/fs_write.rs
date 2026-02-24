@@ -1,9 +1,14 @@
+//! Integration tests for the `distant fs write` CLI subcommand.
+//!
+//! Tests writing content to files via stdin and argument input, with optional
+//! append mode, and error handling for missing parent directories.
+
 use assert_fs::prelude::*;
 use indoc::indoc;
 use predicates::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = indoc! {r#"
     some text

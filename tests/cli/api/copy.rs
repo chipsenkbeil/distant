@@ -1,10 +1,15 @@
+//! Integration tests for the `copy` JSON API endpoint.
+//!
+//! Tests copying files, copying non-empty directories, and error handling
+//! when the source does not exist.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 const FILE_CONTENTS: &str = r#"
 some text

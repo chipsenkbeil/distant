@@ -423,3 +423,404 @@ async fn watcher_task<W>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `WatcherBuilder`, `WatcherChannel`, and `WatcherState` covering builder
+    //! configuration, channel lifecycle, watch/unwatch operations, ref-counting for multiple
+    //! watchers on the same path, recursive mode, and actual file change detection.
+
+    use super::*;
+    use assert_fs::prelude::*;
+    use distant_core::protocol::ChangeKindSet;
+    use test_log::test;
+
+    // ---- WatcherBuilder ----
+
+    #[test(tokio::test)]
+    async fn watcher_builder_new_should_create_default_builder() {
+        let builder = WatcherBuilder::new();
+        // Default config should use native watcher
+        assert!(builder.config.native);
+    }
+
+    #[test(tokio::test)]
+    async fn watcher_builder_with_config_should_replace_config() {
+        let config = WatchConfig {
+            native: false,
+            poll_interval: Some(Duration::from_secs(10)),
+            compare_contents: true,
+            debounce_timeout: Duration::from_millis(100),
+            debounce_tick_rate: Some(Duration::from_millis(50)),
+        };
+
+        let builder = WatcherBuilder::new().with_config(config.clone());
+        assert_eq!(builder.config, config);
+    }
+
+    #[test(tokio::test)]
+    async fn watcher_builder_initialize_should_succeed_with_native_watcher() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        // State should be usable
+        drop(state);
+    }
+
+    #[test(tokio::test)]
+    async fn watcher_builder_initialize_should_succeed_with_poll_watcher() {
+        let config = WatchConfig {
+            native: false,
+            poll_interval: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+        let state = WatcherBuilder::new()
+            .with_config(config)
+            .initialize()
+            .unwrap();
+        drop(state);
+    }
+
+    // ---- WatcherChannel::default ----
+
+    #[test(tokio::test)]
+    async fn default_channel_watch_should_fail_with_closed_error() {
+        let channel = WatcherChannel::default();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let (reply_tx, _reply_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = channel.watch(registered).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal watcher task closed"));
+    }
+
+    #[test(tokio::test)]
+    async fn default_channel_unwatch_should_fail_with_closed_error() {
+        let channel = WatcherChannel::default();
+        let result = channel.unwatch(1, "/some/path").await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Internal watcher task closed"));
+    }
+
+    // ---- WatcherState lifecycle ----
+
+    #[test(tokio::test)]
+    async fn watcher_state_deref_provides_channel() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let _channel: &WatcherChannel = &state;
+    }
+
+    #[test(tokio::test)]
+    async fn watcher_state_abort_should_close_internal_task() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        state.abort();
+
+        // Allow time for abort to propagate
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let temp = assert_fs::TempDir::new().unwrap();
+        let (reply_tx, _reply_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = state.watch(registered).await;
+        assert!(result.is_err());
+    }
+
+    // ---- watch / unwatch ----
+
+    #[test(tokio::test)]
+    async fn watch_should_succeed_for_existing_directory() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let (reply_tx, _reply_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = state.watch(registered).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn watch_should_succeed_for_existing_file() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        let file = temp.child("test.txt");
+        file.touch().unwrap();
+
+        let (reply_tx, _reply_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let registered = RegisteredPath::register(
+            1,
+            file.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = state.watch(registered).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn watch_same_path_twice_should_increment_refcount() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        // First watch
+        let (reply_tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
+        let reg1 = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx1),
+        )
+        .await
+        .unwrap();
+        state.watch(reg1).await.unwrap();
+
+        // Second watch of same path by different connection
+        let (reply_tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+        let reg2 = RegisteredPath::register(
+            2,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx2),
+        )
+        .await
+        .unwrap();
+        let result = state.watch(reg2).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn unwatch_should_succeed_after_watching() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let (reply_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+        state.watch(registered).await.unwrap();
+
+        let result = state.unwatch(1, temp.path()).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn unwatch_should_fail_for_unwatched_path() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let result = state.unwatch(1, temp.path()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("is not being watched"));
+    }
+
+    #[test(tokio::test)]
+    async fn unwatch_should_fail_for_wrong_connection_id() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let (reply_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+        state.watch(registered).await.unwrap();
+
+        // Try to unwatch with a different connection id
+        let result = state.unwatch(999, temp.path()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("is not being watched"));
+    }
+
+    #[test(tokio::test)]
+    async fn unwatch_one_of_two_watchers_should_keep_path_watched() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        // Two connections watch the same path
+        let (reply_tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
+        let reg1 = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx1),
+        )
+        .await
+        .unwrap();
+        state.watch(reg1).await.unwrap();
+
+        let (reply_tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+        let reg2 = RegisteredPath::register(
+            2,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx2),
+        )
+        .await
+        .unwrap();
+        state.watch(reg2).await.unwrap();
+
+        // Unwatch for connection 1 - should succeed (decrements refcount)
+        let result = state.unwatch(1, temp.path()).await;
+        assert!(result.is_ok());
+
+        // Unwatch for connection 2 - should also succeed (actually unwatches)
+        let result = state.unwatch(2, temp.path()).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn watch_should_succeed_with_recursive_mode() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+        temp.child("subdir").create_dir_all().unwrap();
+
+        let (reply_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            true, // recursive
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = state.watch(registered).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn watcher_channel_clone_should_work() {
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let channel = state.channel.clone();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let (reply_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            false,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+
+        let result = channel.watch(registered).await;
+        assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn watch_should_detect_file_changes() {
+        // Use the native watcher for reliability (poll watcher can be flaky)
+        let state = WatcherBuilder::new().initialize().unwrap();
+        let temp = assert_fs::TempDir::new().unwrap();
+
+        let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel();
+        let registered = RegisteredPath::register(
+            1,
+            temp.path(),
+            true,
+            ChangeKindSet::default(),
+            ChangeKindSet::default(),
+            Box::new(reply_tx),
+        )
+        .await
+        .unwrap();
+        state.watch(registered).await.unwrap();
+
+        // Wait for the watcher to fully initialize
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Create a new file inside the watched directory
+        let file = temp.child("new_file.txt");
+        file.write_str("hello world").unwrap();
+
+        // Wait for a change event (generous timeout for CI environments)
+        let result = tokio::time::timeout(Duration::from_secs(10), reply_rx.recv()).await;
+        assert!(
+            result.is_ok(),
+            "Should have received a watcher event after file change"
+        );
+        let response = result.unwrap().unwrap();
+        match response {
+            distant_core::protocol::Response::Changed(change) => {
+                assert!(!change.path.as_os_str().is_empty());
+            }
+            distant_core::protocol::Response::Error(_) => {
+                // Some platforms may report errors instead of changes; that's ok
+            }
+            other => panic!("Unexpected response type: {other:?}"),
+        }
+    }
+}

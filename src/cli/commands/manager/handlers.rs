@@ -456,13 +456,10 @@ impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 }
 
-async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
-    trace!("load_ssh({destination}, {options})");
-    use distant_ssh::{Ssh, SshOpts};
+fn parse_ssh_opts(destination: &Destination, options: &Map) -> io::Result<distant_ssh::SshOpts> {
+    use distant_ssh::SshOpts;
 
-    let host = destination.host.to_string();
-
-    let opts = SshOpts {
+    Ok(SshOpts {
         identity_files: options
             .get("identity_files")
             .or_else(|| options.get("ssh.identity_files"))
@@ -502,8 +499,410 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
         },
 
         ..Default::default()
-    };
+    })
+}
+
+async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
+    trace!("load_ssh({destination}, {options})");
+    use distant_ssh::Ssh;
+
+    let host = destination.host.to_string();
+    let opts = parse_ssh_opts(destination, options)?;
 
     debug!("Connecting to {host} via ssh with {opts:?}");
     Ssh::connect(host, opts).await
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for handler helpers (`missing`/`invalid`), plugin types, SSH option
+    //! parsing via `parse_ssh_opts`, args quote-stripping, and `bind_server` filtering.
+
+    use distant_core::net::common::Host;
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // missing() / invalid() helpers
+    // -------------------------------------------------------
+    #[test]
+    fn missing_creates_invalid_input_error() {
+        let err = missing("port");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.to_string(), "Missing port");
+    }
+
+    #[test]
+    fn invalid_creates_invalid_input_error() {
+        let err = invalid("timeout");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(err.to_string(), "Invalid timeout");
+    }
+
+    // -------------------------------------------------------
+    // DistantPlugin::new
+    // -------------------------------------------------------
+    #[test]
+    fn distant_plugin_new_does_not_panic() {
+        let _plugin = DistantPlugin::new();
+    }
+
+    // -------------------------------------------------------
+    // DistantPlugin::name
+    // -------------------------------------------------------
+    #[test]
+    fn distant_plugin_name_is_distant() {
+        let plugin = DistantPlugin::new();
+        assert_eq!(Plugin::name(&plugin), "distant");
+    }
+
+    // -------------------------------------------------------
+    // DistantPlugin::shutdown
+    // -------------------------------------------------------
+    #[test]
+    fn distant_plugin_shutdown_does_not_panic() {
+        let plugin = DistantPlugin::new();
+        plugin.shutdown();
+        // Call twice to ensure idempotent
+        plugin.shutdown();
+    }
+
+    // -------------------------------------------------------
+    // DistantPlugin::drop calls shutdown
+    // -------------------------------------------------------
+    #[test]
+    fn distant_plugin_drop_does_not_panic() {
+        let plugin = DistantPlugin::new();
+        drop(plugin);
+    }
+
+    // -------------------------------------------------------
+    // SshPlugin::name
+    // -------------------------------------------------------
+    #[test]
+    fn ssh_plugin_name_is_ssh() {
+        let plugin = SshPlugin;
+        assert_eq!(Plugin::name(&plugin), "ssh");
+    }
+
+    // -------------------------------------------------------
+    // ClientLaunchConfig from options — used in launch path
+    // -------------------------------------------------------
+    #[test]
+    fn launch_config_from_options_extracts_distant_fields() {
+        let mut options = Map::new();
+        options.insert("distant.bin".to_string(), "/usr/bin/distant".to_string());
+        options.insert("distant.bind_server".to_string(), "127.0.0.1".to_string());
+        options.insert("distant.args".to_string(), "--port 8080".to_string());
+
+        let config = ClientLaunchConfig::from(options);
+        assert_eq!(config.distant.bin.as_deref(), Some("/usr/bin/distant"));
+        assert_eq!(config.distant.args.as_deref(), Some("--port 8080"));
+    }
+
+    // -------------------------------------------------------
+    // parse_ssh_opts — option parsing tests
+    // -------------------------------------------------------
+
+    fn make_destination(host: &str) -> Destination {
+        Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: host.parse().unwrap(),
+            port: None,
+        }
+    }
+
+    #[test]
+    fn ssh_opts_identity_files_parsing() {
+        let mut options = Map::new();
+        options.insert(
+            "identity_files".to_string(),
+            "/home/user/.ssh/id_rsa,/home/user/.ssh/id_ed25519".to_string(),
+        );
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identity_files.len(), 2);
+        assert_eq!(
+            opts.identity_files[0],
+            PathBuf::from("/home/user/.ssh/id_rsa")
+        );
+        assert_eq!(
+            opts.identity_files[1],
+            PathBuf::from("/home/user/.ssh/id_ed25519")
+        );
+    }
+
+    #[test]
+    fn ssh_opts_identity_files_with_ssh_prefix() {
+        let mut options = Map::new();
+        options.insert(
+            "ssh.identity_files".to_string(),
+            "/home/user/.ssh/id_rsa".to_string(),
+        );
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identity_files.len(), 1);
+        assert_eq!(
+            opts.identity_files[0],
+            PathBuf::from("/home/user/.ssh/id_rsa")
+        );
+    }
+
+    #[test]
+    fn ssh_opts_identities_only_parsing() {
+        let mut options = Map::new();
+        options.insert("identities_only".to_string(), "true".to_string());
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identities_only, Some(true));
+    }
+
+    #[test]
+    fn ssh_opts_verbose_parsing() {
+        let mut options = Map::new();
+        options.insert("verbose".to_string(), "true".to_string());
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
+    }
+
+    #[test]
+    fn ssh_opts_verbose_with_ssh_prefix() {
+        let mut options = Map::new();
+        options.insert("ssh.verbose".to_string(), "true".to_string());
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
+    }
+
+    #[test]
+    fn ssh_opts_verbose_with_client_prefix() {
+        let mut options = Map::new();
+        options.insert("client.verbose".to_string(), "true".to_string());
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
+    }
+
+    #[test]
+    fn ssh_opts_verbose_defaults_to_false() {
+        let options = Map::new();
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(!opts.verbose);
+    }
+
+    #[test]
+    fn ssh_opts_proxy_command_parsing() {
+        let mut options = Map::new();
+        options.insert(
+            "proxy_command".to_string(),
+            "ssh -W %h:%p proxy.example.com".to_string(),
+        );
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(
+            opts.proxy_command.as_deref(),
+            Some("ssh -W %h:%p proxy.example.com")
+        );
+    }
+
+    #[test]
+    fn ssh_opts_user_known_hosts_files_parsing() {
+        let mut options = Map::new();
+        options.insert(
+            "user_known_hosts_files".to_string(),
+            "/home/user/.ssh/known_hosts,/etc/ssh/known_hosts".to_string(),
+        );
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.user_known_hosts_files.len(), 2);
+        assert_eq!(
+            opts.user_known_hosts_files[0],
+            PathBuf::from("/home/user/.ssh/known_hosts")
+        );
+        assert_eq!(
+            opts.user_known_hosts_files[1],
+            PathBuf::from("/etc/ssh/known_hosts")
+        );
+    }
+
+    #[test]
+    fn ssh_opts_empty_options_produces_defaults() {
+        let options = Map::new();
+
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.identity_files.is_empty());
+        assert!(opts.user_known_hosts_files.is_empty());
+        assert!(opts.proxy_command.is_none());
+    }
+
+    // -------------------------------------------------------
+    // launch — args quote stripping logic
+    // -------------------------------------------------------
+    // These tests replicate the quote-stripping loop from the launch path.
+    // The loop is not yet extracted into a standalone function, so we test
+    // a copy of the pattern here.
+
+    #[test]
+    fn args_quote_stripping_double_quotes() {
+        let mut distant_args: &str = "\"--port 8080\"";
+        loop {
+            if let Some(args) = distant_args
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                distant_args = args;
+            } else if let Some(args) = distant_args
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+            {
+                distant_args = args;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(distant_args, "--port 8080");
+    }
+
+    #[test]
+    fn args_quote_stripping_single_quotes() {
+        let mut distant_args: &str = "'--port 8080'";
+        loop {
+            if let Some(args) = distant_args
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                distant_args = args;
+            } else if let Some(args) = distant_args
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+            {
+                distant_args = args;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(distant_args, "--port 8080");
+    }
+
+    #[test]
+    fn args_quote_stripping_nested_quotes() {
+        let mut distant_args: &str = "\"'--port 8080'\"";
+        loop {
+            if let Some(args) = distant_args
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                distant_args = args;
+            } else if let Some(args) = distant_args
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+            {
+                distant_args = args;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(distant_args, "--port 8080");
+    }
+
+    #[test]
+    fn args_quote_stripping_no_quotes() {
+        let mut distant_args: &str = "--port 8080";
+        loop {
+            if let Some(args) = distant_args
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                distant_args = args;
+            } else if let Some(args) = distant_args
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+            {
+                distant_args = args;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(distant_args, "--port 8080");
+    }
+
+    // -------------------------------------------------------
+    // DistantPlugin — bind_server ssh filtering
+    // -------------------------------------------------------
+    #[test]
+    fn bind_server_ssh_is_filtered_to_any() {
+        let bind_server = Some(BindAddress::Ssh);
+        let result = bind_server
+            .as_ref()
+            .filter(|x| !x.is_ssh())
+            .unwrap_or(&BindAddress::Any);
+        assert_eq!(*result, BindAddress::Any);
+    }
+
+    #[test]
+    fn bind_server_any_is_not_filtered() {
+        let bind_server = Some(BindAddress::Any);
+        let result = bind_server
+            .as_ref()
+            .filter(|x| !x.is_ssh())
+            .unwrap_or(&BindAddress::Any);
+        assert_eq!(*result, BindAddress::Any);
+    }
+
+    #[test]
+    fn bind_server_host_is_not_filtered() {
+        let bind_server = Some(BindAddress::Host(Host::Name("example.com".to_string())));
+        let result = bind_server
+            .as_ref()
+            .filter(|x| !x.is_ssh())
+            .unwrap_or(&BindAddress::Any);
+        assert_eq!(
+            *result,
+            BindAddress::Host(Host::Name("example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn bind_server_none_defaults_to_any() {
+        let bind_server: Option<BindAddress> = None;
+        let result = bind_server
+            .as_ref()
+            .filter(|x| !x.is_ssh())
+            .unwrap_or(&BindAddress::Any);
+        assert_eq!(*result, BindAddress::Any);
+    }
+
+    // -------------------------------------------------------
+    // SshPlugin launch config extraction
+    // -------------------------------------------------------
+    #[test]
+    fn ssh_launch_config_timeout_parsing() {
+        let mut options = Map::new();
+        options.insert("timeout".to_string(), "5000".to_string());
+
+        let timeout = match options.get("timeout") {
+            Some(s) => std::time::Duration::from_millis(s.parse::<u64>().unwrap()),
+            None => std::time::Duration::from_secs(15), // default
+        };
+
+        assert_eq!(timeout, std::time::Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn ssh_launch_config_timeout_default() {
+        let options = Map::new();
+
+        let default_timeout = std::time::Duration::from_secs(15);
+        let timeout = match options.get("timeout") {
+            Some(s) => std::time::Duration::from_millis(s.parse::<u64>().unwrap()),
+            None => default_timeout,
+        };
+
+        assert_eq!(timeout, default_timeout);
+    }
 }

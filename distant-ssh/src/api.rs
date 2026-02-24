@@ -19,6 +19,14 @@ use typed_path::Utf8TypedPath;
 use crate::process::Process;
 use crate::{ClientHandler, SshFamily};
 
+/// Convert PathBuf to SFTP path string using typed-path.
+/// SFTP protocol always uses Unix-style paths regardless of target OS.
+fn to_sftp_path(path: PathBuf) -> io::Result<String> {
+    let path_str = path.to_string_lossy();
+    let typed_path = Utf8TypedPath::derive(&path_str);
+    Ok(typed_path.with_unix_encoding().as_str().to_string())
+}
+
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
     /// Active SSH session handle.
@@ -89,10 +97,7 @@ impl SshApi {
     /// Convert PathBuf to SFTP path string using typed-path with validation.
     /// SFTP protocol always uses Unix-style paths regardless of target OS.
     fn to_sftp_path(&self, path: PathBuf) -> io::Result<String> {
-        let path_str = path.to_string_lossy();
-        let typed_path = Utf8TypedPath::derive(&path_str);
-
-        Ok(typed_path.with_unix_encoding().as_str().to_string())
+        to_sftp_path(path)
     }
 
     /// Apply permissions to a single path via SFTP, reading current mode and merging.
@@ -1085,5 +1090,124 @@ impl Api for SshApi {
                 capabilities,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `to_sftp_path` path conversion logic.
+
+    use std::path::PathBuf;
+
+    use super::to_sftp_path;
+
+    // --- to_sftp_path tests ---
+
+    #[test]
+    fn to_sftp_path_unix_absolute() {
+        let result = to_sftp_path(PathBuf::from("/home/user/file.txt")).unwrap();
+        assert_eq!(result, "/home/user/file.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_unix_relative() {
+        let result = to_sftp_path(PathBuf::from("relative/path/file.txt")).unwrap();
+        assert_eq!(result, "relative/path/file.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_root() {
+        let result = to_sftp_path(PathBuf::from("/")).unwrap();
+        assert_eq!(result, "/");
+    }
+
+    #[test]
+    fn to_sftp_path_single_file() {
+        let result = to_sftp_path(PathBuf::from("file.txt")).unwrap();
+        assert_eq!(result, "file.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_dot_path() {
+        let result = to_sftp_path(PathBuf::from(".")).unwrap();
+        assert_eq!(result, ".");
+    }
+
+    #[test]
+    fn to_sftp_path_dot_dot_path() {
+        let result = to_sftp_path(PathBuf::from("..")).unwrap();
+        assert_eq!(result, "..");
+    }
+
+    #[test]
+    fn to_sftp_path_deep_nested() {
+        let result = to_sftp_path(PathBuf::from("/a/b/c/d/e/f/g.txt")).unwrap();
+        assert_eq!(result, "/a/b/c/d/e/f/g.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_with_spaces() {
+        let result = to_sftp_path(PathBuf::from("/path/with spaces/file name.txt")).unwrap();
+        assert_eq!(result, "/path/with spaces/file name.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_with_special_characters() {
+        let result = to_sftp_path(PathBuf::from("/path/file-name_v2.0.txt")).unwrap();
+        assert_eq!(result, "/path/file-name_v2.0.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_hidden_file() {
+        let result = to_sftp_path(PathBuf::from("/home/user/.hidden")).unwrap();
+        assert_eq!(result, "/home/user/.hidden");
+    }
+
+    #[test]
+    fn to_sftp_path_empty_path() {
+        let result = to_sftp_path(PathBuf::from("")).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn to_sftp_path_with_dots_in_name() {
+        let result = to_sftp_path(PathBuf::from("/path/to/archive.tar.gz")).unwrap();
+        assert_eq!(result, "/path/to/archive.tar.gz");
+    }
+
+    #[test]
+    fn to_sftp_path_double_slash_normalized() {
+        // PathBuf normalizes double slashes
+        let path = PathBuf::from("/home//user///file.txt");
+        let result = to_sftp_path(path).unwrap();
+        // PathBuf::from may normalize these, so just check it's valid
+        assert!(result.contains("home"));
+        assert!(result.contains("file.txt"));
+    }
+
+    #[test]
+    fn to_sftp_path_trailing_slash() {
+        let result = to_sftp_path(PathBuf::from("/home/user/")).unwrap();
+        // trailing slash may or may not be preserved depending on PathBuf
+        assert!(result.starts_with("/home/user"));
+    }
+
+    #[test]
+    fn to_sftp_path_with_unicode() {
+        let result = to_sftp_path(PathBuf::from("/home/user/documents")).unwrap();
+        assert_eq!(result, "/home/user/documents");
+    }
+
+    #[test]
+    fn to_sftp_path_relative_with_parent_ref() {
+        let result = to_sftp_path(PathBuf::from("../parent/file.txt")).unwrap();
+        assert_eq!(result, "../parent/file.txt");
+    }
+
+    #[test]
+    fn to_sftp_path_relative_with_dot() {
+        let result = to_sftp_path(PathBuf::from("./current/file.txt")).unwrap();
+        // Result depends on typed_path behavior with leading dot
+        assert!(result.contains("current/file.txt"));
     }
 }

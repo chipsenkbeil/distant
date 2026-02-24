@@ -94,6 +94,9 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Config`: default parsing, `default_raw_str()` validity,
+    //! `load_multi()` with various path scenarios, and full config file loading.
+
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
@@ -173,6 +176,34 @@ mod tests {
                     },
                 },
             }
+        );
+    }
+
+    #[test]
+    fn default_raw_str_is_valid_toml() {
+        let raw = Config::default_raw_str();
+        assert!(!raw.is_empty());
+        // It should be parseable as a Config
+        let config: Config = toml_edit::de::from_str(raw).expect("default raw str must parse");
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn load_multi_with_nonexistent_custom_path_returns_error() {
+        let result = Config::load_multi(Some(PathBuf::from("/nonexistent/path/config.toml")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_multi_with_no_custom_path_and_no_config_files_returns_default() {
+        // When no custom path is given, load_multi merges the default config with
+        // any system config files found. On CI/test machines without config files,
+        // the result should equal Config::default().
+        let config = Config::load_multi(None).expect("load_multi should not fail with None");
+        assert_eq!(
+            config,
+            Config::default(),
+            "Expected default config when no config files are present"
         );
     }
 

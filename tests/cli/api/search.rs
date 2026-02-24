@@ -1,9 +1,14 @@
+//! Integration tests for the `search` JSON API endpoint.
+//!
+//! Tests searching file contents with a regex query and verifying the multi-step
+//! search protocol (started, results, done).
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;
 use test_log::test;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test(tokio::test)]

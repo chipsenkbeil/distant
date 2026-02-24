@@ -272,3 +272,101 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `SERVICE_LABEL` constants and `build_plugin_map` — verifying
+    //! built-in plugin registration, scheme naming, and duplicate rejection.
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // SERVICE_LABEL
+    // -------------------------------------------------------
+    #[test]
+    fn service_label_has_correct_fields() {
+        assert_eq!(SERVICE_LABEL.qualifier, "rocks");
+        assert_eq!(SERVICE_LABEL.organization, "distant");
+        assert_eq!(SERVICE_LABEL.application, "manager");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — no extra plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_no_extras_has_builtins() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        // Should contain "distant" and "ssh"
+        assert!(map.contains_key("distant"), "missing 'distant' scheme");
+        assert!(map.contains_key("ssh"), "missing 'ssh' scheme");
+    }
+
+    #[test]
+    fn build_plugin_map_builtins_have_correct_names() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        assert_eq!(map["distant"].name(), "distant");
+        assert_eq!(map["ssh"].name(), "ssh");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — schemes are lowercased
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_schemes_are_lowercase() {
+        let map = build_plugin_map(Vec::new()).unwrap();
+        for key in map.keys() {
+            assert_eq!(key, &key.to_lowercase(), "scheme should be lowercase");
+        }
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — with extra CLI plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_extra_plugins() {
+        let extras = vec![(
+            "myplugin".to_string(),
+            PathBuf::from("/usr/local/bin/myplugin"),
+        )];
+        let map = build_plugin_map(extras).unwrap();
+        // Should contain builtins plus the extra
+        assert!(map.contains_key("distant"));
+        assert!(map.contains_key("ssh"));
+        assert!(map.contains_key("myplugin"), "missing 'myplugin' scheme");
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — duplicate scheme detection
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_rejects_duplicate_builtin_scheme() {
+        // Trying to register a plugin with scheme "ssh" should fail
+        // because SSH is already a builtin
+        let extras = vec![("ssh".to_string(), PathBuf::from("/usr/local/bin/other-ssh"))];
+        let result = build_plugin_map(extras);
+        assert!(result.is_err(), "should reject duplicate 'ssh' scheme");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("ssh") && err.contains("already registered"),
+            "error should mention scheme conflict: {err}"
+        );
+    }
+
+    // -------------------------------------------------------
+    // build_plugin_map — multiple extra plugins
+    // -------------------------------------------------------
+    #[test]
+    fn build_plugin_map_with_multiple_extra_plugins() {
+        let extras = vec![
+            ("docker".to_string(), PathBuf::from("/bin/docker-plugin")),
+            ("k8s".to_string(), PathBuf::from("/bin/k8s-plugin")),
+        ];
+        let map = build_plugin_map(extras).unwrap();
+        assert!(map.contains_key("docker"));
+        assert!(map.contains_key("k8s"));
+        assert!(map.contains_key("distant"));
+        assert!(map.contains_key("ssh"));
+    }
+}

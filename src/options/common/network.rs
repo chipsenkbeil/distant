@@ -90,3 +90,251 @@ impl NetworkSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `AccessControl`, `NetworkSettings`: mode conversion, merge
+    //! priority semantics, socket/pipe accessors, candidate path generation,
+    //! serde round-trips, and equality.
+
+    use std::path::PathBuf;
+
+    use test_log::test;
+
+    use super::*;
+
+    // -------------------------------------------------------
+    // AccessControl::into_mode
+    // -------------------------------------------------------
+    #[test]
+    fn access_control_owner_mode() {
+        assert_eq!(AccessControl::Owner.into_mode(), 0o600);
+    }
+
+    #[test]
+    fn access_control_group_mode() {
+        assert_eq!(AccessControl::Group.into_mode(), 0o660);
+    }
+
+    #[test]
+    fn access_control_anyone_mode() {
+        assert_eq!(AccessControl::Anyone.into_mode(), 0o666);
+    }
+
+    // -------------------------------------------------------
+    // AccessControl::default
+    // -------------------------------------------------------
+    #[test]
+    fn access_control_default_is_owner() {
+        assert_eq!(AccessControl::default(), AccessControl::Owner);
+    }
+
+    // -------------------------------------------------------
+    // AccessControl serde round-trip
+    // -------------------------------------------------------
+    #[test]
+    fn access_control_serde_round_trip() {
+        for ac in [
+            AccessControl::Owner,
+            AccessControl::Group,
+            AccessControl::Anyone,
+        ] {
+            let json = serde_json::to_string(&ac).unwrap();
+            let deserialized: AccessControl = serde_json::from_str(&json).unwrap();
+            assert_eq!(ac, deserialized);
+        }
+    }
+
+    #[test]
+    fn access_control_serializes_to_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&AccessControl::Owner).unwrap(),
+            r#""owner""#
+        );
+        assert_eq!(
+            serde_json::to_string(&AccessControl::Group).unwrap(),
+            r#""group""#
+        );
+        assert_eq!(
+            serde_json::to_string(&AccessControl::Anyone).unwrap(),
+            r#""anyone""#
+        );
+    }
+
+    // -------------------------------------------------------
+    // NetworkSettings::default
+    // -------------------------------------------------------
+    #[test]
+    fn network_settings_default_has_no_overrides() {
+        let ns = NetworkSettings::default();
+        assert!(ns.unix_socket.is_none());
+        assert!(ns.windows_pipe.is_none());
+    }
+
+    // -------------------------------------------------------
+    // NetworkSettings::merge
+    // -------------------------------------------------------
+    #[test]
+    fn merge_self_takes_priority() {
+        let mut ns = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/my/socket")),
+            windows_pipe: Some(String::from("my-pipe")),
+        };
+        let other = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/other/socket")),
+            windows_pipe: Some(String::from("other-pipe")),
+        };
+        ns.merge(other);
+        assert_eq!(ns.unix_socket, Some(PathBuf::from("/my/socket")));
+        assert_eq!(ns.windows_pipe, Some(String::from("my-pipe")));
+    }
+
+    #[test]
+    fn merge_falls_back_to_other_when_self_is_none() {
+        let mut ns = NetworkSettings {
+            unix_socket: None,
+            windows_pipe: None,
+        };
+        let other = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/other/socket")),
+            windows_pipe: Some(String::from("other-pipe")),
+        };
+        ns.merge(other);
+        assert_eq!(ns.unix_socket, Some(PathBuf::from("/other/socket")));
+        assert_eq!(ns.windows_pipe, Some(String::from("other-pipe")));
+    }
+
+    #[test]
+    fn merge_both_none_stays_none() {
+        let mut ns = NetworkSettings::default();
+        let other = NetworkSettings::default();
+        ns.merge(other);
+        assert!(ns.unix_socket.is_none());
+        assert!(ns.windows_pipe.is_none());
+    }
+
+    // -------------------------------------------------------
+    // as_unix_socket_opt / as_windows_pipe_opt
+    // -------------------------------------------------------
+    #[test]
+    fn as_unix_socket_opt_returns_some_when_set() {
+        let ns = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/tmp/test.sock")),
+            windows_pipe: None,
+        };
+        assert_eq!(
+            ns.as_unix_socket_opt(),
+            Some(std::path::Path::new("/tmp/test.sock"))
+        );
+    }
+
+    #[test]
+    fn as_unix_socket_opt_returns_none_when_unset() {
+        let ns = NetworkSettings::default();
+        assert!(ns.as_unix_socket_opt().is_none());
+    }
+
+    #[test]
+    fn as_windows_pipe_opt_returns_some_when_set() {
+        let ns = NetworkSettings {
+            unix_socket: None,
+            windows_pipe: Some(String::from("test-pipe")),
+        };
+        assert_eq!(ns.as_windows_pipe_opt(), Some("test-pipe"));
+    }
+
+    #[test]
+    fn as_windows_pipe_opt_returns_none_when_unset() {
+        let ns = NetworkSettings::default();
+        assert!(ns.as_windows_pipe_opt().is_none());
+    }
+
+    // -------------------------------------------------------
+    // to_unix_socket_path_candidates
+    // -------------------------------------------------------
+    #[test]
+    fn unix_socket_candidates_when_configured() {
+        let ns = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/custom/socket.sock")),
+            windows_pipe: None,
+        };
+        let candidates = ns.to_unix_socket_path_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], std::path::Path::new("/custom/socket.sock"));
+    }
+
+    #[test]
+    fn unix_socket_candidates_when_not_configured_returns_defaults() {
+        let ns = NetworkSettings::default();
+        let candidates = ns.to_unix_socket_path_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0], constants::user::UNIX_SOCKET_PATH.as_path());
+        assert_eq!(candidates[1], constants::global::UNIX_SOCKET_PATH.as_path());
+    }
+
+    // -------------------------------------------------------
+    // to_windows_pipe_name_candidates
+    // -------------------------------------------------------
+    #[test]
+    fn windows_pipe_candidates_when_configured() {
+        let ns = NetworkSettings {
+            unix_socket: None,
+            windows_pipe: Some(String::from("custom-pipe")),
+        };
+        let candidates = ns.to_windows_pipe_name_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], "custom-pipe");
+    }
+
+    #[test]
+    fn windows_pipe_candidates_when_not_configured_returns_defaults() {
+        let ns = NetworkSettings::default();
+        let candidates = ns.to_windows_pipe_name_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0], constants::user::WINDOWS_PIPE_NAME.as_str());
+        assert_eq!(candidates[1], constants::global::WINDOWS_PIPE_NAME.as_str());
+    }
+
+    // -------------------------------------------------------
+    // NetworkSettings serde round-trip
+    // -------------------------------------------------------
+    #[test]
+    fn network_settings_serde_round_trip_with_values() {
+        let ns = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/tmp/test.sock")),
+            windows_pipe: Some(String::from("test-pipe")),
+        };
+        let json = serde_json::to_string(&ns).unwrap();
+        let deserialized: NetworkSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(ns, deserialized);
+    }
+
+    #[test]
+    fn network_settings_serde_round_trip_empty() {
+        let ns = NetworkSettings::default();
+        let json = serde_json::to_string(&ns).unwrap();
+        let deserialized: NetworkSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(ns, deserialized);
+    }
+
+    // -------------------------------------------------------
+    // PartialEq
+    // -------------------------------------------------------
+    #[test]
+    fn network_settings_equality() {
+        let a = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/a")),
+            windows_pipe: Some(String::from("a")),
+        };
+        let b = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/a")),
+            windows_pipe: Some(String::from("a")),
+        };
+        let c = NetworkSettings {
+            unix_socket: Some(PathBuf::from("/c")),
+            windows_pipe: None,
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+}

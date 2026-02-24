@@ -1,8 +1,12 @@
+//! Integration tests for the `distant system-info` CLI subcommand.
+//!
+//! Tests retrieving and displaying system information from the local server.
+
 use std::env;
 
 use rstest::*;
 
-use crate::common::fixtures::*;
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]

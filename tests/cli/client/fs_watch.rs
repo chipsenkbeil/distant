@@ -1,10 +1,15 @@
+//! Integration tests for the `distant fs watch` CLI subcommand.
+//!
+//! Tests watching a single file for changes, watching a directory recursively,
+//! and error handling when watching a non-existent path.
+
 use std::time::{Duration, Instant};
 
 use assert_fs::prelude::*;
 use rstest::*;
 
-use crate::common::fixtures::*;
-use crate::common::utils::ThreadedReader;
+use distant_test_harness::manager::*;
+use distant_test_harness::utils::reader::ThreadedReader;
 
 fn wait_a_bit() {
     wait_millis(250);
