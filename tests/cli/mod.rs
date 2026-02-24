@@ -5,6 +5,9 @@
 
 mod api;
 mod client;
+mod config;
+mod errors;
+mod format;
 mod generate;
 mod help;
 mod manager;

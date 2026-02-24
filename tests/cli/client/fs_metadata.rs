@@ -136,3 +136,28 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
         .stdout("")
         .stderr(predicates::str::is_empty().not());
 }
+
+#[cfg(unix)]
+#[rstest]
+#[test_log::test]
+fn should_output_unix_permissions(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    let file = temp.child("file");
+    file.write_str("hello").unwrap();
+
+    // distant fs metadata {path}
+    let output = ctx
+        .new_assert_cmd(["fs", "metadata"])
+        .arg(file.to_str().unwrap())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    // On Unix, metadata output should contain permission info
+    // At minimum we see "Readonly: false" which indicates permissions are reported
+    assert!(
+        stdout.contains("Readonly:"),
+        "Expected Unix permissions info in metadata output, got: {stdout}"
+    );
+}

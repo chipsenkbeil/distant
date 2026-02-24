@@ -64,3 +64,78 @@ fn distant_manager_list_should_be_unknown_command() {
     let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
     cmd.args(["manager", "list"]).assert().failure();
 }
+
+#[test]
+fn distant_help_should_include_all_top_level_commands() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd.arg("--help").assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for cmd in [
+        "launch",
+        "api",
+        "generate",
+        "server",
+        "spawn",
+        "version",
+        "fs",
+        "system-info",
+    ] {
+        assert!(
+            stdout.contains(cmd),
+            "Expected top-level help to contain '{cmd}', got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_server_help_shows_listen() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd.args(["server", "--help"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("listen"),
+        "Expected server help to contain 'listen', got:\n{stdout}"
+    );
+}
+
+#[test]
+fn distant_generate_help_shows_subcommands() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd.args(["generate", "--help"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for subcmd in ["config", "completion"] {
+        assert!(
+            stdout.contains(subcmd),
+            "Expected generate help to contain '{subcmd}', got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_fs_help_shows_all_subcommands() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd.args(["fs", "--help"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for subcmd in [
+        "copy",
+        "exists",
+        "make-dir",
+        "metadata",
+        "read",
+        "remove",
+        "rename",
+        "search",
+        "set-permissions",
+        "watch",
+        "write",
+    ] {
+        assert!(
+            stdout.contains(subcmd),
+            "Expected fs help to contain '{subcmd}', got:\n{stdout}"
+        );
+    }
+}

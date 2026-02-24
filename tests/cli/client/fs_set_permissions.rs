@@ -87,3 +87,67 @@ fn should_fail_if_path_does_not_exist(ctx: ManagerCtx) {
         .assert()
         .failure();
 }
+
+#[cfg(unix)]
+#[rstest]
+#[test_log::test]
+fn should_support_readonly_keyword(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("test-file");
+    file.write_str("hello").unwrap();
+
+    // distant fs set-permissions readonly {path}
+    ctx.new_assert_cmd(["fs", "set-permissions"])
+        .arg("readonly")
+        .arg(file.to_str().unwrap())
+        .assert()
+        .success();
+
+    let meta = std::fs::metadata(file.path()).unwrap();
+    assert!(
+        meta.permissions().readonly(),
+        "File should be readonly after 'readonly' keyword"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[test_log::test]
+fn should_support_notreadonly_keyword(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("test-file");
+    file.write_str("hello").unwrap();
+
+    // First make it readonly
+    let mut perms = std::fs::metadata(file.path()).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(file.path(), perms).unwrap();
+
+    // distant fs set-permissions notreadonly {path}
+    ctx.new_assert_cmd(["fs", "set-permissions"])
+        .arg("notreadonly")
+        .arg(file.to_str().unwrap())
+        .assert()
+        .success();
+
+    let meta = std::fs::metadata(file.path()).unwrap();
+    assert!(
+        !meta.permissions().readonly(),
+        "File should be writable after 'notreadonly' keyword"
+    );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_fail_on_invalid_mode_string(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("test-file");
+    file.write_str("hello").unwrap();
+
+    // distant fs set-permissions xyz {path}
+    ctx.new_assert_cmd(["fs", "set-permissions"])
+        .arg("xyz")
+        .arg(file.to_str().unwrap())
+        .assert()
+        .failure();
+}

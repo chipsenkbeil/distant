@@ -174,3 +174,137 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
     assert!(output.stdout.is_empty(), "Unexpectedly got stdout");
     assert!(!output.stderr.is_empty(), "Missing stderr output");
 }
+
+#[rstest]
+#[test_log::test]
+fn should_support_only_filter(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("watched");
+    dir.create_dir_all().unwrap();
+
+    // Use --only create on a directory and create a file to trigger the event
+    // distant fs watch --recursive --only create {path}
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .args(["--recursive", "--only", "create"])
+        .arg(dir.to_str().unwrap())
+        .spawn()
+        .expect("Failed to execute");
+
+    let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
+    let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
+    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+
+    // Create a new file — should trigger a create event
+    dir.child("newfile.txt").write_str("hello").unwrap();
+
+    let mut stdout_data = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+            stdout_data.push_str(&line);
+            break;
+        }
+    }
+
+    child.kill().expect("Failed to terminate process");
+    let _ = child.wait();
+
+    // We should get output (the create event was reported)
+    assert!(
+        !stdout_data.is_empty(),
+        "Expected create event to be reported with --only create"
+    );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_support_except_filter(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("dir");
+    dir.create_dir_all().unwrap();
+
+    // distant fs watch --recursive --except access {path}
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .args(["--recursive", "--except", "access"])
+        .arg(dir.to_str().unwrap())
+        .spawn()
+        .expect("Failed to execute");
+
+    let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
+    let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
+    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+
+    // Create a new file — should trigger create/modify events (not filtered)
+    dir.child("newfile.txt").write_str("hello").unwrap();
+
+    let mut stdout_data = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+            stdout_data.push_str(&line);
+            break;
+        }
+    }
+
+    child.kill().expect("Failed to terminate process");
+    let _ = child.wait();
+
+    // We should still see non-access events
+    assert!(
+        !stdout_data.is_empty(),
+        "Expected non-access events to still be reported with --except access"
+    );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_report_file_creation_in_watched_directory(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("watched");
+    dir.create_dir_all().unwrap();
+
+    // distant fs watch --recursive {path}
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .args(["--recursive", dir.to_str().unwrap()])
+        .spawn()
+        .expect("Failed to execute");
+
+    let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
+    let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
+    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+
+    // Create a new file in the watched directory
+    let new_file = dir.child("created.txt");
+    new_file.write_str("new content").unwrap();
+
+    let new_file_path = new_file
+        .to_path_buf()
+        .canonicalize()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Read stdout lines until we see our file or timeout
+    let mut stdout_data = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+            stdout_data.push_str(&line);
+            if stdout_data.contains(&new_file_path) {
+                break;
+            }
+        }
+    }
+
+    child.kill().expect("Failed to terminate process");
+    let _ = child.wait();
+
+    assert!(
+        stdout_data.contains(&new_file_path),
+        "Expected creation event for {new_file_path}, got: {stdout_data}"
+    );
+}

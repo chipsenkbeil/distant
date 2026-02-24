@@ -109,3 +109,18 @@ fn generate_completion_fish_should_output_to_stdout() {
         "Expected non-empty fish completion output"
     );
 }
+
+#[test]
+fn generate_completion_powershell_should_output_to_stdout() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd
+        .args(["generate", "completion", "powershell"])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        !stdout.is_empty(),
+        "Expected non-empty powershell completion output"
+    );
+}

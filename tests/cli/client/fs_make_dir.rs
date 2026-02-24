@@ -59,3 +59,32 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
 
     dir.assert(predicate::path::missing());
 }
+
+#[rstest]
+#[test_log::test]
+fn should_fail_when_already_exists(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("existing-dir");
+    dir.create_dir_all().unwrap();
+
+    // Without --all, creating an existing directory should fail
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args([dir.to_str().unwrap()])
+        .assert()
+        .failure();
+}
+
+#[rstest]
+#[test_log::test]
+fn should_succeed_when_already_exists_with_all(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let dir = temp.child("existing-dir");
+    dir.create_dir_all().unwrap();
+
+    // With --all, creating an existing directory should succeed silently
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args(["--all", dir.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("");
+}

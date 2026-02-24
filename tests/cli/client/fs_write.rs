@@ -125,3 +125,31 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
     // Because we're talking to a local server, we can verify locally
     file.assert(predicates::path::missing());
 }
+
+#[rstest]
+#[test_log::test]
+fn should_overwrite_existing_file_content(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("test-file");
+
+    // Write initial content
+    ctx.new_assert_cmd(["fs", "write"])
+        .args([file.to_str().unwrap()])
+        .write_stdin("initial content")
+        .assert()
+        .success();
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Write new content (without --append) — should overwrite
+    ctx.new_assert_cmd(["fs", "write"])
+        .args([file.to_str().unwrap()])
+        .write_stdin("replaced content")
+        .assert()
+        .success();
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Verify only the new content is present
+    file.assert("replaced content");
+}

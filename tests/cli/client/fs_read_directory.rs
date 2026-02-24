@@ -225,3 +225,34 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
         .stdout("")
         .stderr(predicates::str::is_empty().not());
 }
+
+// NOTE: Ignoring on windows because SSH doesn't properly canonicalize paths to resolve symlinks!
+#[rstest]
+#[test_log::test]
+#[cfg_attr(windows, ignore)]
+fn should_support_canonicalize_flag(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let target_dir = temp.child("target_dir");
+    target_dir.create_dir_all().unwrap();
+    target_dir.child("file1").touch().unwrap();
+
+    // Create a symlink pointing to target_dir
+    let link = temp.child("link");
+    link.symlink_to_dir(target_dir.path()).unwrap();
+
+    // distant fs read --canonicalize --absolute {link}
+    // --canonicalize resolves symlinks, --absolute shows full paths
+    let output = ctx
+        .new_assert_cmd(["fs", "read"])
+        .args(["--canonicalize", "--absolute", link.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    // Canonicalized output should resolve the symlink and show the real target path
+    let canonical_target = target_dir.path().canonicalize().unwrap();
+    assert!(
+        stdout.contains(canonical_target.join("file1").to_str().unwrap()),
+        "Expected canonicalized path through symlink to resolve to real target, got: {stdout}"
+    );
+}
