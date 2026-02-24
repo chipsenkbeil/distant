@@ -39,3 +39,33 @@ fn should_output_false_if_not_exists(ctx: ManagerCtx) {
         .success()
         .stdout("false\n");
 }
+
+#[rstest]
+#[test_log::test]
+fn should_output_true_for_directory(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    let dir = temp.child("dir");
+    dir.create_dir_all().unwrap();
+
+    // distant fs exists {path}
+    ctx.new_assert_cmd(["fs", "exists"])
+        .arg(dir.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout("true\n");
+}
+
+#[rstest]
+#[test_log::test]
+fn should_always_exit_zero_for_false(ctx: ManagerCtx) {
+    let temp = assert_fs::TempDir::new().unwrap();
+    let file = temp.child("nonexistent");
+
+    // Even when path doesn't exist, exit code should be 0 (success)
+    ctx.new_assert_cmd(["fs", "exists"])
+        .arg(file.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout("false\n");
+}

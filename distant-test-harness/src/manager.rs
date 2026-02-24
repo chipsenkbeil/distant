@@ -390,6 +390,184 @@ impl Drop for ManagerCtx {
     }
 }
 
+/// Context that starts a manager and server but does NOT auto-connect.
+/// Exposes server credentials so tests can manually call `distant connect`.
+pub struct ManagerOnlyCtx {
+    manager: Child,
+    server: Child,
+    socket_or_pipe: String,
+    /// The credentials string for connecting to the server (e.g. "distant://:key@host:port")
+    pub credentials: String,
+}
+
+impl ManagerOnlyCtx {
+    /// Starts a manager and a server, returning credentials without connecting.
+    pub fn start() -> Self {
+        eprintln!("ManagerOnlyCtx: Logging to {:?}", ROOT_LOG_DIR.as_path());
+        std::fs::create_dir_all(ROOT_LOG_DIR.as_path()).expect("Failed to create root log dir");
+
+        // Start the manager
+        let mut manager_cmd = StdCommand::new(bin_path());
+        manager_cmd
+            .arg("manager")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let socket_or_pipe = if cfg!(windows) {
+            format!("distant_test_{}", rand::random::<usize>())
+        } else {
+            std::env::temp_dir()
+                .join(format!("distant_test_{}.sock", rand::random::<usize>()))
+                .to_string_lossy()
+                .to_string()
+        };
+
+        if cfg!(windows) {
+            manager_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            manager_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
+        let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(Some(status)) = manager.try_wait() {
+            panic!("Manager exited ({}): {:?}", status.success(), status.code());
+        }
+
+        // Spawn a server and capture the credentials
+        let mut server_cmd = StdCommand::new(bin_path());
+        server_cmd
+            .arg("server")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("server"))
+            .arg("--log-level")
+            .arg("trace")
+            .arg("--shutdown")
+            .arg("lonely=60")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        eprintln!("ManagerOnlyCtx: Spawning server cmd: {server_cmd:?}");
+        let mut server = server_cmd.spawn().expect("Failed to spawn server");
+
+        // Read stdout to extract credentials
+        let stdout = server.stdout.take().unwrap();
+        let stdout_thread = thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut lines = String::new();
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = reader.read(&mut buf) {
+                lines.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(credentials) = Credentials::find(&lines, /* strict */ false) {
+                    return credentials;
+                }
+            }
+            panic!("Failed to read credentials from server stdout");
+        });
+
+        // Wait for thread to finish (up to 500ms)
+        let start = Instant::now();
+        while !stdout_thread.is_finished() {
+            if start.elapsed() > Duration::from_millis(500) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let credentials = stdout_thread
+            .join()
+            .expect("Failed to retrieve credentials from server");
+
+        eprintln!("ManagerOnlyCtx: Got credentials, NOT connecting. Proceeding...");
+        Self {
+            manager,
+            server,
+            socket_or_pipe,
+            credentials: credentials.to_string(),
+        }
+    }
+
+    /// Produces a new test command configured with subcommands and connected to this manager.
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
+        let mut cmd = Command::new(bin_path());
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        eprintln!("ManagerOnlyCtx::new_assert_cmd: {cmd:?}");
+        cmd
+    }
+
+    /// Produces a new std::process::Command configured with subcommands.
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
+        let mut cmd = StdCommand::new(bin_path());
+
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        eprintln!("ManagerOnlyCtx::new_std_cmd: {cmd:?}");
+        cmd
+    }
+
+    /// Returns the socket/pipe path used by this manager.
+    pub fn socket_or_pipe(&self) -> &str {
+        &self.socket_or_pipe
+    }
+}
+
+impl Drop for ManagerOnlyCtx {
+    fn drop(&mut self) {
+        let _ = self.manager.kill();
+        let _ = self.server.kill();
+        let _ = self.manager.wait();
+        let _ = self.server.wait();
+    }
+}
+
+#[fixture]
+pub fn manager_only_ctx() -> ManagerOnlyCtx {
+    ManagerOnlyCtx::start()
+}
+
 #[fixture]
 pub fn ctx() -> ManagerCtx {
     ManagerCtx::start()
