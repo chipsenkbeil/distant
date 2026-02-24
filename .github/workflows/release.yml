@@ -36,29 +36,27 @@ on:
 jobs:
   macos:
     name: "Build release on MacOS (${{ matrix.target }})"
-    runs-on: macos-11.0
+    runs-on: macos-latest
     strategy:
       matrix:
         target:
           - x86_64-apple-darwin
           - aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust (${{ matrix.target }})
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Build binary (${{ matrix.target }})
         run: |
           cargo build --release --all-features --target ${{ matrix.target }}
           mv ./target/${{ matrix.target }}/release/distant ./distant-${{ matrix.target }}
           chmod +x ./distant-${{ matrix.target }}
-      - name: Upload 
-        uses: actions/upload-artifact@v2
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}
@@ -68,18 +66,18 @@ jobs:
   macos_unify:
     name: "Build universal binary on MacOS"
     needs: [macos]
-    runs-on: macos-11.0
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/download-artifact@v2
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
       - name: Unify binaries
         run: |
           lipo -create -output distant-universal-apple-darwin \
               ./x86_64-apple-darwin/distant-x86_64-apple-darwin \
               ./aarch64-apple-darwin/distant-aarch64-apple-darwin
           chmod +x ./distant-universal-apple-darwin
-      - name: Upload 
-        uses: actions/upload-artifact@v2
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
           name: universal-apple-darwin
           path: ./distant-universal-apple-darwin
@@ -95,22 +93,20 @@ jobs:
           - x86_64-pc-windows-msvc
           - aarch64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Rust (${{ matrix.target }})
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Build binary (${{ matrix.target }})
         run: |
           cargo build --release --all-features --target ${{ matrix.target }}
           mv ./target/${{ matrix.target }}/release/distant.exe ./distant-${{ matrix.target }}.exe
           chmod +x ./distant-${{ matrix.target }}.exe
-      - name: Upload 
-        uses: actions/upload-artifact@v2
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}.exe
@@ -135,11 +131,11 @@ jobs:
             deps: gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
             cargo: cargo
           - target: x86_64-unknown-linux-musl
-            build: --no-default-features --features ssh2
+            build: --all-features
             deps: musl-tools
             cargo: cargo
           - target: aarch64-unknown-linux-musl
-            build: --no-default-features --features ssh2
+            build: --all-features
             deps: musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
             cargo: cross
             prepare: |
@@ -152,14 +148,12 @@ jobs:
               curl -L "https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz" |
               tar xz -C $HOME/.cargo/bin
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Rust (${{ matrix.target }})
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
         if: ${{ matrix.deps }}
@@ -174,8 +168,8 @@ jobs:
           ${{ matrix.cargo }} build --release ${{ matrix.build }} --target ${{ matrix.target }}
           mv ./target/${{ matrix.target }}/release/distant ./distant-${{ matrix.target }}
           chmod +x ./distant-${{ matrix.target }}
-      - name: Upload 
-        uses: actions/upload-artifact@v2
+      - name: Upload
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: ./distant-${{ matrix.target }}
@@ -249,12 +243,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           sparse-checkout: |
             CHANGELOG.md
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
       - name: Generate SHA256 checksums
         run: |
           for i in $(find . -name "distant-*" -type f); do
@@ -288,7 +282,7 @@ jobs:
         if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
       - name: Publish (latest)
         if: ${{ steps.check-tag.outputs.is_latest == 'true' }}
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: Latest Build
           fail_on_unmatched_files: true
@@ -302,7 +296,7 @@ jobs:
             This is not guaranteed to pass all tests or even function properly.
       - name: Publish (release)
         if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: distant ${{ env.TAG_NAME }}
           fail_on_unmatched_files: true

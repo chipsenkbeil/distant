@@ -5,13 +5,31 @@ use anyhow::Context;
 use distant_core::protocol::{Environment, PtySize};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use log::*;
-use terminal_size::{terminal_size, Height, Width};
+use terminal_size::{Height, Width, terminal_size};
 use termwiz::caps::Capabilities;
 use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
-use termwiz::terminal::{new_terminal, Terminal};
+use termwiz::terminal::{Terminal, new_terminal};
 
 use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
+
+/// Inserts `TERM=xterm-256color` into the environment if no `TERM` key is present.
+fn ensure_term_env(env: &mut Environment) {
+    if !env.contains_key("TERM") {
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+    }
+}
+
+/// Selects a default shell: returns `shell` if non-empty, otherwise falls back based on OS family.
+fn select_default_shell(shell: &str, family: &str) -> String {
+    if !shell.is_empty() {
+        shell.to_string()
+    } else if family.eq_ignore_ascii_case("windows") {
+        "cmd.exe".to_string()
+    } else {
+        "/bin/sh".to_string()
+    }
+}
 
 #[derive(Clone)]
 pub struct Shell(Channel);
@@ -28,10 +46,7 @@ impl Shell {
         current_dir: Option<PathBuf>,
         max_chunk_size: usize,
     ) -> CliResult {
-        // Automatically add TERM=xterm-256color if not specified
-        if !environment.contains_key("TERM") {
-            environment.insert("TERM".to_string(), "xterm-256color".to_string());
-        }
+        ensure_term_env(&mut environment);
 
         // Use provided shell, use default shell, or determine remote operating system to pick a shell
         let cmd = match cmd.into() {
@@ -43,15 +58,7 @@ impl Shell {
                     .await
                     .context("Failed to detect remote operating system")?;
 
-                // If system reports a default shell, use it, otherwise pick a default based on the
-                // operating system being windows or non-windows
-                if !system_info.shell.is_empty() {
-                    system_info.shell
-                } else if system_info.family.eq_ignore_ascii_case("windows") {
-                    "cmd.exe".to_string()
-                } else {
-                    "/bin/sh".to_string()
-                }
+                select_default_shell(&system_info.shell, &system_info.family)
             }
         };
 
@@ -88,11 +95,10 @@ impl Shell {
                                 modify_other_keys: None,
                             },
                             /* is_down */ true,
-                        ) {
-                            if let Err(x) = stdin.write_str(input).await {
-                                error!("Failed to write to stdin of remote process: {}", x);
-                                break;
-                            }
+                        ) && let Err(x) = stdin.write_str(input).await
+                        {
+                            error!("Failed to write to stdin of remote process: {}", x);
+                            break;
                         }
                     }
                     Some(InputEvent::Resized { cols, rows }) => {
@@ -134,5 +140,73 @@ impl Shell {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── ensure_term_env tests ───
+
+    #[test]
+    fn ensure_term_env_inserts_when_missing() {
+        let mut env = Environment::new();
+        ensure_term_env(&mut env);
+        assert_eq!(env.get("TERM").unwrap(), "xterm-256color");
+    }
+
+    #[test]
+    fn ensure_term_env_preserves_existing() {
+        let mut env = Environment::new();
+        env.insert("TERM".to_string(), "screen".to_string());
+        ensure_term_env(&mut env);
+        assert_eq!(env.get("TERM").unwrap(), "screen");
+    }
+
+    #[test]
+    fn ensure_term_env_preserves_other_keys() {
+        let mut env = Environment::new();
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+        ensure_term_env(&mut env);
+        assert_eq!(env.get("PATH").unwrap(), "/usr/bin");
+        assert_eq!(env.get("TERM").unwrap(), "xterm-256color");
+    }
+
+    // ─── select_default_shell tests ───
+
+    #[test]
+    fn select_default_shell_uses_provided_shell() {
+        assert_eq!(select_default_shell("/bin/zsh", "linux"), "/bin/zsh");
+    }
+
+    #[test]
+    fn select_default_shell_windows_fallback() {
+        assert_eq!(select_default_shell("", "windows"), "cmd.exe");
+    }
+
+    #[test]
+    fn select_default_shell_unix_fallback() {
+        assert_eq!(select_default_shell("", "linux"), "/bin/sh");
+    }
+
+    #[test]
+    fn select_default_shell_case_insensitive_windows() {
+        assert_eq!(select_default_shell("", "Windows"), "cmd.exe");
+        assert_eq!(select_default_shell("", "WINDOWS"), "cmd.exe");
+    }
+
+    #[test]
+    fn select_default_shell_unknown_family_defaults_to_sh() {
+        assert_eq!(select_default_shell("", "macos"), "/bin/sh");
+        assert_eq!(select_default_shell("", "freebsd"), "/bin/sh");
+    }
+
+    #[test]
+    fn select_default_shell_ignores_family_when_shell_provided() {
+        assert_eq!(
+            select_default_shell("powershell.exe", "windows"),
+            "powershell.exe"
+        );
     }
 }

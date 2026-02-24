@@ -217,20 +217,20 @@ impl Options {
                         //
 
                         *current_dir = current_dir.take().or(config.server.listen.current_dir);
-                        if host.is_default() {
-                            if let Some(host_value) = config.server.listen.host {
-                                *host = Value::Explicit(host_value);
-                            }
+                        if host.is_default()
+                            && let Some(host_value) = config.server.listen.host
+                        {
+                            *host = Value::Explicit(host_value);
                         }
-                        if port.is_default() {
-                            if let Some(port_value) = config.server.listen.port {
-                                *port = Value::Explicit(port_value);
-                            }
+                        if port.is_default()
+                            && let Some(port_value) = config.server.listen.port
+                        {
+                            *port = Value::Explicit(port_value);
                         }
-                        if shutdown.is_default() {
-                            if let Some(shutdown_value) = config.server.listen.shutdown {
-                                *shutdown = Value::Explicit(shutdown_value);
-                            }
+                        if shutdown.is_default()
+                            && let Some(shutdown_value) = config.server.listen.shutdown
+                        {
+                            *shutdown = Value::Explicit(shutdown_value);
                         }
                         if !*use_ipv6 && config.server.listen.use_ipv6 {
                             *use_ipv6 = true;
@@ -253,10 +253,10 @@ impl Options {
                             watch.watch_compare_contents = true;
                         }
 
-                        if watch.watch_debounce_timeout.is_default() {
-                            if let Some(debounce_timeout) = config.server.watch.debounce_timeout {
-                                watch.watch_debounce_timeout = Value::Explicit(debounce_timeout);
-                            }
+                        if watch.watch_debounce_timeout.is_default()
+                            && let Some(debounce_timeout) = config.server.watch.debounce_timeout
+                        {
+                            watch.watch_debounce_timeout = Value::Explicit(debounce_timeout);
                         }
 
                         watch.watch_debounce_tick_rate = watch

@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
+use distant_core::Plugin;
 use distant_core::auth::msg::*;
 use distant_core::auth::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
@@ -14,11 +15,10 @@ use distant_core::auth::{
 use distant_core::net::client::{Client, ClientConfig, ReconnectStrategy, UntypedClient};
 use distant_core::net::common::{Destination, Map, SecretKey32, Version};
 use distant_core::protocol::PROTOCOL_VERSION;
-use distant_core::Plugin;
 use log::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 use crate::options::{BindAddress, ClientLaunchConfig};
 

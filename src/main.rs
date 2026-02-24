@@ -1,7 +1,7 @@
 use std::process::{ExitCode, Termination};
 
 use clap::error::ErrorKind;
-use console::{style, Term};
+use console::{Term, style};
 use derive_more::{Display, Error, From};
 
 mod cli;

@@ -1,11 +1,11 @@
 use std::io::{self, Read, Write};
 
 use anyhow::Context;
+use distant_core::Credentials;
 use distant_core::net::auth::Verifier;
 use distant_core::net::common::{Host, SecretKey32, Version};
 use distant_core::net::server::{Server, ServerConfig as NetServerConfig};
 use distant_core::protocol::PROTOCOL_VERSION;
-use distant_core::Credentials;
 use distant_host::{Config as LocalConfig, WatchConfig as LocalWatchConfig};
 use log::*;
 
@@ -75,7 +75,7 @@ fn run_daemon(_cmd: ServerSubcommand) -> CliResult {
 
 #[cfg(unix)]
 fn run_daemon(cmd: ServerSubcommand) -> CliResult {
-    use fork::{daemon, Fork};
+    use fork::{Fork, daemon};
 
     // NOTE: We keep the stdin, stdout, stderr open so we can print out the pid with the parent
     debug!("Forking process");

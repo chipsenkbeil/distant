@@ -28,10 +28,9 @@ fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
             break;
         }
         if let Some(line) = stderr.try_read_line_timeout(remaining.min(Duration::from_millis(500)))
+            && line.contains("Watching")
         {
-            if line.contains("Watching") {
-                return;
-            }
+            return;
         }
     }
     panic!("Timed out waiting for 'Watching' ready indicator on stderr");

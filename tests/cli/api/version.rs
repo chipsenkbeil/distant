@@ -3,7 +3,7 @@
 //! Tests retrieving protocol version and capabilities from the server.
 
 use distant_core::protocol::semver::Version as SemVer;
-use distant_core::protocol::{Version, PROTOCOL_VERSION};
+use distant_core::protocol::{PROTOCOL_VERSION, Version};
 use rstest::*;
 use serde_json::json;
 use test_log::test;

@@ -2,6 +2,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::process::{Child, Command as StdCommand, Stdio};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -291,9 +292,37 @@ impl ManagerCtx {
     }
 }
 
-/// Path to distant binary.
+/// Global override for the distant binary path.
+static BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Explicitly set the path to the distant binary.
+/// Must be called before any test invokes `bin_path()`.
+/// Returns `Err` if already set.
+pub fn set_bin_path(path: PathBuf) -> Result<(), PathBuf> {
+    BIN_PATH.set(path)
+}
+
+/// Path to distant binary (cached after first resolution).
 pub fn bin_path() -> PathBuf {
-    // 1. Compile-time env var (available when called from the distant crate's own tests)
+    BIN_PATH.get_or_init(resolve_bin_path).clone()
+}
+
+fn resolve_bin_path() -> PathBuf {
+    let name = if cfg!(windows) {
+        "distant.exe"
+    } else {
+        "distant"
+    };
+
+    // 1. Compile-time path from Cargo (works for test targets in the same package)
+    if let Some(path) = option_env!("CARGO_BIN_EXE_distant") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // 2. Runtime env var (in case binary was rebuilt after test compilation)
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_distant") {
         let p = PathBuf::from(&path);
         if p.exists() {
@@ -301,16 +330,22 @@ pub fn bin_path() -> PathBuf {
         }
     }
 
-    // 2. Derive from current test exe: target/{profile}/deps/test -> target/{profile}/distant
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(deps_dir) = exe.parent() {
-            if let Some(profile_dir) = deps_dir.parent() {
-                let name = if cfg!(windows) {
-                    "distant.exe"
-                } else {
-                    "distant"
-                };
-                let candidate = profile_dir.join(name);
+    // 3. Locate via workspace root derived from CARGO_MANIFEST_DIR.
+    //    Available at compile time for every crate (including library crates).
+    //    For distant-test-harness: {workspace_root}/distant-test-harness/
+    //    Cargo always hard-links final binaries into target/{profile}/ even
+    //    when build-dir is configured elsewhere.
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(workspace_root) = manifest_dir.parent() {
+            let target_dir = workspace_root.join("target");
+            for subdir in [
+                "debug",
+                "release",
+                "llvm-cov-target/debug",
+                "llvm-cov-target/release",
+            ] {
+                let candidate = target_dir.join(subdir).join(name);
                 if candidate.exists() {
                     return candidate;
                 }
@@ -318,10 +353,21 @@ pub fn bin_path() -> PathBuf {
         }
     }
 
-    // 3. Fall back to PATH
+    // 4. Check CARGO_TARGET_DIR at runtime (if set, binary lives there instead of target/)
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        for profile in ["debug", "release"] {
+            let candidate = PathBuf::from(&target_dir).join(profile).join(name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    // 5. Fall back to PATH
     which::which("distant").expect(
         "distant binary not found: not in CARGO_BIN_EXE_distant, \
-         not adjacent to test exe, and not on PATH",
+         not under workspace target/, not in CARGO_TARGET_DIR, \
+         and not on PATH",
     )
 }
 

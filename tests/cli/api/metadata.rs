@@ -5,7 +5,7 @@
 
 use assert_fs::prelude::*;
 use rstest::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use test_log::test;
 
 use distant_test_harness::manager::*;

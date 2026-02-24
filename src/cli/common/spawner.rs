@@ -5,6 +5,22 @@ use std::process::{Command, Stdio};
 use anyhow::Context;
 use log::*;
 
+/// Filters an iterator of OS arguments, removing any that case-insensitively match `exclude`
+/// (after trimming), and appends `extra` args at the end.
+fn filter_args(
+    args: impl Iterator<Item = OsString>,
+    exclude: &str,
+    extra: Vec<OsString>,
+) -> Vec<OsString> {
+    args.filter(|arg| {
+        !arg.to_str()
+            .map(|s| s.trim().eq_ignore_ascii_case(exclude))
+            .unwrap_or_default()
+    })
+    .chain(extra)
+    .collect()
+}
+
 /// Utility functions to spawn a process in the background
 #[allow(dead_code)]
 pub struct Spawner;
@@ -47,15 +63,7 @@ impl Spawner {
         let mut cmd = OsString::new();
         cmd.push(program.as_os_str());
 
-        let it = std::env::args_os()
-            .skip(1)
-            .filter(|arg| {
-                !arg.to_str()
-                    .map(|s| s.trim().eq_ignore_ascii_case(exclude))
-                    .unwrap_or_default()
-            })
-            .chain(extra_args);
-        for arg in it {
+        for arg in filter_args(std::env::args_os().skip(1), exclude, extra_args) {
             cmd.push(" ");
             cmd.push(&arg);
         }
@@ -101,7 +109,6 @@ impl Spawner {
     /// Spawns a process on Windows that runs in the background without a console and does not get
     /// terminated when the parent or other ancestors terminate (such as openssh session)
     pub fn spawn_background(cmd: impl AsRef<OsStr>) -> anyhow::Result<u32> {
-        use std::io::{BufRead, Cursor};
         use std::os::windows::process::CommandExt;
 
         // Get absolute path to powershell
@@ -177,22 +184,7 @@ impl Spawner {
             );
         }
 
-        let stdout = Cursor::new(output.stdout);
-
-        let mut process_id = None;
-        let mut return_value = None;
-        for line in stdout.lines().map_while(Result::ok) {
-            let line = line.trim();
-            if line.starts_with("ProcessId") {
-                if let Some((_, id)) = line.split_once(':') {
-                    process_id = id.trim().parse::<u32>().ok();
-                }
-            } else if line.starts_with("ReturnValue") {
-                if let Some((_, value)) = line.split_once(':') {
-                    return_value = value.trim().parse::<i32>().ok();
-                }
-            }
-        }
+        let (process_id, return_value) = parse_wmi_output(&output.stdout);
 
         match (return_value, process_id) {
             (Some(0), Some(pid)) => Ok(pid),
@@ -204,5 +196,145 @@ impl Spawner {
             ),
             (None, _) => anyhow::bail!("Missing return value"),
         }
+    }
+}
+
+/// Parses WMI `Invoke-WmiMethod` output for `ProcessId` and `ReturnValue` fields.
+#[cfg(any(windows, test))]
+fn parse_wmi_output(stdout: &[u8]) -> (Option<u32>, Option<i32>) {
+    use std::io::{BufRead, Cursor};
+
+    let cursor = Cursor::new(stdout);
+    let mut process_id = None;
+    let mut return_value = None;
+    for line in cursor.lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.starts_with("ProcessId") {
+            if let Some((_, id)) = line.split_once(':') {
+                process_id = id.trim().parse::<u32>().ok();
+            }
+        } else if line.starts_with("ReturnValue")
+            && let Some((_, value)) = line.split_once(':')
+        {
+            return_value = value.trim().parse::<i32>().ok();
+        }
+    }
+    (process_id, return_value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── filter_args tests ───
+
+    #[test]
+    fn filter_args_removes_excluded_flag() {
+        let args = vec!["listen", "--daemon", "--port", "8080"]
+            .into_iter()
+            .map(OsString::from);
+        let result = filter_args(args, "--daemon", vec![]);
+        assert_eq!(
+            result,
+            vec![
+                OsString::from("listen"),
+                OsString::from("--port"),
+                OsString::from("8080"),
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_args_case_insensitive() {
+        let args = vec!["listen", "--Daemon"].into_iter().map(OsString::from);
+        let result = filter_args(args, "--daemon", vec![]);
+        assert_eq!(result, vec![OsString::from("listen")]);
+    }
+
+    #[test]
+    fn filter_args_preserves_similar_flags() {
+        let args = vec!["--daemon-mode"].into_iter().map(OsString::from);
+        let result = filter_args(args, "--daemon", vec![]);
+        assert_eq!(result, vec![OsString::from("--daemon-mode")]);
+    }
+
+    #[test]
+    fn filter_args_appends_extra_args() {
+        let args = vec!["listen"].into_iter().map(OsString::from);
+        let extra = vec![OsString::from("--extra"), OsString::from("value")];
+        let result = filter_args(args, "--daemon", extra);
+        assert_eq!(
+            result,
+            vec![
+                OsString::from("listen"),
+                OsString::from("--extra"),
+                OsString::from("value"),
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_args_empty_input() {
+        let args = std::iter::empty::<OsString>();
+        let extra = vec![OsString::from("--extra")];
+        let result = filter_args(args, "--daemon", extra);
+        assert_eq!(result, vec![OsString::from("--extra")]);
+    }
+
+    #[test]
+    fn filter_args_ignores_non_utf8() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            // 0xFF is not valid UTF-8 — to_str() returns None, so unwrap_or_default() → false,
+            // meaning the arg is NOT excluded
+            let non_utf8 = OsString::from_vec(vec![0xFF, 0xFE]);
+            let args = vec![non_utf8.clone(), OsString::from("--daemon")].into_iter();
+            let result = filter_args(args, "--daemon", vec![]);
+            assert_eq!(result, vec![non_utf8]);
+        }
+    }
+
+    // ─── parse_wmi_output tests ───
+
+    #[test]
+    fn parse_wmi_output_extracts_pid_and_return_value() {
+        let stdout = b"__GENUS          : 2\r\n\
+                        ProcessId        : 12345\r\n\
+                        ReturnValue      : 0\r\n";
+        let (pid, ret) = parse_wmi_output(stdout);
+        assert_eq!(pid, Some(12345));
+        assert_eq!(ret, Some(0));
+    }
+
+    #[test]
+    fn parse_wmi_output_missing_fields() {
+        let stdout = b"some unrelated output\r\n";
+        let (pid, ret) = parse_wmi_output(stdout);
+        assert_eq!(pid, None);
+        assert_eq!(ret, None);
+    }
+
+    #[test]
+    fn parse_wmi_output_non_zero_return() {
+        let stdout = b"ProcessId    : 99\r\nReturnValue  : 2\r\n";
+        let (pid, ret) = parse_wmi_output(stdout);
+        assert_eq!(pid, Some(99));
+        assert_eq!(ret, Some(2));
+    }
+
+    #[test]
+    fn parse_wmi_output_empty_input() {
+        let (pid, ret) = parse_wmi_output(b"");
+        assert_eq!(pid, None);
+        assert_eq!(ret, None);
+    }
+
+    #[test]
+    fn parse_wmi_output_malformed_values() {
+        let stdout = b"ProcessId    : not_a_number\r\nReturnValue  : also_bad\r\n";
+        let (pid, ret) = parse_wmi_output(stdout);
+        assert_eq!(pid, None);
+        assert_eq!(ret, None);
     }
 }

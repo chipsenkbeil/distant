@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use distant_core::net::manager::Config as NetManagerConfig;
 use distant_core::Plugin;
+use distant_core::net::manager::Config as NetManagerConfig;
 use log::*;
 use once_cell::sync::Lazy;
 use service_manager::{
@@ -13,12 +13,12 @@ use service_manager::{
     ServiceUninstallCtx,
 };
 
-use crate::cli::common::{connect_to_manager, Ui};
-use crate::cli::Manager;
-use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 #[cfg(unix)]
 use crate::CliError;
 use crate::CliResult;
+use crate::cli::Manager;
+use crate::cli::common::{Ui, connect_to_manager};
+use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
 static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
@@ -88,7 +88,7 @@ fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
 
 #[cfg(unix)]
 fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
-    use fork::{daemon, Fork};
+    use fork::{Fork, daemon};
 
     debug!("Forking process");
     match daemon(true, true) {

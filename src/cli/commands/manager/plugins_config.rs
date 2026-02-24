@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use distant_core::plugin::ProcessPlugin;
 use distant_core::Plugin;
+use distant_core::plugin::ProcessPlugin;
 use log::*;
 use serde::Deserialize;
 

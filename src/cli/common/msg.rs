@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
 type SendFn = Arc<Mutex<Box<dyn FnMut(&[u8]) -> io::Result<()> + Send>>>;

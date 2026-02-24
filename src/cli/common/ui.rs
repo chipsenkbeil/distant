@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use console::{style, Term};
+use console::{Term, style};
 use indicatif::{ProgressBar, ProgressStyle};
 
 /// Terminal UI abstraction for all visual feedback.
