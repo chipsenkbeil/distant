@@ -453,9 +453,11 @@ mod tests {
         let shell: Shell = "nu".parse().unwrap();
         let result = shell.make_cmd_string("echo 'hello' `world`");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("unable to escape single quotes and backticks"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("unable to escape single quotes and backticks")
+        );
     }
 
     // -------------------------------------------------------

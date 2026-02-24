@@ -5,10 +5,10 @@ use anyhow::Context;
 use distant_core::protocol::{Environment, PtySize};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use log::*;
-use terminal_size::{terminal_size, Height, Width};
+use terminal_size::{Height, Width, terminal_size};
 use termwiz::caps::Capabilities;
 use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
-use termwiz::terminal::{new_terminal, Terminal};
+use termwiz::terminal::{Terminal, new_terminal};
 
 use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
@@ -95,11 +95,10 @@ impl Shell {
                                 modify_other_keys: None,
                             },
                             /* is_down */ true,
-                        ) {
-                            if let Err(x) = stdin.write_str(input).await {
-                                error!("Failed to write to stdin of remote process: {}", x);
-                                break;
-                            }
+                        ) && let Err(x) = stdin.write_str(input).await
+                        {
+                            error!("Failed to write to stdin of remote process: {}", x);
+                            break;
                         }
                     }
                     Some(InputEvent::Resized { cols, rows }) => {

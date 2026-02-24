@@ -172,7 +172,9 @@ mod tests {
     async fn resolve_should_properly_resolve_bind_address() {
         // Save and clear any existing SSH_CONNECTION (e.g., when running tests over SSH)
         let original_ssh_connection = env::var("SSH_CONNECTION").ok();
-        env::remove_var("SSH_CONNECTION");
+        // SAFETY: This test manipulates SSH_CONNECTION in a single-threaded test context
+        // (#[tokio::test] defaults to single-threaded) and restores the original value at the end.
+        unsafe { env::remove_var("SSH_CONNECTION") };
 
         // For ssh, we check SSH_CONNECTION, and there are three situations where this can fail:
         //
@@ -181,13 +183,13 @@ mod tests {
         // 3. The environment variable has an invalid IP address as the 3 arg
         BindAddress::Ssh.resolve(false).await.unwrap_err();
 
-        env::set_var("SSH_CONNECTION", "127.0.0.1 1234");
+        unsafe { env::set_var("SSH_CONNECTION", "127.0.0.1 1234") };
         BindAddress::Ssh.resolve(false).await.unwrap_err();
 
-        env::set_var("SSH_CONNECTION", "127.0.0.1 1234 -notaddress 1234");
+        unsafe { env::set_var("SSH_CONNECTION", "127.0.0.1 1234 -notaddress 1234") };
         BindAddress::Ssh.resolve(false).await.unwrap_err();
 
-        env::set_var("SSH_CONNECTION", "127.0.0.1 1234 127.0.0.1 1234");
+        unsafe { env::set_var("SSH_CONNECTION", "127.0.0.1 1234 127.0.0.1 1234") };
         assert_eq!(
             BindAddress::Ssh.resolve(false).await.unwrap(),
             Ipv4Addr::new(127, 0, 0, 1)
@@ -250,7 +252,7 @@ mod tests {
 
         // Restore original SSH_CONNECTION if it existed
         if let Some(val) = original_ssh_connection {
-            env::set_var("SSH_CONNECTION", val);
+            unsafe { env::set_var("SSH_CONNECTION", val) };
         }
     }
 }

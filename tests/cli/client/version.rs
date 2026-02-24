@@ -3,7 +3,7 @@
 //! Tests displaying client/server version information, protocol version,
 //! and capability support.
 
-use distant_core::protocol::{semver, PROTOCOL_VERSION};
+use distant_core::protocol::{PROTOCOL_VERSION, semver};
 use rstest::*;
 
 use distant_test_harness::manager::*;

@@ -2,6 +2,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::process::{Child, Command as StdCommand, Stdio};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -291,15 +292,37 @@ impl ManagerCtx {
     }
 }
 
-/// Path to distant binary.
+/// Global override for the distant binary path.
+static BIN_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Explicitly set the path to the distant binary.
+/// Must be called before any test invokes `bin_path()`.
+/// Returns `Err` if already set.
+pub fn set_bin_path(path: PathBuf) -> Result<(), PathBuf> {
+    BIN_PATH.set(path)
+}
+
+/// Path to distant binary (cached after first resolution).
 pub fn bin_path() -> PathBuf {
+    BIN_PATH.get_or_init(resolve_bin_path).clone()
+}
+
+fn resolve_bin_path() -> PathBuf {
     let name = if cfg!(windows) {
         "distant.exe"
     } else {
         "distant"
     };
 
-    // 1. Runtime env var (set by Cargo for integration tests in the same package)
+    // 1. Compile-time path from Cargo (works even under cargo-llvm-cov)
+    if let Some(path) = option_env!("CARGO_BIN_EXE_distant") {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // 2. Runtime env var (in case binary was rebuilt after test compilation)
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_distant") {
         let p = PathBuf::from(&path);
         if p.exists() {
@@ -307,9 +330,7 @@ pub fn bin_path() -> PathBuf {
         }
     }
 
-    // 2. Walk up from current test exe looking for the binary.
-    //    Handles both standard layout (target/{profile}/deps/test_exe)
-    //    and cargo-llvm-cov layout (target/llvm-cov-target/{profile}/...).
+    // 3. Walk up from current test exe
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent();
         while let Some(d) = dir {
@@ -321,7 +342,7 @@ pub fn bin_path() -> PathBuf {
         }
     }
 
-    // 3. Fall back to PATH
+    // 4. Fall back to PATH
     which::which("distant").expect(
         "distant binary not found: not in CARGO_BIN_EXE_distant, \
          not adjacent to test exe, and not on PATH",

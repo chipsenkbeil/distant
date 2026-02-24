@@ -9,9 +9,8 @@ use console::style;
 use distant_core::net::common::{ConnectionId, Destination, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
-    self, semver, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery,
-    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
-    SystemInfo, Version,
+    self, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery, SearchQueryContentsMatch,
+    SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions, SystemInfo, Version, semver,
 };
 use distant_core::{Channel, ChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -22,13 +21,13 @@ use tabled::settings::{Alignment, Disable, Modify};
 use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
+use dialoguer::Select;
 use dialoguer::console::Term;
 use dialoguer::theme::ColorfulTheme;
-use dialoguer::Select;
 
 use crate::cli::common::{
-    connect_to_manager, format_connection, try_connect as try_connect_no_autostart, Cache,
-    JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui,
+    Cache, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui, connect_to_manager,
+    format_connection, try_connect as try_connect_no_autostart,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
@@ -972,7 +971,9 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 follow_symlinks,
                 exclude_symlinks: false,
             };
-            debug!("Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})");
+            debug!(
+                "Setting permissions for {path:?} as (permissions = {permissions:?}, options = {options:?})"
+            );
             channel
                 .set_permissions(path.as_path(), permissions, options)
                 .await
@@ -1393,13 +1394,13 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 if remaining.len() == 1 {
                     let new_id = *remaining.keys().next().unwrap();
                     *cache.data.selected = new_id;
-                    if let Format::Shell = format {
-                        if let Some(dest) = remaining.get(&new_id) {
-                            ui.dim(&format!(
-                                "Selected remaining connection: {}",
-                                format_connection(new_id, dest)
-                            ));
-                        }
+                    if let Format::Shell = format
+                        && let Some(dest) = remaining.get(&new_id)
+                    {
+                        ui.dim(&format!(
+                            "Selected remaining connection: {}",
+                            format_connection(new_id, dest)
+                        ));
                     }
                 } else {
                     *cache.data.selected = 0;

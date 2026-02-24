@@ -213,10 +213,10 @@ fn parse_wmi_output(stdout: &[u8]) -> (Option<u32>, Option<i32>) {
             if let Some((_, id)) = line.split_once(':') {
                 process_id = id.trim().parse::<u32>().ok();
             }
-        } else if line.starts_with("ReturnValue") {
-            if let Some((_, value)) = line.split_once(':') {
-                return_value = value.trim().parse::<i32>().ok();
-            }
+        } else if line.starts_with("ReturnValue")
+            && let Some((_, value)) = line.split_once(':')
+        {
+            return_value = value.trim().parse::<i32>().ok();
         }
     }
     (process_id, return_value)
