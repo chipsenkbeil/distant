@@ -32,11 +32,10 @@ jobs:
           git config --system core.autocrlf false
           git config --system core.eol lf
         if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust (clippy)
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -61,11 +60,10 @@ jobs:
           git config --system core.autocrlf false
           git config --system core.eol lf
         if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust (rustfmt)
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: stable
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -87,18 +85,17 @@ jobs:
           - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
           - { rust: stable, os: macos-latest }
           - { rust: stable, os: ubuntu-latest }
-          - { rust: 1.70.0, os: ubuntu-latest }
+          - { rust: 1.75.0, os: ubuntu-latest }
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust ${{ matrix.rust }}
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@v1
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest@0.9.45
+          tool: cargo-nextest@0.9
       - uses: Swatinem/rust-cache@v2
         with:
           key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
