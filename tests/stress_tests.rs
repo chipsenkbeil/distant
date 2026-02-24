@@ -10,7 +10,6 @@ use rstest::*;
 
 #[rstest]
 #[test_log::test]
-#[ignore]
 fn should_handle_large_volume_of_requests(ctx: ManagerCtx) {
     // Create a temporary directory to house a file we create and edit
     // with a large volume of requests
@@ -36,7 +35,6 @@ fn should_handle_large_volume_of_requests(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore]
 fn should_handle_wide_spread_of_clients(ctx: ManagerCtx) {
     use std::thread;
 
@@ -91,7 +89,6 @@ fn should_handle_wide_spread_of_clients(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore]
 fn should_handle_abrupt_client_disconnects(ctx: ManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     let path = root.child("file").to_path_buf();
@@ -139,7 +136,6 @@ fn should_handle_abrupt_client_disconnects(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-#[ignore]
 fn should_handle_badly_killing_client_shell_with_interactive_process(ctx: ManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     let path = root.child("file").to_path_buf();
@@ -179,7 +175,6 @@ fn should_handle_badly_killing_client_shell_with_interactive_process(ctx: Manage
 #[cfg(windows)]
 #[rstest]
 #[test_log::test]
-#[ignore]
 fn should_handle_badly_killing_client_shell_with_interactive_process(ctx: ManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     let path = root.child("file").to_path_buf();

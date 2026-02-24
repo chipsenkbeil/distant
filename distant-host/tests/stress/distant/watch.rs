@@ -10,7 +10,7 @@ const MAX_FILES: usize = 500;
 
 #[rstest]
 #[test(tokio::test)]
-#[ignore]
+#[ignore = "stress test: watches 500 files, too slow for CI"]
 async fn should_handle_large_volume_of_file_watching(#[future] ctx: ClientCtx) {
     let ctx = ctx.await;
     let mut channel = ctx.client.clone_channel();
