@@ -223,19 +223,14 @@ mod tests {
             Ipv6Addr::UNSPECIFIED
         );
 
-        // Host with name should attempt to resolve the name
-        assert_eq!(
-            BindAddress::Host(Host::Name(String::from("example.com")))
-                .resolve(false)
-                .await
-                .unwrap(),
-            tokio::net::lookup_host("example.com:80")
-                .await
-                .unwrap()
-                .next()
-                .unwrap()
-                .ip(),
-        );
+        // Host with name should attempt to resolve the name;
+        // we only assert it returns a valid IPv4 address since DNS round-robin
+        // can return different IPs across lookups (e.g., example.com on Cloudflare)
+        let resolved = BindAddress::Host(Host::Name(String::from("example.com")))
+            .resolve(false)
+            .await
+            .unwrap();
+        assert!(resolved.is_ipv4(), "Expected IPv4 address, got {resolved}");
 
         // Should support resolving localhost using ipv4/ipv6
         assert_eq!(
