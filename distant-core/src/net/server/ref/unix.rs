@@ -55,9 +55,9 @@ impl DerefMut for UnixSocketServerRef {
 #[cfg(test)]
 mod tests {
     //! Tests for UnixSocketServerRef: construction, path accessor, into_inner, Deref/DerefMut,
-    //! shutdown, and relative path handling. Note: shutdown tests use a no-op task that completes
-    //! immediately, so they verify that abort() returns without error, not that it actually
-    //! stops active connections.
+    //! shutdown, and relative path handling. The `make_server_ref` tests use a no-op task for
+    //! testing accessor wiring. The `shutdown_stops_real_server` test uses a real `Server`
+    //! instance to verify that shutdown actually stops an active server.
 
     use super::*;
     use tokio::sync::broadcast;
@@ -125,5 +125,53 @@ mod tests {
         let path = PathBuf::from("relative/path.sock");
         let unix_ref = UnixSocketServerRef::new(path, make_server_ref());
         assert_eq!(unix_ref.path(), Path::new("relative/path.sock"));
+    }
+
+    // --- Real server shutdown test ---
+
+    use crate::auth::{AuthenticationMethod, NoneAuthenticationMethod, Verifier};
+    use crate::net::common::{InmemoryTransport, MpscListener, Version};
+    use crate::net::server::{RequestCtx, Server, ServerConfig, ServerHandler};
+
+    struct TestServerHandler;
+
+    impl ServerHandler for TestServerHandler {
+        type Request = u16;
+        type Response = String;
+
+        async fn on_request(&self, ctx: RequestCtx<Self::Request, Self::Response>) {
+            ctx.reply.send("hello".to_string()).unwrap();
+        }
+    }
+
+    fn start_real_server() -> (
+        UnixSocketServerRef,
+        tokio::sync::mpsc::Sender<InmemoryTransport>,
+    ) {
+        let (tx, listener) = MpscListener::channel(100);
+        let methods: Vec<Box<dyn AuthenticationMethod>> =
+            vec![Box::new(NoneAuthenticationMethod::new())];
+        let server_ref = Server {
+            config: ServerConfig::default(),
+            handler: TestServerHandler,
+            verifier: Verifier::new(methods),
+            version: Version::new(1, 2, 3),
+        }
+        .start(listener)
+        .expect("Failed to start server");
+        (
+            UnixSocketServerRef::new(PathBuf::from("/tmp/test.sock"), server_ref),
+            tx,
+        )
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn shutdown_stops_real_server() {
+        let (server_ref, listener_tx) = start_real_server();
+        assert!(!server_ref.is_finished());
+        server_ref.shutdown();
+        drop(listener_tx); // Close listener so accept loop exits
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(server_ref.is_finished());
     }
 }

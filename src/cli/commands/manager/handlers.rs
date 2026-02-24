@@ -456,13 +456,10 @@ impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
     }
 }
 
-async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
-    trace!("load_ssh({destination}, {options})");
-    use distant_ssh::{Ssh, SshOpts};
+fn parse_ssh_opts(destination: &Destination, options: &Map) -> io::Result<distant_ssh::SshOpts> {
+    use distant_ssh::SshOpts;
 
-    let host = destination.host.to_string();
-
-    let opts = SshOpts {
+    Ok(SshOpts {
         identity_files: options
             .get("identity_files")
             .or_else(|| options.get("ssh.identity_files"))
@@ -502,7 +499,15 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
         },
 
         ..Default::default()
-    };
+    })
+}
+
+async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
+    trace!("load_ssh({destination}, {options})");
+    use distant_ssh::Ssh;
+
+    let host = destination.host.to_string();
+    let opts = parse_ssh_opts(destination, options)?;
 
     debug!("Connecting to {host} via ssh with {opts:?}");
     Ssh::connect(host, opts).await
@@ -511,14 +516,7 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
 #[cfg(test)]
 mod tests {
     //! Tests for handler helpers (`missing`/`invalid`), plugin types, SSH option
-    //! parsing, args quote-stripping, and `bind_server` filtering.
-    //!
-    //! NOTE: The SSH option parsing tests (identity_files, verbose, proxy_command,
-    //! etc.) replicate the Map-lookup logic from `load_ssh` inline because
-    //! `load_ssh` requires a live SSH connection. This means these tests validate
-    //! the *pattern* of option extraction, not the production function directly.
-    //! If the parsing logic in `load_ssh` changes, these tests must be updated
-    //! in tandem. The same applies to the args quote-stripping loop.
+    //! parsing via `parse_ssh_opts`, args quote-stripping, and `bind_server` filtering.
 
     use distant_core::net::common::Host;
     use test_log::test;
@@ -604,11 +602,18 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // load_ssh — option parsing tests (without actual SSH)
+    // parse_ssh_opts — option parsing tests
     // -------------------------------------------------------
-    // We can't call load_ssh directly since it requires a live SSH connection,
-    // so we replicate the Map-lookup patterns here. If the parsing logic in
-    // load_ssh changes, these tests must be updated to match.
+
+    fn make_destination(host: &str) -> Destination {
+        Destination {
+            scheme: None,
+            username: None,
+            password: None,
+            host: host.parse().unwrap(),
+            port: None,
+        }
+    }
 
     #[test]
     fn ssh_opts_identity_files_parsing() {
@@ -618,16 +623,16 @@ mod tests {
             "/home/user/.ssh/id_rsa,/home/user/.ssh/id_ed25519".to_string(),
         );
 
-        // Verify the parsing logic matches what load_ssh does
-        let files: Vec<PathBuf> = options
-            .get("identity_files")
-            .or_else(|| options.get("ssh.identity_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default();
-
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0], PathBuf::from("/home/user/.ssh/id_rsa"));
-        assert_eq!(files[1], PathBuf::from("/home/user/.ssh/id_ed25519"));
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identity_files.len(), 2);
+        assert_eq!(
+            opts.identity_files[0],
+            PathBuf::from("/home/user/.ssh/id_rsa")
+        );
+        assert_eq!(
+            opts.identity_files[1],
+            PathBuf::from("/home/user/.ssh/id_ed25519")
+        );
     }
 
     #[test]
@@ -638,14 +643,12 @@ mod tests {
             "/home/user/.ssh/id_rsa".to_string(),
         );
 
-        let files: Vec<PathBuf> = options
-            .get("identity_files")
-            .or_else(|| options.get("ssh.identity_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default();
-
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0], PathBuf::from("/home/user/.ssh/id_rsa"));
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identity_files.len(), 1);
+        assert_eq!(
+            opts.identity_files[0],
+            PathBuf::from("/home/user/.ssh/id_rsa")
+        );
     }
 
     #[test]
@@ -653,12 +656,8 @@ mod tests {
         let mut options = Map::new();
         options.insert("identities_only".to_string(), "true".to_string());
 
-        let result: Option<bool> = options
-            .get("identities_only")
-            .or_else(|| options.get("ssh.identities_only"))
-            .map(|s| s.parse().unwrap());
-
-        assert_eq!(result, Some(true));
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.identities_only, Some(true));
     }
 
     #[test]
@@ -666,16 +665,8 @@ mod tests {
         let mut options = Map::new();
         options.insert("verbose".to_string(), "true".to_string());
 
-        let result: bool = match options
-            .get("verbose")
-            .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose"))
-        {
-            Some(s) => s.parse().unwrap(),
-            None => false,
-        };
-
-        assert!(result);
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
     }
 
     #[test]
@@ -683,16 +674,8 @@ mod tests {
         let mut options = Map::new();
         options.insert("ssh.verbose".to_string(), "true".to_string());
 
-        let result: bool = match options
-            .get("verbose")
-            .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose"))
-        {
-            Some(s) => s.parse().unwrap(),
-            None => false,
-        };
-
-        assert!(result);
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
     }
 
     #[test]
@@ -700,32 +683,16 @@ mod tests {
         let mut options = Map::new();
         options.insert("client.verbose".to_string(), "true".to_string());
 
-        let result: bool = match options
-            .get("verbose")
-            .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose"))
-        {
-            Some(s) => s.parse().unwrap(),
-            None => false,
-        };
-
-        assert!(result);
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.verbose);
     }
 
     #[test]
     fn ssh_opts_verbose_defaults_to_false() {
         let options = Map::new();
 
-        let result: bool = match options
-            .get("verbose")
-            .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose"))
-        {
-            Some(s) => s.parse().unwrap(),
-            None => false,
-        };
-
-        assert!(!result);
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(!opts.verbose);
     }
 
     #[test]
@@ -736,12 +703,11 @@ mod tests {
             "ssh -W %h:%p proxy.example.com".to_string(),
         );
 
-        let proxy: Option<String> = options
-            .get("proxy_command")
-            .or_else(|| options.get("ssh.proxy_command"))
-            .cloned();
-
-        assert_eq!(proxy.as_deref(), Some("ssh -W %h:%p proxy.example.com"));
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(
+            opts.proxy_command.as_deref(),
+            Some("ssh -W %h:%p proxy.example.com")
+        );
     }
 
     #[test]
@@ -752,41 +718,26 @@ mod tests {
             "/home/user/.ssh/known_hosts,/etc/ssh/known_hosts".to_string(),
         );
 
-        let files: Vec<PathBuf> = options
-            .get("user_known_hosts_files")
-            .or_else(|| options.get("ssh.user_known_hosts_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default();
-
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0], PathBuf::from("/home/user/.ssh/known_hosts"));
-        assert_eq!(files[1], PathBuf::from("/etc/ssh/known_hosts"));
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert_eq!(opts.user_known_hosts_files.len(), 2);
+        assert_eq!(
+            opts.user_known_hosts_files[0],
+            PathBuf::from("/home/user/.ssh/known_hosts")
+        );
+        assert_eq!(
+            opts.user_known_hosts_files[1],
+            PathBuf::from("/etc/ssh/known_hosts")
+        );
     }
 
     #[test]
     fn ssh_opts_empty_options_produces_defaults() {
         let options = Map::new();
 
-        let identity_files: Vec<PathBuf> = options
-            .get("identity_files")
-            .or_else(|| options.get("ssh.identity_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default();
-
-        let user_known_hosts_files: Vec<PathBuf> = options
-            .get("user_known_hosts_files")
-            .or_else(|| options.get("ssh.user_known_hosts_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default();
-
-        let proxy_command: Option<String> = options
-            .get("proxy_command")
-            .or_else(|| options.get("ssh.proxy_command"))
-            .cloned();
-
-        assert!(identity_files.is_empty());
-        assert!(user_known_hosts_files.is_empty());
-        assert!(proxy_command.is_none());
+        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
+        assert!(opts.identity_files.is_empty());
+        assert!(opts.user_known_hosts_files.is_empty());
+        assert!(opts.proxy_command.is_none());
     }
 
     // -------------------------------------------------------

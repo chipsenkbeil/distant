@@ -303,6 +303,23 @@ pub struct Ssh {
     cached_family: Mutex<Option<SshFamily>>,
 }
 
+/// Build the command-line arguments for launching a distant server remotely.
+fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::Result<String> {
+    let mut args = vec![
+        String::from("server"),
+        String::from("listen"),
+        String::from("--daemon"),
+        String::from("--host"),
+        String::from("ssh"),
+    ];
+    args.extend(match family {
+        SshFamily::Windows => winsplit::split(extra_args),
+        SshFamily::Unix => shell_words::split(extra_args)
+            .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
+    });
+    Ok(format!("{} {}", binary, args.join(" ")))
+}
+
 impl Ssh {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
@@ -804,21 +821,7 @@ impl Ssh {
             .parse::<Host>()
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        // Build arguments for distant to run listen subcommand
-        let mut args = vec![
-            String::from("server"),
-            String::from("listen"),
-            String::from("--daemon"),
-            String::from("--host"),
-            String::from("ssh"),
-        ];
-        args.extend(match family {
-            SshFamily::Windows => winsplit::split(&opts.args),
-            SshFamily::Unix => shell_words::split(&opts.args)
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        });
-
-        let cmd = format!("{} {}", opts.binary, args.join(" "));
+        let cmd = build_launch_args(family, &opts.binary, &opts.args)?;
         debug!("Executing launch command: {}", cmd);
 
         // Use channel exec instead of PTY + shell to avoid interference
@@ -2466,25 +2469,8 @@ mod tests {
     }
 
     // --- Launch argument building tests ---
-    // These test the same arg-splitting logic used in Ssh::launch
 
-    /// Replicate the launch argument building logic for testing
-    fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::Result<String> {
-        let mut args = vec![
-            String::from("server"),
-            String::from("listen"),
-            String::from("--daemon"),
-            String::from("--host"),
-            String::from("ssh"),
-        ];
-        args.extend(match family {
-            SshFamily::Windows => winsplit::split(extra_args),
-            SshFamily::Unix => shell_words::split(extra_args)
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?,
-        });
-
-        Ok(format!("{} {}", binary, args.join(" ")))
-    }
+    use super::build_launch_args;
 
     #[test]
     fn launch_args_unix_empty_extra() {
@@ -2563,63 +2549,6 @@ mod tests {
         let cmd =
             build_launch_args(SshFamily::Unix, "distant", "--key \"value with spaces\"").unwrap();
         assert!(cmd.contains("value with spaces"));
-    }
-
-    // --- Port/user selection logic tests ---
-    // These test the same resolution logic used in Ssh::connect
-
-    #[test]
-    fn port_resolution_opts_takes_priority() {
-        let opts_port: Option<u16> = Some(2222);
-        let config_port: Option<u16> = Some(3333);
-        let port = opts_port.or(config_port).unwrap_or(22);
-        assert_eq!(port, 2222);
-    }
-
-    #[test]
-    fn port_resolution_falls_back_to_config() {
-        let opts_port: Option<u16> = None;
-        let config_port: Option<u16> = Some(3333);
-        let port = opts_port.or(config_port).unwrap_or(22);
-        assert_eq!(port, 3333);
-    }
-
-    #[test]
-    fn port_resolution_defaults_to_22() {
-        let opts_port: Option<u16> = None;
-        let config_port: Option<u16> = None;
-        let port = opts_port.or(config_port).unwrap_or(22);
-        assert_eq!(port, 22);
-    }
-
-    #[test]
-    fn user_resolution_opts_takes_priority() {
-        let opts_user: Option<String> = Some("optuser".to_string());
-        let config_user: Option<String> = Some("cfguser".to_string());
-        let user = opts_user
-            .or(config_user)
-            .unwrap_or_else(|| "default".to_string());
-        assert_eq!(user, "optuser");
-    }
-
-    #[test]
-    fn user_resolution_falls_back_to_config() {
-        let opts_user: Option<String> = None;
-        let config_user: Option<String> = Some("cfguser".to_string());
-        let user = opts_user
-            .or(config_user)
-            .unwrap_or_else(|| "default".to_string());
-        assert_eq!(user, "cfguser");
-    }
-
-    #[test]
-    fn user_resolution_defaults_to_fallback() {
-        let opts_user: Option<String> = None;
-        let config_user: Option<String> = None;
-        let user = opts_user
-            .or(config_user)
-            .unwrap_or_else(|| "default".to_string());
-        assert_eq!(user, "default");
     }
 
     // --- Authentication error message building tests ---

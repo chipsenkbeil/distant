@@ -182,8 +182,67 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    #[ignore]
     async fn should_be_able_to_reconnect() {
-        todo!();
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
+
+        // Wait for the server to be ready
+        let address = rx.await.expect("Failed to get server address");
+
+        // Connect to the pipe, send some bytes, and get some bytes
+        let mut buf: [u8; 10] = [0; 10];
+
+        let mut conn = WindowsPipeTransport::connect(&address)
+            .await
+            .expect("Conn failed to connect");
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write");
+
+        // Wait for original server to finish
+        let _ = task.await.expect("Server task failed unexpectedly");
+
+        // Create a new server on the same pipe address
+        let new_pipe = ServerOptions::new().create(&address).unwrap();
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(new_pipe));
+
+        // Reconnect to the pipe, send some bytes, and get some bytes
+        conn.reconnect().await.expect("Conn failed to reconnect");
+
+        let mut buf: [u8; 10] = [0; 10];
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read after reconnect");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write after reconnect");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_returns_unsupported_for_server_pipe() {
+        let addr = format!(r"\\.\pipe\test_pipe_{}", rand::random::<usize>());
+        let pipe = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&addr)
+            .unwrap();
+        let mut transport = WindowsPipeTransport {
+            addr: OsString::from(&addr),
+            inner: NamedPipe::Server(pipe),
+        };
+        let err = transport.reconnect().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 }

@@ -19,6 +19,14 @@ use typed_path::Utf8TypedPath;
 use crate::process::Process;
 use crate::{ClientHandler, SshFamily};
 
+/// Convert PathBuf to SFTP path string using typed-path.
+/// SFTP protocol always uses Unix-style paths regardless of target OS.
+fn to_sftp_path(path: PathBuf) -> io::Result<String> {
+    let path_str = path.to_string_lossy();
+    let typed_path = Utf8TypedPath::derive(&path_str);
+    Ok(typed_path.with_unix_encoding().as_str().to_string())
+}
+
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
     /// Active SSH session handle.
@@ -89,10 +97,7 @@ impl SshApi {
     /// Convert PathBuf to SFTP path string using typed-path with validation.
     /// SFTP protocol always uses Unix-style paths regardless of target OS.
     fn to_sftp_path(&self, path: PathBuf) -> io::Result<String> {
-        let path_str = path.to_string_lossy();
-        let typed_path = Utf8TypedPath::derive(&path_str);
-
-        Ok(typed_path.with_unix_encoding().as_str().to_string())
+        to_sftp_path(path)
     }
 
     /// Apply permissions to a single path via SFTP, reading current mode and merging.
@@ -1090,26 +1095,11 @@ impl Api for SshApi {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for `SshApi::to_sftp_path` path conversion logic.
-    //!
-    //! The `to_sftp_path` function is replicated here from production code because
-    //! `SshApi::to_sftp_path` takes `&self` and requires a live SSH session, making it
-    //! impractical to call directly in unit tests. This is a deliberate tradeoff for
-    //! test isolation -- the real fix would require refactoring the production code to
-    //! extract the path conversion into a freestanding function. If the production
-    //! method diverges from this copy, these tests will not catch the regression.
+    //! Tests for `to_sftp_path` path conversion logic.
 
     use std::path::PathBuf;
 
-    use typed_path::Utf8TypedPath;
-
-    /// Replicate to_sftp_path logic for testing without needing SshApi instance.
-    /// This is the exact same logic as SshApi::to_sftp_path.
-    fn to_sftp_path(path: PathBuf) -> std::io::Result<String> {
-        let path_str = path.to_string_lossy();
-        let typed_path = Utf8TypedPath::derive(&path_str);
-        Ok(typed_path.with_unix_encoding().as_str().to_string())
-    }
+    use super::to_sftp_path;
 
     // --- to_sftp_path tests ---
 

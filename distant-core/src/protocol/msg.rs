@@ -41,7 +41,7 @@ impl<T> Msg<T> {
 
     /// Returns mutable reference to single value if msg is single variant.
     #[inline]
-    pub fn as_mut_single(&mut self) -> Option<&T> {
+    pub fn as_mut_single(&mut self) -> Option<&mut T> {
         match self {
             Self::Single(x) => Some(x),
             _ => None,
@@ -104,7 +104,6 @@ impl<T> Msg<T> {
 mod tests {
     //! Tests for Msg<T>: constructors, accessors (as_single, as_mut_single, as_batch,
     //! as_mut_batch, into_single, into_batch, into_vec), From impls, and serde round-trips.
-    //! Note: as_mut_single returns Option<&T> (immutable ref) despite the "mut" in its name.
 
     use super::*;
 
@@ -233,8 +232,7 @@ mod tests {
         #[test]
         fn as_mut_single_should_return_some_for_single() {
             let mut msg: Msg<i32> = Msg::single(42);
-            // Note: as_mut_single returns Option<&T> (immutable ref) despite its name
-            assert_eq!(msg.as_mut_single(), Some(&42));
+            assert_eq!(msg.as_mut_single(), Some(&mut 42));
         }
 
         #[test]

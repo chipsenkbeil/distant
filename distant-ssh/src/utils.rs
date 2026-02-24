@@ -176,6 +176,9 @@ pub async fn is_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
     .await?;
 
     fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+        if subslice.is_empty() {
+            return true;
+        }
         for i in 0..slice.len() {
             if i + subslice.len() > slice.len() {
                 break;
@@ -243,10 +246,6 @@ mod tests {
     //! The `contains_subslice` function is replicated from the private function
     //! defined inside `is_windows()`, since it is not directly accessible from test
     //! code. If the production function diverges, these tests will not detect it.
-    //! Note: the `contains_subslice_both_empty` test documents that both-empty returns
-    //! `false` (the loop range `0..0` is empty), which differs from Rust's
-    //! `[].starts_with(&[])` returning `true`. This may reveal an edge case worth
-    //! checking in the production code.
 
     use super::*;
 
@@ -800,6 +799,9 @@ mod tests {
     // Replicate the contains_subslice function from is_windows for testing
 
     fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+        if subslice.is_empty() {
+            return true;
+        }
         for i in 0..slice.len() {
             if i + subslice.len() > slice.len() {
                 break;
@@ -846,8 +848,8 @@ mod tests {
 
     #[test]
     fn contains_subslice_both_empty() {
-        // Loop doesn't execute for empty slice, so returns false
-        assert!(!contains_subslice(b"", b""));
+        // Empty subslice is contained in everything, matching [].starts_with(&[])
+        assert!(contains_subslice(b"", b""));
     }
 
     #[test]
