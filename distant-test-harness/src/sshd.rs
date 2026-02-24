@@ -619,14 +619,14 @@ impl Sshd {
             #[cfg(windows)]
             {
                 // Detect Windows version
-                if let Ok(output) = Command::new("ver").output() {
-                    if let Ok(version) = String::from_utf8(output.stdout) {
-                        error!("Windows version: {}", version.trim());
-                        if version.contains("2025") || version.contains("26100") {
-                            error!(
-                                "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
-                            );
-                        }
+                if let Ok(output) = Command::new("ver").output()
+                    && let Ok(version) = String::from_utf8(output.stdout)
+                {
+                    error!("Windows version: {}", version.trim());
+                    if version.contains("2025") || version.contains("26100") {
+                        error!(
+                            "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
+                        );
                     }
                 }
 
@@ -646,11 +646,11 @@ impl Sshd {
                 }
 
                 // Check Windows OpenSSH version
-                if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output() {
-                    if let Ok(version) = String::from_utf8(output.stderr) {
-                        // SSH version goes to stderr
-                        error!("OpenSSH version: {}", version.trim());
-                    }
+                if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output()
+                    && let Ok(version) = String::from_utf8(output.stderr)
+                {
+                    // SSH version goes to stderr
+                    error!("OpenSSH version: {}", version.trim());
                 }
             }
 
@@ -734,12 +734,12 @@ impl Sshd {
                     out.push_str("====================\n");
 
                     // Check if this is Windows Server 2025 which has stricter requirements
-                    if let Ok(output) = std::process::Command::new("ver").output() {
-                        if let Ok(version) = String::from_utf8(output.stdout) {
-                            out.push_str(&format!("Windows Version: {}\n", version.trim()));
-                            if version.contains("2025") || version.contains("26100") {
-                                out.push_str("Detected Windows Server 2025 - requires SYSTEM file ownership\n");
-                            }
+                    if let Ok(output) = std::process::Command::new("ver").output()
+                        && let Ok(version) = String::from_utf8(output.stdout)
+                    {
+                        out.push_str(&format!("Windows Version: {}\n", version.trim()));
+                        if version.contains("2025") || version.contains("26100") {
+                            out.push_str("Detected Windows Server 2025 - requires SYSTEM file ownership\n");
                         }
                     }
 
@@ -747,12 +747,10 @@ impl Sshd {
                     if let Ok(output) = std::process::Command::new("sc")
                         .args(["query", "sshd"])
                         .output()
+                        && let Ok(status) = String::from_utf8(output.stdout)
+                        && status.contains("RUNNING")
                     {
-                        if let Ok(status) = String::from_utf8(output.stdout) {
-                            if status.contains("RUNNING") {
-                                out.push_str("System SSH service is RUNNING - may conflict with test instances\n");
-                            }
-                        }
+                        out.push_str("System SSH service is RUNNING - may conflict with test instances\n");
                     }
 
                     out.push('\n');
