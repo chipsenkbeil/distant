@@ -3,14 +3,9 @@
 //! Uses `expectrl` to spawn the shell process inside a real PTY, which is
 //! required because `distant shell` uses `termwiz::terminal::new_terminal()`
 //! and needs stdin/stdout to be a TTY.
-//!
-//! NOTE: These tests are ignored by default because `distant shell` has a race
-//! condition: `RemoteProcessLink::shutdown()` aborts the stdout/stderr forwarding
-//! tasks before they can drain remaining output, causing fast-completing commands
-//! to lose their output intermittently. Run with `--ignored` to execute them.
 
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use expectrl::Session;
 use expectrl::process::Healthcheck;
@@ -37,9 +32,26 @@ fn build_shell_command(ctx: &ManagerCtx, extra_args: &[&str]) -> Command {
     cmd
 }
 
+/// Waits for the session's process to exit, polling `get_status()` until it
+/// returns an `Exited` status. `expectrl`'s `get_status()` uses non-blocking
+/// `waitpid`, so it may return `StillAlive` briefly after EOF is received.
+fn wait_for_exit<P, S>(session: &Session<P, S>) -> WaitStatus
+where
+    P: Healthcheck<Status = WaitStatus>,
+{
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let status = session.get_status().expect("Failed to get process status");
+        if !matches!(status, WaitStatus::StillAlive) {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "Process did not exit within 30s");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[rstest]
 #[test_log::test]
-#[ignore = "flaky: distant shell stdout drain race (see module doc)"]
 fn should_run_single_command_via_shell(ctx: ManagerCtx) {
     let echo_args: Vec<&str> = if cfg!(windows) {
         vec!["--", "cmd.exe", "/c", "echo", "hello"]
@@ -55,7 +67,7 @@ fn should_run_single_command_via_shell(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = session.get_status().expect("Failed to get process status");
+    let status = wait_for_exit(&session);
     assert!(
         matches!(status, WaitStatus::Exited(_, 0)),
         "Expected exit code 0, got: {status:?}"
@@ -64,7 +76,6 @@ fn should_run_single_command_via_shell(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore = "flaky: distant shell stdout drain race (see module doc)"]
 fn should_forward_exit_code(ctx: ManagerCtx) {
     // Note: distant shell joins CMD args with spaces (`cmd.join(" ")`), so
     // multi-word `-c` arguments like `bash -c "exit 42"` lose their grouping.
@@ -81,7 +92,7 @@ fn should_forward_exit_code(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = session.get_status().expect("Failed to get process status");
+    let status = wait_for_exit(&session);
     assert!(
         matches!(status, WaitStatus::Exited(_, 1)),
         "Expected exit code 1, got: {status:?}"
@@ -90,7 +101,6 @@ fn should_forward_exit_code(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore = "flaky: distant shell stdout drain race (see module doc)"]
 fn should_support_current_dir(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let temp_str = temp.path().to_str().unwrap();
@@ -114,7 +124,7 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = session.get_status().expect("Failed to get process status");
+    let status = wait_for_exit(&session);
     assert!(
         matches!(status, WaitStatus::Exited(_, 0)),
         "Expected exit code 0, got: {status:?}"
@@ -123,7 +133,6 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore = "flaky: distant shell stdout drain race (see module doc)"]
 fn should_support_environment(ctx: ManagerCtx) {
     // Use `env` (or `set` on Windows) to list all environment variables, then
     // search for our custom variable. This is more reliable than `printenv`
@@ -145,7 +154,7 @@ fn should_support_environment(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = session.get_status().expect("Failed to get process status");
+    let status = wait_for_exit(&session);
     assert!(
         matches!(status, WaitStatus::Exited(_, 0)),
         "Expected exit code 0, got: {status:?}"
