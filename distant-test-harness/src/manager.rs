@@ -314,7 +314,7 @@ fn resolve_bin_path() -> PathBuf {
         "distant"
     };
 
-    // 1. Compile-time path from Cargo (works even under cargo-llvm-cov)
+    // 1. Compile-time path from Cargo (works for test targets in the same package)
     if let Some(path) = option_env!("CARGO_BIN_EXE_distant") {
         let p = PathBuf::from(path);
         if p.exists() {
@@ -330,22 +330,44 @@ fn resolve_bin_path() -> PathBuf {
         }
     }
 
-    // 3. Walk up from current test exe
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join(name);
-            if candidate.exists() && candidate != exe {
-                return candidate;
+    // 3. Locate via workspace root derived from CARGO_MANIFEST_DIR.
+    //    Available at compile time for every crate (including library crates).
+    //    For distant-test-harness: {workspace_root}/distant-test-harness/
+    //    Cargo always hard-links final binaries into target/{profile}/ even
+    //    when build-dir is configured elsewhere.
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(workspace_root) = manifest_dir.parent() {
+            let target_dir = workspace_root.join("target");
+            for subdir in [
+                "debug",
+                "release",
+                "llvm-cov-target/debug",
+                "llvm-cov-target/release",
+            ] {
+                let candidate = target_dir.join(subdir).join(name);
+                if candidate.exists() {
+                    return candidate;
+                }
             }
-            dir = d.parent();
         }
     }
 
-    // 4. Fall back to PATH
+    // 4. Check CARGO_TARGET_DIR at runtime (if set, binary lives there instead of target/)
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        for profile in ["debug", "release"] {
+            let candidate = PathBuf::from(&target_dir).join(profile).join(name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    // 5. Fall back to PATH
     which::which("distant").expect(
         "distant binary not found: not in CARGO_BIN_EXE_distant, \
-         not adjacent to test exe, and not on PATH",
+         not under workspace target/, not in CARGO_TARGET_DIR, \
+         and not on PATH",
     )
 }
 
