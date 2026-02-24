@@ -85,7 +85,7 @@ jobs:
           - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
           - { rust: stable, os: macos-latest }
           - { rust: stable, os: ubuntu-latest }
-          - { rust: 1.75.0, os: ubuntu-latest }
+          - { rust: 1.78.0, os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust ${{ matrix.rust }}
