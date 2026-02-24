@@ -293,7 +293,13 @@ impl ManagerCtx {
 
 /// Path to distant binary.
 pub fn bin_path() -> PathBuf {
-    // 1. Compile-time env var (available when called from the distant crate's own tests)
+    let name = if cfg!(windows) {
+        "distant.exe"
+    } else {
+        "distant"
+    };
+
+    // 1. Runtime env var (set by Cargo for integration tests in the same package)
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_distant") {
         let p = PathBuf::from(&path);
         if p.exists() {
@@ -301,20 +307,17 @@ pub fn bin_path() -> PathBuf {
         }
     }
 
-    // 2. Derive from current test exe: target/{profile}/deps/test -> target/{profile}/distant
+    // 2. Walk up from current test exe looking for the binary.
+    //    Handles both standard layout (target/{profile}/deps/test_exe)
+    //    and cargo-llvm-cov layout (target/llvm-cov-target/{profile}/...).
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(deps_dir) = exe.parent() {
-            if let Some(profile_dir) = deps_dir.parent() {
-                let name = if cfg!(windows) {
-                    "distant.exe"
-                } else {
-                    "distant"
-                };
-                let candidate = profile_dir.join(name);
-                if candidate.exists() {
-                    return candidate;
-                }
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join(name);
+            if candidate.exists() && candidate != exe {
+                return candidate;
             }
+            dir = d.parent();
         }
     }
 
