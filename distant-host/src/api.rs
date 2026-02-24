@@ -435,11 +435,11 @@ impl DistantApi for Api {
                 })?
                 .permissions();
 
-            // Apply the readonly flag for all platforms but junix
-            if !cfg!(unix) {
-                if let Some(readonly) = permissions.is_readonly() {
-                    std_permissions.set_readonly(readonly);
-                }
+            // Apply the readonly flag for all platforms but unix
+            if !cfg!(unix)
+                && let Some(readonly) = permissions.is_readonly()
+            {
+                std_permissions.set_readonly(readonly);
             }
 
             // On Unix platforms, we can apply a bitset change

@@ -170,10 +170,10 @@ impl ManagerServer {
                 if let Ok(ids) = connection.channel_ids().await {
                     let mut channels_lock = self.channels.write().await;
                     for id in ids {
-                        if let Some(channel) = channels_lock.remove(&id) {
-                            if let Err(x) = channel.close() {
-                                error!("[Conn {id}] {x}");
-                            }
+                        if let Some(channel) = channels_lock.remove(&id)
+                            && let Err(x) = channel.close()
+                        {
+                            error!("[Conn {id}] {x}");
                         }
                     }
                 }

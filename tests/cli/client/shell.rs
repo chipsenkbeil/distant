@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use expectrl::Session;
 use expectrl::process::Healthcheck;
+#[cfg(unix)]
 use expectrl::process::unix::WaitStatus;
 use expectrl::{Eof, Expect};
 use rstest::*;
@@ -32,22 +33,30 @@ fn build_shell_command(ctx: &ManagerCtx, extra_args: &[&str]) -> Command {
     cmd
 }
 
-/// Waits for the session's process to exit, polling `get_status()` until it
-/// returns an `Exited` status. `expectrl`'s `get_status()` uses non-blocking
-/// `waitpid`, so it may return `StillAlive` briefly after EOF is received.
-fn wait_for_exit<P, S>(session: &Session<P, S>) -> WaitStatus
+/// Waits for the session's process to exit by polling `is_alive()`.
+fn wait_for_exit<P, S>(session: &Session<P, S>)
 where
-    P: Healthcheck<Status = WaitStatus>,
+    P: Healthcheck,
 {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let status = session.get_status().expect("Failed to get process status");
-        if !matches!(status, WaitStatus::StillAlive) {
-            return status;
+        if !session.is_alive().expect("Failed to check process status") {
+            return;
         }
         assert!(Instant::now() < deadline, "Process did not exit within 30s");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Asserts the process exited with a specific code (Unix only — Windows
+/// `expectrl` doesn't expose exit codes via `get_status()`).
+#[cfg(unix)]
+fn assert_exit_code<S>(session: &Session<expectrl::process::unix::UnixProcess, S>, expected: i32) {
+    let status = session.get_status().expect("Failed to get process status");
+    assert!(
+        matches!(status, WaitStatus::Exited(_, code) if code == expected),
+        "Expected exit code {expected}, got: {status:?}"
+    );
 }
 
 #[rstest]
@@ -67,11 +76,11 @@ fn should_run_single_command_via_shell(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = wait_for_exit(&session);
-    assert!(
-        matches!(status, WaitStatus::Exited(_, 0)),
-        "Expected exit code 0, got: {status:?}"
-    );
+    wait_for_exit(&session);
+
+    // Verify exit code (Unix only — Windows expectrl doesn't expose exit codes)
+    #[cfg(unix)]
+    assert_exit_code(&session, 0);
 }
 
 #[rstest]
@@ -92,11 +101,11 @@ fn should_forward_exit_code(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = wait_for_exit(&session);
-    assert!(
-        matches!(status, WaitStatus::Exited(_, 1)),
-        "Expected exit code 1, got: {status:?}"
-    );
+    wait_for_exit(&session);
+
+    // Verify exit code (Unix only — Windows expectrl doesn't expose exit codes)
+    #[cfg(unix)]
+    assert_exit_code(&session, 1);
 }
 
 #[rstest]
@@ -124,11 +133,11 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = wait_for_exit(&session);
-    assert!(
-        matches!(status, WaitStatus::Exited(_, 0)),
-        "Expected exit code 0, got: {status:?}"
-    );
+    wait_for_exit(&session);
+
+    // Verify exit code (Unix only — Windows expectrl doesn't expose exit codes)
+    #[cfg(unix)]
+    assert_exit_code(&session, 0);
 }
 
 #[rstest]
@@ -154,9 +163,9 @@ fn should_support_environment(ctx: ManagerCtx) {
 
     // Wait for process to finish
     session.expect(Eof).ok();
-    let status = wait_for_exit(&session);
-    assert!(
-        matches!(status, WaitStatus::Exited(_, 0)),
-        "Expected exit code 0, got: {status:?}"
-    );
+    wait_for_exit(&session);
+
+    // Verify exit code (Unix only — Windows expectrl doesn't expose exit codes)
+    #[cfg(unix)]
+    assert_exit_code(&session, 0);
 }

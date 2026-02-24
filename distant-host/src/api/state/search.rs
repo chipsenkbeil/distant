@@ -216,23 +216,23 @@ impl SearchQueryReporter {
             total_matches_cnt += 1;
 
             // Check if we've reached the limit, and quit if we have
-            if let Some(len) = options.limit {
-                if total_matches_cnt >= len {
-                    trace!("[Query {id}] Reached limit of {len} matches");
-                    break;
-                }
+            if let Some(len) = options.limit
+                && total_matches_cnt >= len
+            {
+                trace!("[Query {id}] Reached limit of {len} matches");
+                break;
             }
 
             // Check if we've reached pagination size, and send queued if so
-            if let Some(len) = options.pagination {
-                if matches.len() as u64 >= len {
-                    trace!("[Query {id}] Reached {len} paginated matches");
-                    if let Err(x) = reply.send(Response::SearchResults {
-                        id,
-                        matches: std::mem::take(&mut matches),
-                    }) {
-                        error!("[Query {id}] Failed to send paginated matches: {x}");
-                    }
+            if let Some(len) = options.pagination
+                && matches.len() as u64 >= len
+            {
+                trace!("[Query {id}] Reached {len} paginated matches");
+                if let Err(x) = reply.send(Response::SearchResults {
+                    id,
+                    matches: std::mem::take(&mut matches),
+                }) {
+                    error!("[Query {id}] Failed to send paginated matches: {x}");
                 }
             }
         }

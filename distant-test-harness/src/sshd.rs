@@ -496,10 +496,10 @@ impl Sshd {
                         "sshd could not spawn on port {port}, exited with code {:?}: {msg}, so trying next port",
                         code
                     );
-                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                        if !log_content.trim().is_empty() {
-                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
-                        }
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                        && !log_content.trim().is_empty()
+                    {
+                        error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
                     }
                     continue;
                 }
@@ -507,10 +507,10 @@ impl Sshd {
                     error!(
                         "sshd could not spawn on port {port} due to error: {e}, so trying next port"
                     );
-                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                        if !log_content.trim().is_empty() {
-                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
-                        }
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                        && !log_content.trim().is_empty()
+                    {
+                        error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
                     }
                     continue;
                 }
@@ -655,10 +655,10 @@ impl Sshd {
             }
 
             // Also print log file for immediate failures
-            if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                if !log_content.trim().is_empty() {
-                    error!("sshd log file content:\n{}", log_content);
-                }
+            if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                && !log_content.trim().is_empty()
+            {
+                error!("sshd log file content:\n{}", log_content);
             }
 
             return Ok(Err((
