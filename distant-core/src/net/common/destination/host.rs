@@ -223,6 +223,10 @@ impl<'de> Deserialize<'de> for Host {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Host enum: is_global classification, type predicates, From conversions,
+    //! PartialEq<str>, serde round-trips, hostname boundary validation, HostParseError
+    //! Display, and Hash/Clone.
+
     use super::*;
 
     #[test]

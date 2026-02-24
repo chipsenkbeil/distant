@@ -501,6 +501,10 @@ pub async fn try_connect(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Client` construction and auth handler swapping,
+    //! `JsonAuthHandler` JSON protocol exchanges (challenge/verification round-trips
+    //! and wrong-response-type errors), and `PromptAuthHandler` construction/clone.
+
     use std::sync::{Arc, Mutex};
 
     use distant_core::net::auth::msg::*;

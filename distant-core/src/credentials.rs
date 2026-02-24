@@ -173,6 +173,9 @@ impl TryFrom<Credentials> for Destination {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Credentials: Display/FromStr parsing, serde round-trips, try_to_destination
+    //! conversion, and find/find_strict/find_lax string scanning.
+
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use once_cell::sync::Lazy;

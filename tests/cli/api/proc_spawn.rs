@@ -1,3 +1,8 @@
+//! Integration tests for the `proc_spawn`, `proc_stdin`, and `proc_kill` JSON API endpoints.
+//!
+//! Tests spawning processes, capturing stdout/stderr, forwarding stdin, and error
+//! handling for non-existent binaries.
+
 use rstest::*;
 use serde_json::json;
 use test_log::test;

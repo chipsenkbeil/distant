@@ -498,6 +498,9 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ChannelExt convenience methods: file I/O, directory ops, metadata, search,
+    //! system info, version, compatibility checks, and mismatched response error handling.
+
     use std::path::PathBuf;
 
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};

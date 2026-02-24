@@ -39,6 +39,9 @@ impl Clone for Box<dyn Shutdown> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Shutdown trait: success, error propagation, already-shutdown detection
+    //! (receiver dropped and oneshot dropped), and Box<dyn Shutdown> cloneability.
+
     use test_log::test;
 
     use super::*;

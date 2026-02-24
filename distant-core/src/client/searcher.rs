@@ -183,6 +183,10 @@ impl Searcher {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Searcher: setup error handling (missing confirmation, error response,
+    //! unexpected response), result queuing before started confirmation, is_active lifecycle,
+    //! and iteration via next().
+
     use std::path::PathBuf;
     use std::sync::Arc;
 

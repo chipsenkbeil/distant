@@ -159,6 +159,9 @@ impl From<HashMap<String, HeapSecretKey>> for Keychain<()> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Keychain<T> (insert, remove, has_id/has_key, remove_if_has_key, clone shared
+    //! storage, From<HashMap>) and KeychainResult<T> (predicate methods, into_ok, Into<Option>).
+
     use test_log::test;
 
     use super::*;

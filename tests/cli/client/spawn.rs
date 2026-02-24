@@ -1,3 +1,8 @@
+//! Integration tests for the `distant spawn` CLI subcommand.
+//!
+//! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
+//! exit code reflection, and error handling for non-existent binaries.
+
 use rstest::*;
 
 use distant_test_harness::manager::*;

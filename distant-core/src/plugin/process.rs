@@ -387,6 +387,10 @@ impl Plugin for ProcessPlugin {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ProcessPlugin: construction, schemes, map_to_args, plugin_error_to_io mapping,
+    //! SetupMessage deserialization (JSON-lines protocol), AuthResponseMsg serialization,
+    //! and connect/launch error paths with nonexistent binaries.
+
     use std::path::PathBuf;
 
     use test_log::test;

@@ -980,6 +980,17 @@ impl Ssh {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the `distant-ssh` crate root: SSH option types, authentication types,
+    //! helper functions (`format_methods`, `clean_launch_output`), config building,
+    //! and `ClientHandler`.
+    //!
+    //! The `build_launch_args` function and port/user resolution logic are replicated
+    //! from the production `Ssh::launch` and `Ssh::connect` methods respectively,
+    //! since those methods require a live SSH connection. The mock handler tests
+    //! (`MockSshAuthHandler`, `ErrorSshAuthHandler`) verify that the `SshAuthHandler`
+    //! trait is implementable and callable -- they are infrastructure verification
+    //! rather than production logic tests.
+
     use super::*;
 
     #[test]
@@ -2417,12 +2428,12 @@ mod tests {
     // --- ClientHandler additional tests ---
 
     #[test_log::test(tokio::test)]
-    async fn client_handler_check_server_key_rsa() {
+    async fn client_handler_check_server_key_ed25519() {
         use russh::client::Handler;
 
         let mut handler = ClientHandler;
 
-        // Generate an RSA key
+        // Generate an Ed25519 key
         let private_key = russh::keys::PrivateKey::random(
             &mut rand::thread_rng(),
             russh::keys::Algorithm::Ed25519,

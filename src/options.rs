@@ -1387,6 +1387,11 @@ impl Format {
 
 #[cfg(test)]
 mod tests {
+    //! Comprehensive tests for `Options` and all sub-command types: `format()`,
+    //! `cache_path()`, `network_settings()` accessors, `parse_plugin_flag`,
+    //! `Format` enum, `IsVariant` derives, config merge behavior, and CLI
+    //! argument parsing.
+
     use std::time::Duration;
 
     use distant_core::map;

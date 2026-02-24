@@ -198,6 +198,10 @@ impl ShellKind {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ShellKind` identification (bare names, paths, case-insensitivity),
+    //! `is_posix()`, `Shell` parsing, and `make_cmd_string()` for all five shell
+    //! families (POSIX, cmd.exe, PowerShell, rc/elvish, nu).
+
     use test_log::test;
 
     use super::*;

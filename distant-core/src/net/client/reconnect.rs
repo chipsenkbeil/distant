@@ -287,6 +287,10 @@ impl ReconnectStrategy {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for reconnection infrastructure: ConnectionState predicates, ConnectionWatcher
+    //! state transitions, and ReconnectStrategy variants (Fail, ExponentialBackoff,
+    //! FibonacciBackoff, FixedInterval) including timeout behavior.
+
     use test_log::test;
 
     use super::*;

@@ -1,3 +1,7 @@
+//! Integration tests for the `version` JSON API endpoint.
+//!
+//! Tests retrieving protocol version and capabilities from the server.
+
 use distant_core::protocol::semver::Version as SemVer;
 use distant_core::protocol::{Version, PROTOCOL_VERSION};
 use rstest::*;

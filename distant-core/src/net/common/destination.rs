@@ -142,6 +142,9 @@ impl<'de> Deserialize<'de> for Destination {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Destination: scheme_eq case-insensitivity, AsRef/AsMut, Display formatting
+    //! with credentials, FromStr for Box<Destination>, and serde round-trips.
+
     use super::*;
 
     #[test]

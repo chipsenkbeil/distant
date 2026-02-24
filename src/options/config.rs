@@ -94,6 +94,9 @@ impl Default for Config {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Config`: default parsing, `default_raw_str()` validity,
+    //! `load_multi()` with various path scenarios, and full config file loading.
+
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
@@ -193,11 +196,15 @@ mod tests {
 
     #[test]
     fn load_multi_with_no_custom_path_and_no_config_files_returns_default() {
-        // When none of the standard paths exist and no custom path is given,
-        // load_multi returns the default config. The standard paths may or may
-        // not exist on the test machine, but we verify the function doesn't panic.
-        let result = Config::load_multi(None);
-        assert!(result.is_ok());
+        // When no custom path is given, load_multi merges the default config with
+        // any system config files found. On CI/test machines without config files,
+        // the result should equal Config::default().
+        let config = Config::load_multi(None).expect("load_multi should not fail with None");
+        assert_eq!(
+            config,
+            Config::default(),
+            "Expected default config when no config files are present"
+        );
     }
 
     #[test(tokio::test)]

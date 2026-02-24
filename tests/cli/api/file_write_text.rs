@@ -1,3 +1,8 @@
+//! Integration tests for the `file_write_text` JSON API endpoint.
+//!
+//! Tests writing text content to a file and error handling when the target
+//! file's parent directory is missing.
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;

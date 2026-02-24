@@ -110,6 +110,9 @@ impl CacheData {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Cache`, `CacheFile`, and `CacheData`: construction, defaults,
+    //! serialization, disk I/O round-trips, and error handling.
+
     use super::*;
 
     #[test]

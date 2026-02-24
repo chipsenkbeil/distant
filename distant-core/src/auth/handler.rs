@@ -495,6 +495,9 @@ impl AuthMethodHandler for TestAuthHandler {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for authentication handler types: DummyAuthHandler, SingleAuthHandler,
+    //! AuthHandlerMap, ProxyAuthHandler, DynAuthHandler, and TestAuthHandler.
+
     use super::*;
     use crate::auth::authenticator::TestAuthenticator;
     use test_log::test;

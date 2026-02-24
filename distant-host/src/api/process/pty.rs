@@ -330,6 +330,9 @@ impl ProcessPty for PtyProcessMaster {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    //! Tests for `PtyProcess` covering spawn, process trait accessors, wait/exit,
+    //! kill via clone, PTY resize/clone, and the `PtyProcessMaster` weak-reference machinery.
+
     use super::*;
     use distant_core::protocol::Environment;
 
@@ -384,8 +387,20 @@ mod tests {
         async fn with_environment_variable() {
             let mut env = Environment::new();
             env.insert("MY_TEST_VAR".to_string(), "my_test_value".to_string());
-            let proc = PtyProcess::spawn("env", Vec::<String>::new(), env, None, default_size());
-            assert!(proc.is_ok());
+            let mut proc =
+                PtyProcess::spawn("env", Vec::<String>::new(), env, None, default_size()).unwrap();
+
+            // Read stdout and verify the env var is actually visible to the spawned process
+            let mut stdout = proc.take_stdout().unwrap();
+            let mut all_output = Vec::new();
+            while let Ok(Some(data)) = stdout.recv().await {
+                all_output.extend_from_slice(&data);
+            }
+            let output = String::from_utf8_lossy(&all_output);
+            assert!(
+                output.contains("MY_TEST_VAR=my_test_value"),
+                "Expected env output to contain MY_TEST_VAR=my_test_value, got: {output}"
+            );
         }
     }
 

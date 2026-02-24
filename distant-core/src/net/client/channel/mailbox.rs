@@ -328,6 +328,9 @@ impl<T: Send + 'static> Mailbox<T> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PostOffice<T> (message routing, default mailbox, cancel operations) and
+    //! Mailbox<T> (try_next, next, next_timeout, close, map, map_opt transformations).
+
     use std::borrow::Cow;
 
     use test_log::test;

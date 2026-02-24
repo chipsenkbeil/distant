@@ -290,6 +290,9 @@ impl ManagerClient {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ManagerClient methods: version(), launch(), and connect() -- including
+    //! authentication handling (finished, fatal/non-fatal errors, info) and error dispatch.
+
     use crate::auth::DummyAuthHandler;
 
     use super::*;

@@ -1,3 +1,8 @@
+//! Integration tests for the `distant generate` CLI subcommand.
+//!
+//! Tests config generation (TOML output and file writing) and shell completion
+//! generation for bash, zsh, and fish (stdout and file output).
+
 use assert_cmd::Command;
 use assert_fs::prelude::*;
 
@@ -8,10 +13,19 @@ fn generate_config_should_output_valid_toml_to_stdout() {
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(!stdout.is_empty(), "Expected non-empty config output");
-    // Should be valid TOML
+
+    // Parse the output as TOML to validate it is well-formed
+    let parsed: toml::Value =
+        toml::from_str(&stdout).expect("Generated config should be valid TOML");
+
+    // Verify the parsed TOML is a table (top-level document)
+    assert!(parsed.is_table(), "Expected TOML table at top level");
+
+    // Check that the TOML contains expected config sections
+    let table = parsed.as_table().unwrap();
     assert!(
-        stdout.contains('[') || stdout.contains('='),
-        "Expected TOML content, got:\n{stdout}"
+        !table.is_empty(),
+        "Expected non-empty TOML config, got empty table"
     );
 }
 

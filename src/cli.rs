@@ -88,6 +88,9 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Cli::initialize_from` argument parsing, log file defaults,
+    //! Debug output, and options field accessibility.
+
     use test_log::test;
 
     use super::*;

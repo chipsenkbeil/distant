@@ -18,6 +18,10 @@ pub fn format_connection(id: ConnectionId, dest: &Destination) -> String {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `format_connection`: verifies human-readable formatting of
+    //! `ConnectionId` + `Destination` across all combinations of optional fields
+    //! (scheme, username, port) and host types (name, IPv4).
+
     use distant_core::net::common::Host;
     use test_log::test;
 

@@ -810,6 +810,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `SearchChannel`, `SearchState`, and `SearchQueryPathFilter` covering
+    //! channel lifecycle, search start/cancel, query validation, path/content targeting,
+    //! pagination, limits, file type filtering, symlink following, upward traversal, and dedup.
+
     use std::path::PathBuf;
 
     use assert_fs::prelude::*;

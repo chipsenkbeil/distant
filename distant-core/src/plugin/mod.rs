@@ -54,6 +54,9 @@ pub trait Plugin: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the Plugin trait: name(), default schemes(), default launch() returning
+    //! Unsupported, connect() delegation, and usage through Arc<dyn Plugin>.
+
     use std::sync::Arc;
 
     use test_log::test;

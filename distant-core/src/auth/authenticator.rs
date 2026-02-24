@@ -141,6 +141,10 @@ impl Authenticator for TestAuthenticator {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for TestAuthenticator default callbacks. These exercise the test infrastructure
+    //! itself (echo question text as answers, valid=true, etc.), not production Authenticator
+    //! implementations.
+
     use super::*;
 
     #[tokio::test]

@@ -1,3 +1,8 @@
+//! Integration tests for the `set_permissions` JSON API endpoint.
+//!
+//! Tests setting file permissions (readonly, Unix mode bits) and error handling
+//! for nonexistent paths. Uses JSON requests sent to an `ApiProcess`.
+
 #![allow(unexpected_cfgs)]
 
 use assert_fs::prelude::*;
@@ -118,4 +123,6 @@ async fn should_fail_for_nonexistent_path(mut api_process: CtxCommand<ApiProcess
 
     assert_eq!(res["origin_id"], id, "JSON: {res}");
     assert_eq!(res["payload"]["type"], "error", "JSON: {res}");
+    // set_permissions wraps OS errors as "permission_denied" even for non-existent paths
+    assert_eq!(res["payload"]["kind"], "permission_denied", "JSON: {res}");
 }

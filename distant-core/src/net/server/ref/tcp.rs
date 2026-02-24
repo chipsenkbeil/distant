@@ -60,6 +60,10 @@ impl DerefMut for TcpServerRef {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for TcpServerRef: construction, ip_addr/port accessors, into_inner, Deref/DerefMut,
+    //! and shutdown. Note: shutdown tests use a no-op task that completes immediately, so they
+    //! verify that abort() returns without error, not that it actually stops active connections.
+
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use tokio::sync::broadcast;

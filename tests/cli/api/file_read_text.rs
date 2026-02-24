@@ -1,3 +1,7 @@
+//! Integration tests for the `file_read_text` JSON API endpoint.
+//!
+//! Tests reading a file as text and error handling when the file does not exist.
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;

@@ -47,6 +47,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for deserialize_from_str and serialize_to_str serde helpers: round-trips,
+    //! string-not-number serialization format, parse error handling, and edge cases
+    //! (zero, max u32, empty string, leading whitespace).
+
     use serde::{Deserialize, Serialize};
     use test_log::test;
 

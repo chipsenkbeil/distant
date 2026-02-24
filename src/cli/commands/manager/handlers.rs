@@ -510,6 +510,16 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
 
 #[cfg(test)]
 mod tests {
+    //! Tests for handler helpers (`missing`/`invalid`), plugin types, SSH option
+    //! parsing, args quote-stripping, and `bind_server` filtering.
+    //!
+    //! NOTE: The SSH option parsing tests (identity_files, verbose, proxy_command,
+    //! etc.) replicate the Map-lookup logic from `load_ssh` inline because
+    //! `load_ssh` requires a live SSH connection. This means these tests validate
+    //! the *pattern* of option extraction, not the production function directly.
+    //! If the parsing logic in `load_ssh` changes, these tests must be updated
+    //! in tandem. The same applies to the args quote-stripping loop.
+
     use distant_core::net::common::Host;
     use test_log::test;
 
@@ -596,8 +606,9 @@ mod tests {
     // -------------------------------------------------------
     // load_ssh — option parsing tests (without actual SSH)
     // -------------------------------------------------------
-    // We can't call load_ssh directly since it connects, but we can test the
-    // SshOpts building logic by checking option key lookups.
+    // We can't call load_ssh directly since it requires a live SSH connection,
+    // so we replicate the Map-lookup patterns here. If the parsing logic in
+    // load_ssh changes, these tests must be updated to match.
 
     #[test]
     fn ssh_opts_identity_files_parsing() {
@@ -781,6 +792,10 @@ mod tests {
     // -------------------------------------------------------
     // launch — args quote stripping logic
     // -------------------------------------------------------
+    // These tests replicate the quote-stripping loop from the launch path.
+    // The loop is not yet extracted into a standalone function, so we test
+    // a copy of the pattern here.
+
     #[test]
     fn args_quote_stripping_double_quotes() {
         let mut distant_args: &str = "\"--port 8080\"";

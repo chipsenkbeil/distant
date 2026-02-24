@@ -312,6 +312,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Process` and `SpawnResult` struct wiring.
+    //!
+    //! These tests verify struct construction and channel connectivity only.
+    //! They do not exercise the actual process spawning logic (`spawn_simple`,
+    //! `spawn_pty`), which requires a live SSH session. The real spawning
+    //! behavior is covered by integration tests in `distant-ssh/tests/`.
+
     use super::*;
 
     // --- Process struct tests ---

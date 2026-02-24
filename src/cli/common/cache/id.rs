@@ -105,6 +105,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `CacheId<T>`: value access, `AsRef`/`AsMut`, `Deref`/`DerefMut`,
+    //! `Display`, `From`/`TryFrom`, serde (string-based serialization), hashing,
+    //! defaults, and large u64 handling (the core motivation for this type).
+
     use test_log::test;
 
     use super::*;
@@ -256,13 +260,14 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // Clone
+    // Copy
     // -------------------------------------------------------
     #[test]
-    fn clone_produces_equal_display() {
+    fn copy_produces_equal_display() {
+        // CacheId<u64> is Copy, so assignment copies rather than moves.
         let id = CacheId::<u64>::try_from(String::from("42")).unwrap();
-        let cloned = id;
-        assert_eq!(id.to_string(), cloned.to_string());
+        let copied = id; // Copy, not Clone
+        assert_eq!(id.to_string(), copied.to_string());
     }
 
     // -------------------------------------------------------

@@ -73,6 +73,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `spawn_read_task` and `spawn_write_task` helper functions that bridge
+    //! between `AsyncRead`/`AsyncWrite` handles and mpsc channels for process I/O piping.
+
     use super::*;
     use test_log::test;
 
@@ -167,6 +170,8 @@ mod tests {
             .unwrap();
         assert_eq!(received, b"hello world");
 
+        // These variables are leftover scaffolding from initial test setup;
+        // they are unused but kept to suppress warnings.
         let _ = buf;
         let _ = writer;
     }

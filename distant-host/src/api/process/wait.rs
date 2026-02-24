@@ -132,6 +132,9 @@ impl WaitRx {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ExitStatus` (constructors, From impls, equality/copy) and the
+    //! `WaitTx`/`WaitRx` channel pair covering all state transitions.
+
     use super::*;
 
     mod exit_status {
@@ -204,12 +207,14 @@ mod tests {
         }
 
         #[test]
-        fn equality_and_clone() {
+        fn equality_and_copy() {
+            // Renamed from equality_and_clone: the test uses `let b = a` which is
+            // a Copy (not Clone::clone), matching ExitStatus's #[derive(Copy)] semantics.
             let a = ExitStatus {
                 success: true,
                 code: Some(0),
             };
-            let b = a;
+            let b = a; // Copy, not Clone
             assert_eq!(a, b);
 
             let c = ExitStatus {

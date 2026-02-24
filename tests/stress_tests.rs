@@ -1,3 +1,8 @@
+//! Stress tests for the distant manager/server.
+//!
+//! Exercises high-volume request handling, multiple clients, abrupt disconnects,
+//! and killed interactive shells. Most tests are currently `todo!()` stubs.
+
 use assert_fs::prelude::*;
 use distant_test_harness::manager::*;
 use rstest::*;

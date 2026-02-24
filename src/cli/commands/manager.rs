@@ -275,6 +275,9 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `SERVICE_LABEL` constants and `build_plugin_map` — verifying
+    //! built-in plugin registration, scheme naming, and duplicate rejection.
+
     use test_log::test;
 
     use super::*;

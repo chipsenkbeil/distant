@@ -126,6 +126,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Value<T>`: `into_inner`, variant detection, `AsRef`/`AsMut`,
+    //! `Deref`/`DerefMut`, `PartialEq` (including cross-variant equality),
+    //! `FromStr`, `Display`, serde (variant erasure on deserialization), and `Clone`.
+
     use test_log::test;
 
     use super::*;
@@ -342,18 +346,18 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // Clone
+    // Copy
     // -------------------------------------------------------
     #[test]
-    fn clone_preserves_variant() {
+    fn copy_preserves_variant() {
         let v = Value::Default(42);
-        let cloned = v;
-        assert!(cloned.is_default());
-        assert_eq!(cloned.into_inner(), 42);
+        let copied = v; // Copy
+        assert!(copied.is_default());
+        assert_eq!(copied.into_inner(), 42);
 
         let v = Value::Explicit(99);
-        let cloned = v;
-        assert!(cloned.is_explicit());
-        assert_eq!(cloned.into_inner(), 99);
+        let copied = v; // Copy
+        assert!(copied.is_explicit());
+        assert_eq!(copied.into_inner(), 99);
     }
 }

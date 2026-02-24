@@ -1,3 +1,8 @@
+//! Integration tests for the `distant fs make-dir` CLI subcommand.
+//!
+//! Tests creating directories, creating nested directories with `--all`,
+//! and error handling when the parent directory is missing.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;

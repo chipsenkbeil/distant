@@ -1,3 +1,8 @@
+//! Integration tests for the `distant server listen` CLI subcommand.
+//!
+//! Verifies that the server starts up, prints credential URL to stdout,
+//! and that the `--help` flag documents expected options.
+
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::Duration;

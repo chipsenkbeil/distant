@@ -54,6 +54,11 @@ impl DerefMut for UnixSocketServerRef {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for UnixSocketServerRef: construction, path accessor, into_inner, Deref/DerefMut,
+    //! shutdown, and relative path handling. Note: shutdown tests use a no-op task that completes
+    //! immediately, so they verify that abort() returns without error, not that it actually
+    //! stops active connections.
+
     use super::*;
     use tokio::sync::broadcast;
 

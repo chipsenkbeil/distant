@@ -71,6 +71,10 @@ impl KeyExchange {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for KeyExchange (ECDH P-256 + HKDF-SHA256): uniqueness, bidirectional shared
+    //! secret derivation, key length, cross-exchange independence, invalid key handling,
+    //! salt sensitivity, determinism, and peer key sensitivity.
+
     use std::convert::TryFrom;
 
     use test_log::test;

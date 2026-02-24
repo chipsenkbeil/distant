@@ -58,6 +58,9 @@ impl Handshake {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Handshake: client/server variant discrimination and default field values
+    //! for compression and encryption preferences.
+
     use super::*;
 
     #[test]

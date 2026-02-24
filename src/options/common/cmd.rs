@@ -148,6 +148,9 @@ mod tests_old {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the `Cmd` type: construction, `Display`, `From`/`FromStr`,
+    //! round-trips, `PartialEq`, and platform-specific quoted-arg parsing.
+
     use test_log::test;
 
     use super::*;

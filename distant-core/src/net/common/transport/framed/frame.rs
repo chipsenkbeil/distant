@@ -227,6 +227,10 @@ impl<'a, const N: usize> PartialEq<&'a [u8; N]> for Frame<'_> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Frame<'a>: constructors, accessors, byte serialization, ownership conversion,
+    //! frame availability checking, From impls, AsRef, Extend, PartialEq with various types,
+    //! HEADER_SIZE, write/read round-trips, clone, and cross-ownership equality.
+
     use test_log::test;
 
     use super::*;

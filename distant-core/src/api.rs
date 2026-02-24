@@ -712,6 +712,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the Api trait default implementations, the unsupported() helper, and
+    //! ApiServerHandler request dispatch (single, parallel batch, sequential batch with fail-fast).
+
     use super::*;
     use std::path::PathBuf;
     use tokio::sync::mpsc;

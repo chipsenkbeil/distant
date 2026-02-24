@@ -426,6 +426,10 @@ async fn watcher_task<W>(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `WatcherBuilder`, `WatcherChannel`, and `WatcherState` covering builder
+    //! configuration, channel lifecycle, watch/unwatch operations, ref-counting for multiple
+    //! watchers on the same path, recursive mode, and actual file change detection.
+
     use super::*;
     use assert_fs::prelude::*;
     use distant_core::protocol::ChangeKindSet;

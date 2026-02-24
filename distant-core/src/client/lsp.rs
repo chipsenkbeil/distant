@@ -428,6 +428,9 @@ fn read_lsp_messages(input: &[u8]) -> io::Result<(Option<Vec<u8>>, Vec<LspMsg>)>
 
 #[cfg(test)]
 mod tests {
+    //! Tests for RemoteLspProcess: LSP message buffering, scheme translation (distant:// <->
+    //! file://), stdin/stdout/stderr streams, drop behavior, and BrokenPipe on disconnect.
+
     use std::future::Future;
     use std::time::Duration;
 

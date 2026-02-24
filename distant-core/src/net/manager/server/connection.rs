@@ -286,6 +286,9 @@ async fn action_task(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ManagerChannel (send, close, clone), ManagerConnection (spawn, open_channel,
+    //! channel_ids, close/unregister, abort), and Action Debug formatting.
+
     use super::*;
     use crate::net::client::UntypedClient;
     use crate::net::common::{Connection, InmemoryTransport, Response};

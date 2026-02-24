@@ -655,6 +655,9 @@ impl DistantApi for Api {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the `Api` implementation of `DistantApi`, covering version info,
+    //! file I/O, directory operations, search, watch, process lifecycle, and more.
+
     use std::time::Duration;
 
     use assert_fs::prelude::*;
@@ -2757,9 +2760,9 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn exists_should_handle_permission_denied_path() {
-        // exists() has an error path for non-NotFound errors; we primarily
-        // verify the normal true/false paths are covered here.
+    async fn exists_should_return_true_for_existing_file() {
+        // Renamed from exists_should_handle_permission_denied_path: the test body
+        // only verifies the happy path (file exists -> true), not permission denied.
         let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("exists-test");

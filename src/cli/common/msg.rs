@@ -141,6 +141,10 @@ impl MsgReceiver {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `MsgSender` and `MsgReceiver`: JSON-line-delimited message
+    //! transport including send/receive, error propagation, clone behavior,
+    //! partial message reassembly, and the async `into_rx` channel.
+
     use std::sync::Mutex;
 
     use serde::{Deserialize, Serialize};

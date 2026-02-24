@@ -60,6 +60,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ChainCodec<T, U>: encode/decode ordering (left-to-right / right-to-left),
+    //! round-trips, nested triple chains, Copy semantics, error propagation, and large data.
+
     use test_log::test;
 
     use super::*;
@@ -249,11 +252,12 @@ mod tests {
     // --- Clone and equality tests ---
 
     #[test]
-    fn clone_should_produce_equal_chain() {
+    fn copy_should_produce_equal_chain() {
         let codec = ChainCodec::new(TestCodec::new("a"), TestCodec::new("b"));
-        let cloned = codec;
-        assert_eq!(codec.as_left().msg, cloned.as_left().msg);
-        assert_eq!(codec.as_right().msg, cloned.as_right().msg);
+        // This is a Copy (not Clone), since TestCodec derives Copy
+        let copied = codec;
+        assert_eq!(codec.as_left().msg, copied.as_left().msg);
+        assert_eq!(codec.as_right().msg, copied.as_right().msg);
     }
 
     #[test]

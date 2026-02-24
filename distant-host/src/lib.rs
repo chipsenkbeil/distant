@@ -22,6 +22,8 @@ pub fn new_handler(config: Config) -> std::io::Result<Handler> {
 
 #[cfg(test)]
 mod tests {
+    //! Smoke test for the public `new_handler()` entry point.
+
     use super::*;
 
     #[test_log::test(tokio::test)]

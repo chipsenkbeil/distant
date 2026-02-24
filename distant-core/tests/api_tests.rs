@@ -1,3 +1,6 @@
+//! Integration tests for batch parallel and batch sequence execution modes in the distant-core
+//! API layer, including timing assertions for parallelism verification.
+
 use std::io;
 use std::path::PathBuf;
 

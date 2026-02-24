@@ -194,6 +194,10 @@ impl From<ErrorKind> for io::ErrorKind {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ErrorKind (bidirectional conversion to/from io::ErrorKind), Error struct
+    //! (construction, io::Error conversion, Display), and JSON serde round-trips for all
+    //! 24 error kinds.
+
     use super::*;
 
     mod error {

@@ -51,6 +51,9 @@ impl LogLevel {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `LogLevel` enum conversions, defaults, serde, and
+    //! `LoggingSettings` accessors and serialization round-trips.
+
     use test_log::test;
 
     use super::*;

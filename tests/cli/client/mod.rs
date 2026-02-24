@@ -1,3 +1,8 @@
+//! Module declarations for all CLI client subcommand integration tests.
+//!
+//! Each submodule tests a specific `distant` CLI subcommand (filesystem operations,
+//! process management, connection management, etc.).
+
 mod fs_copy;
 mod fs_exists;
 mod fs_make_dir;

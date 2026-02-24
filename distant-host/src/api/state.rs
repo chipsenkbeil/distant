@@ -37,6 +37,9 @@ impl GlobalState {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `GlobalState` initialization with various config combinations and
+    //! field accessibility (process spawn, watcher abort, search abort).
+
     use super::*;
     use crate::config::WatchConfig;
     use std::time::Duration;

@@ -296,6 +296,9 @@ impl<'a> UntypedResponse<'a> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Response<T> and UntypedResponse: serialization round-trips, field accessors,
+    //! borrowing, header/id/origin_id mutation, and msgpack byte-level parsing of the wire format.
+
     use test_log::test;
 
     use super::*;
@@ -379,6 +382,10 @@ mod tests {
         };
         let untyped = resp.to_untyped_response().unwrap();
         assert!(!untyped.header.is_empty());
+        // Deserialize the header bytes back and verify actual content
+        let header: Header = utils::deserialize_from_slice(&untyped.header)
+            .expect("header bytes should deserialize back to Header");
+        assert_eq!(header, header!("key" -> 123));
         assert_eq!(untyped.id.as_ref(), "id1");
         assert_eq!(untyped.origin_id.as_ref(), "oid1");
     }

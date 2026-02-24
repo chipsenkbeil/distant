@@ -290,6 +290,9 @@ impl PartialEq<HeapSecretKey> for &str {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for SecretKey<N> and HeapSecretKey: construction, hex Display/FromStr round-trips,
+    //! accessors, conversions, Debug redaction, error types, and PartialEq impls.
+
     use test_log::test;
 
     use super::*;

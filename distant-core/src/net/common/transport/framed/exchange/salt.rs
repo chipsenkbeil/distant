@@ -112,6 +112,10 @@ impl BitXor for Salt {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Salt: random generation, Display/FromStr hex round-trips, TryFrom<Vec>/String,
+    //! Into conversions, AsRef, BitXor algebraic properties, serde JSON round-trips, clone,
+    //! and debug formatting.
+
     use super::*;
     use test_log::test;
 

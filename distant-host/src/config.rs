@@ -29,6 +29,9 @@ impl Default for WatchConfig {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `Config` and `WatchConfig` default values, equality, clone,
+    //! inequality when fields differ, and custom value round-trip.
+
     use super::*;
 
     mod config_default {

@@ -134,6 +134,10 @@ impl From<Version> for semver::Version {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Version: byte serialization round-trips, known byte patterns, Display,
+    //! semver conversions, and exhaustive is_compatible_with scenarios (same version,
+    //! forward compatibility, major=0 boundaries, major>0 boundaries).
+
     use test_log::test;
 
     use super::*;

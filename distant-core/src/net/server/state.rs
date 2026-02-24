@@ -70,6 +70,9 @@ impl<T: Send + 'static> ConnectionState<T> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ServerState<T> (connection map operations) and ConnectionState<T> (channel
+    //! delivery, shutdown signaling, is_finished lifecycle, and shutdown_and_wait).
+
     use super::*;
 
     // ---------------------------------------------------------------

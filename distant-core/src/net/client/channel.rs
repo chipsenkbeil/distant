@@ -339,6 +339,9 @@ impl UntypedChannel {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Channel<T,U> and UntypedChannel: fire/mail/send operations, timeout variants,
+    //! concurrent request routing, deserialization skip behavior, and clone independence.
+
     use super::*;
 
     mod typed {

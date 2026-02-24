@@ -310,6 +310,9 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for UnixMetadata (permission bit round-trips, is_readonly) and WindowsMetadata
+    //! (attribute flag round-trips for all 15 flags, individual and combined).
+
     use super::*;
 
     mod metadata {

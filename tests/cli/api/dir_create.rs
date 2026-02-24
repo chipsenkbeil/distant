@@ -1,3 +1,8 @@
+//! Integration tests for the `dir_create` JSON API endpoint.
+//!
+//! Tests creating a single directory, creating nested directories with `all: true`,
+//! and error handling when a parent directory is missing.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;

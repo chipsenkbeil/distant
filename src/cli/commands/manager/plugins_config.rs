@@ -74,6 +74,9 @@ fn dirs_config_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `PluginsConfig` TOML deserialization, `load_external_plugins`,
+    //! and the `dirs_config_path` helper.
+
     use test_log::test;
 
     use super::*;
@@ -166,9 +169,12 @@ schemes = ["kubernetes"]
     // -------------------------------------------------------
     #[test]
     fn dirs_config_path_returns_some_on_most_systems() {
-        // On most systems with a home dir, this should return Some
+        // On most systems with a home dir, this should return Some.
+        // CI and developer machines always have a home directory.
         let path = dirs_config_path();
-        // We just check it doesn't panic
-        let _ = path;
+        assert!(
+            path.is_some(),
+            "dirs_config_path() returned None — expected Some on systems with a home directory"
+        );
     }
 }

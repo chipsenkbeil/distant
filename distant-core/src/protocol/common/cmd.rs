@@ -30,6 +30,9 @@ impl DerefMut for Cmd {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Cmd: construction, Deref/DerefMut to String, Display, From/Into conversions,
+    //! and equality.
+
     use super::*;
 
     #[test]

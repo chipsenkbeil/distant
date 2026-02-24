@@ -1,3 +1,9 @@
+//! Integration tests for the `watch` JSON API endpoint.
+//!
+//! Tests watching a single file, watching a directory recursively, verifying
+//! that change notifications use the correct request ID, and error handling
+//! when watching a non-existent path.
+
 use std::time::Duration;
 
 use assert_fs::prelude::*;

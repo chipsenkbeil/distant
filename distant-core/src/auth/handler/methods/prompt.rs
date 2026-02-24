@@ -108,6 +108,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PromptAuthMethodHandler: challenge response via password prompts, host
+    //! verification via text prompts (y/Y/yes/n/empty), multiline question splitting,
+    //! and error fallback behavior.
+
     use super::*;
     use crate::auth::msg::*;
 

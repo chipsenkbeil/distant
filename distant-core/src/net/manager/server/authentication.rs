@@ -114,6 +114,10 @@ impl Authenticator for ManagerAuthenticator {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ManagerAuthenticator: fire (send-and-forget) vs send (send-and-wait),
+    //! Authenticator trait methods (initialize, challenge, verify, info, error, start_method,
+    //! finished), wrong-response-type handling, and receiver-dropped error paths.
+
     use super::*;
     use std::collections::HashMap;
     use tokio::sync::mpsc;

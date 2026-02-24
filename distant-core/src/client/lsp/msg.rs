@@ -405,6 +405,10 @@ impl FromStr for LspContent {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for LSP message types: FromStr/Display parsing, to_bytes round-trips,
+    //! from_buf_reader streaming, header parsing errors, error type conversions,
+    //! LspContent Deref/DerefMut, and Display round-trips.
+
     use test_log::test;
 
     use super::*;

@@ -178,6 +178,9 @@ impl RawChannel {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for RawChannel: accessor methods, abort, Deref/DerefMut, into_client conversions,
+    //! and spawn() constructor with success/error/unexpected/abort response paths.
+
     use super::*;
     use crate::net::client::UntypedClient;
     use crate::net::common::{Connection, Request, Response};

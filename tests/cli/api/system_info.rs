@@ -1,3 +1,7 @@
+//! Integration tests for the `system_info` JSON API endpoint.
+//!
+//! Tests retrieving system information and verifying it matches the local environment.
+
 use std::env;
 
 use rstest::*;

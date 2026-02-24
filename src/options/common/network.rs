@@ -93,6 +93,10 @@ impl NetworkSettings {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `AccessControl`, `NetworkSettings`: mode conversion, merge
+    //! priority semantics, socket/pipe accessors, candidate path generation,
+    //! serde round-trips, and equality.
+
     use std::path::PathBuf;
 
     use test_log::test;

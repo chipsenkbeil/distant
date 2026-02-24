@@ -241,6 +241,9 @@ impl<'de> Deserialize<'de> for PortRange {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PortRange: parsing, display, iteration, serde, is_ephemeral, make_socket_addrs
+    //! with IPv4/IPv6, and boundary conditions (port 0, max u16, inverted ranges).
+
     use super::*;
 
     #[test]
@@ -453,7 +456,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn parse_should_treat_trailing_colon_as_single_port() {
+    fn parse_should_fail_for_trailing_colon() {
         // "100:" has a colon at index 3 but idx + 1 == s.len(), so it falls
         // through to the single-port parse path where "100:" fails.
         assert!("100:".parse::<PortRange>().is_err());

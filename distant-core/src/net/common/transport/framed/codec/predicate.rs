@@ -87,6 +87,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PredicateCodec<T, U, P>: predicate-based codec routing, accessors, clone
+    //! behavior, error propagation, content-based predicate routing, encode/decode round-trips,
+    //! and empty frame handling.
+
     use test_log::test;
 
     use super::*;

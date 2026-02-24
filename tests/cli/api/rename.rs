@@ -1,3 +1,8 @@
+//! Integration tests for the `rename` JSON API endpoint.
+//!
+//! Tests renaming files, renaming non-empty directories, and error handling
+//! when the source does not exist.
+
 use assert_fs::prelude::*;
 use predicates::prelude::*;
 use rstest::*;

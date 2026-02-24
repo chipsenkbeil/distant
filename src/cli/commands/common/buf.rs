@@ -52,6 +52,9 @@ impl DerefMut for StringBuf {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `StringBuf`: construction, `into_full_lines()` splitting,
+    //! `Deref`/`DerefMut`, `From`, `PartialEq`, `Hash`, and `Clone`.
+
     use test_log::test;
 
     use super::*;

@@ -25,6 +25,9 @@ impl Default for ServerWatchConfig {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ServerWatchConfig`: defaults (native, compare_contents, optional
+    //! fields), serde round-trips, equality, and clone.
+
     use test_log::test;
 
     use super::*;

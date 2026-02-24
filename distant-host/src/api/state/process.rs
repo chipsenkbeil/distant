@@ -214,6 +214,9 @@ async fn process_task(tx: mpsc::Sender<InnerProcessMsg>, mut rx: mpsc::Receiver<
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ProcessChannel` (closed-channel errors) and `ProcessState` (spawn, kill,
+    //! stdin, pty resize, abort lifecycle, and operations on nonexistent processes).
+
     use super::*;
     use test_log::test;
 

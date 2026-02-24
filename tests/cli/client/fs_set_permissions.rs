@@ -1,3 +1,8 @@
+//! Integration tests for the `distant fs set-permissions` CLI subcommand.
+//!
+//! Tests setting file permissions with octal mode, symbolic mode, recursive mode,
+//! and error handling for non-existent paths.
+
 #![allow(unexpected_cfgs)]
 
 use assert_fs::prelude::*;

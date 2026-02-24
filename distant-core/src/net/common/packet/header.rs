@@ -110,6 +110,10 @@ impl fmt::Display for Header {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Header: construction, insert/retrieve, msgpack and JSON round-trips,
+    //! Display formatting, Deref/DerefMut delegation, header! macro, equality, clone,
+    //! and iteration.
+
     use super::*;
 
     mod new_and_is_empty {

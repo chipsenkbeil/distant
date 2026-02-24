@@ -40,6 +40,9 @@ impl AuthenticationMethod for NoneAuthenticationMethod {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for NoneAuthenticationMethod: ID constant, construction, and authenticate()
+    //! always succeeding without authenticator interaction.
+
     use super::*;
     use crate::auth::authenticator::TestAuthenticator;
     use crate::auth::methods::AuthenticationMethod;

@@ -212,6 +212,11 @@ impl Spinner {
 
 #[cfg(test)]
 mod tests {
+    //! Smoke tests for `Ui`, `Spinner`, and `StatusColor`. These tests verify
+    //! that methods do not panic; they do not assert on terminal output content
+    //! because `Ui` writes directly to a terminal handle, making output capture
+    //! impractical in a test harness.
+
     use test_log::test;
 
     use super::*;

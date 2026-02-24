@@ -64,6 +64,10 @@ impl From<ServerListenConfig> for Map {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ServerListenConfig`: defaults, `From<Map>` with valid/invalid
+    //! inputs (port, use_ipv6, shutdown variants, port ranges), `Into<Map>`,
+    //! round-trips, and serde.
+
     use std::net::Ipv4Addr;
     use std::time::Duration;
 

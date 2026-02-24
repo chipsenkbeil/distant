@@ -152,6 +152,10 @@ impl OutputChannel for mpsc::Receiver<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the trait impls on mpsc channels: `ProcessKiller` for `Sender<()>`,
+    //! `InputChannel` for `Sender<Vec<u8>>`, `OutputChannel` for `Receiver<Vec<u8>>`,
+    //! and the `NoProcessPty` blanket implementation of `ProcessPty`.
+
     use super::*;
     use test_log::test;
 

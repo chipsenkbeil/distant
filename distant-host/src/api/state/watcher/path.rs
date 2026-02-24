@@ -196,6 +196,10 @@ impl RegisteredPath {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `RegisteredPath` covering registration with various filter configurations,
+    //! path applicability (recursive vs non-recursive), change event filtering and sending,
+    //! error filtering, and equality/hash behavior.
+
     use super::*;
 
     use std::collections::hash_map::DefaultHasher;

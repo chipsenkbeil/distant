@@ -125,6 +125,9 @@ pub mod global {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for module-level constants (`MAX_PIPE_CHUNK_SIZE`, `SOCKET_FILE_STR`)
+    //! and the `Lazy`-initialized path/name constants in `user` and `global` sub-modules.
+
     use test_log::test;
 
     use super::*;

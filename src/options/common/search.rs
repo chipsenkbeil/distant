@@ -129,6 +129,10 @@ impl From<CliSearchQueryTarget> for SearchQueryTarget {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `CliSearchQueryTarget` and `CliSearchQueryOptions` conversions
+    //! to their `distant_core` counterparts, covering both default and fully
+    //! populated field mappings.
+
     use test_log::test;
 
     use super::*;

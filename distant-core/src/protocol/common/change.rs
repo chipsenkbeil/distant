@@ -341,6 +341,10 @@ impl Default for ChangeKindSet {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ChangeKind (categorization predicates, variants, BitOr), ChangeKindSet
+    //! (set operations, parsing, display, From conversions, equality, hashing),
+    //! ChangeDetails (is_empty), ChangeDetailsAttribute (serde), and Change struct (serde).
+
     use super::*;
 
     mod change_kind_set {

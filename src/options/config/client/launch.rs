@@ -56,6 +56,10 @@ pub struct ClientLaunchDistantConfig {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ClientLaunchConfig` and `ClientLaunchDistantConfig`: defaults,
+    //! `From<Map>` with `distant.*` key extraction, `Into<Map>`, round-trips,
+    //! serde, and bind_server parsing for various address types.
+
     use std::net::Ipv4Addr;
 
     use distant_core::net::common::Host;
@@ -120,13 +124,13 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // From<Map> — invalid bind_server is skipped
+    // From<Map> — IP address bind_server parses correctly
     // -------------------------------------------------------
     #[test]
-    fn from_map_with_invalid_bind_server_skips_it() {
+    fn from_map_with_ip_bind_server() {
         let mut map = Map::new();
-        // BindAddress::from_str won't fail on most strings (they become Host::Name),
-        // but we can verify it doesn't panic
+        // BindAddress::from_str parses "127.0.0.1" as Host::Ipv4, not as an error.
+        // Most strings parse successfully (unrecognized ones become Host::Name).
         map.insert("distant.bind_server".to_string(), "127.0.0.1".to_string());
 
         let config = ClientLaunchConfig::from(map);

@@ -285,6 +285,11 @@ mod ser {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the `Seconds` newtype: `FromStr`, `Display`, `Deref`/`DerefMut`,
+    //! `TryFrom` (signed ints, floats), `From` (unsigned ints, `Duration`), error
+    //! types, serde (JSON + TOML including custom visitor paths), `Hash`/`Eq`,
+    //! and `Copy`/`Clone`.
+
     use test_log::test;
 
     use super::*;
@@ -704,9 +709,9 @@ mod tests {
     }
 
     #[test]
-    fn seconds_clone() {
+    fn seconds_copy_produces_equal_value() {
         let a = Seconds::from(5u32);
-        let b = a;
+        let b = a; // Copy
         assert_eq!(a, b);
     }
 

@@ -15,7 +15,7 @@ pub static ECHO_ARGS_TO_STDOUT: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
     script
         .write_str(indoc::indoc!(
             r#"
-            #/usr/bin/env bash
+            #!/usr/bin/env bash
             printf "%s" "$*"
         "#
         ))
@@ -43,7 +43,7 @@ pub static ECHO_ARGS_TO_STDERR: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(
     script
         .write_str(indoc::indoc!(
             r#"
-            #/usr/bin/env bash
+            #!/usr/bin/env bash
             printf "%s" "$*" 1>&2
         "#
         ))
@@ -71,7 +71,7 @@ pub static ECHO_STDIN_TO_STDOUT: Lazy<assert_fs::fixture::ChildPath> = Lazy::new
     script
         .write_str(indoc::indoc!(
             r#"
-            #/usr/bin/env bash
+            #!/usr/bin/env bash
             while IFS= read; do echo "$REPLY"; done
         "#
         ))

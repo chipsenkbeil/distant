@@ -1,3 +1,8 @@
+//! Integration tests for the `distant fs watch` CLI subcommand.
+//!
+//! Tests watching a single file for changes, watching a directory recursively,
+//! and error handling when watching a non-existent path.
+
 use std::time::{Duration, Instant};
 
 use assert_fs::prelude::*;

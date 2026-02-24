@@ -218,6 +218,10 @@ impl ErrorKind {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for authentication message types: serde round-trips, tagged enum JSON format,
+    //! From impls, raw JSON deserialization, VerificationKind fallback, Error/ErrorKind
+    //! formatting, and Question construction.
+
     use std::collections::HashMap;
 
     use test_log::test;

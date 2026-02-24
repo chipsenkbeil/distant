@@ -63,6 +63,10 @@ impl<'de> serde_bytes::Deserialize<'de> for PublicKeyBytes {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PublicKeyBytes: round-trip conversions (PublicKey <-> PKB <-> Vec), error
+    //! handling for invalid/garbage/wrong-length bytes, serde JSON round-trips, uniqueness,
+    //! clone, and debug formatting.
+
     use super::*;
     use p256::ecdh::EphemeralSecret;
     use rand::rngs::OsRng;

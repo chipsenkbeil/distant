@@ -113,6 +113,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Value: construction from various types, msgpack round-trips, cast_as
+    //! conversions, Deref/DerefMut delegation, and From impls for all supported primitive types.
+
     use super::*;
 
     mod new {

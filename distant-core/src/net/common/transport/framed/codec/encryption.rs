@@ -181,6 +181,10 @@ impl Codec for EncryptionCodec {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for EncryptionType and EncryptionCodec: key generation, codec construction,
+    //! encode/decode round-trips, nonce randomness, wrong-key rejection, edge cases
+    //! (empty frame, nonce-only frame), Debug redaction, and Clone independence.
+
     use test_log::test;
 
     use super::*;

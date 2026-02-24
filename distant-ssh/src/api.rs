@@ -1090,6 +1090,15 @@ impl Api for SshApi {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `SshApi::to_sftp_path` path conversion logic.
+    //!
+    //! The `to_sftp_path` function is replicated here from production code because
+    //! `SshApi::to_sftp_path` takes `&self` and requires a live SSH session, making it
+    //! impractical to call directly in unit tests. This is a deliberate tradeoff for
+    //! test isolation -- the real fix would require refactoring the production code to
+    //! extract the path conversion into a freestanding function. If the production
+    //! method diverges from this copy, these tests will not catch the regression.
+
     use std::path::PathBuf;
 
     use typed_path::Utf8TypedPath;

@@ -228,6 +228,9 @@ impl ProcessKiller for SimpleProcessKiller {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    //! Tests for `SimpleProcess` covering spawn, process trait accessors (stdin/stdout/stderr),
+    //! wait/exit status, stdout capture, kill via clone, NoProcessPty behavior, and current_dir.
+
     use super::*;
 
     use distant_core::protocol::Environment;
@@ -262,11 +265,11 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn id_returns_nonzero_value() {
-            // id is randomly generated, so it could theoretically be 0,
-            // but we test it's at least set
             let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
-            // ProcessId is u32, just verify it's accessible
-            let _id: ProcessId = proc.id();
+            let id: ProcessId = proc.id();
+            // Assert the id is actually nonzero, matching the test name.
+            // With random u32 generation, the probability of 0 is negligible.
+            assert_ne!(id, 0, "Process id should be nonzero");
         }
 
         #[test_log::test(tokio::test)]

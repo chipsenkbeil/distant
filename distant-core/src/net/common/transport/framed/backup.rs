@@ -208,6 +208,9 @@ impl Backup {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Backup: frame storage with size limits, eviction, freezing (all mutations
+    //! ignored), sent/received counters, truncation, and iterator ordering.
+
     use test_log::test;
 
     use super::{Backup, Frame};

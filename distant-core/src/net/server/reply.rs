@@ -164,6 +164,9 @@ impl<T: Send + 'static> Reply for QueuedServerReply<T> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Reply trait (UnboundedSender impl), ServerReply (origin_id wrapping, clone,
+    //! is_closed), and QueuedServerReply (hold/flush/send_before semantics, shared queue state).
+
     use super::*;
     use crate::net::common::Response;
     use tokio::sync::mpsc;

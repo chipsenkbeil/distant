@@ -260,6 +260,9 @@ impl<'a> UntypedRequest<'a> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for Request<T> and UntypedRequest: serialization round-trips, field accessors,
+    //! borrowing, header/id mutation, and msgpack byte-level parsing of the wire format.
+
     use test_log::test;
 
     use super::*;
@@ -326,7 +329,10 @@ mod tests {
             payload: Cow::Borrowed(&payload),
         };
         let borrowed = req.as_borrowed();
+        // Verify all fields are preserved, not just id
+        assert_eq!(borrowed.header.as_ref(), &[1, 2, 3]);
         assert_eq!(borrowed.id.as_ref(), "test");
+        assert_eq!(borrowed.payload.as_ref(), &[4, 5, 6]);
     }
 
     #[test]

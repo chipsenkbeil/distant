@@ -24,6 +24,9 @@ impl Codec for PlainCodec {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for PlainCodec: identity encode/decode behavior, round-trips, equality, Copy
+    //! semantics, and large frame handling.
+
     use super::*;
     use test_log::test;
 
@@ -92,10 +95,11 @@ mod tests {
     }
 
     #[test]
-    fn clone_produces_equal_instance() {
+    fn copy_produces_equal_instance() {
         let original = PlainCodec::new();
-        let cloned = original;
-        assert_eq!(original, cloned);
+        // This is a Copy (not Clone), since PlainCodec is a unit struct deriving Copy
+        let copied = original;
+        assert_eq!(original, copied);
     }
 
     #[test]

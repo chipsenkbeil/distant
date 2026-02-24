@@ -1,3 +1,7 @@
+//! Integration tests for the `exists` JSON API endpoint.
+//!
+//! Tests checking existence of a file that exists and one that does not.
+
 use assert_fs::prelude::*;
 use rstest::*;
 use serde_json::json;

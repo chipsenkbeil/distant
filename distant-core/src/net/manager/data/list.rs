@@ -59,6 +59,10 @@ impl IndexMut<ConnectionId> for ConnectionList {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ConnectionList: constructors, Deref/DerefMut to HashMap, Index/IndexMut
+    //! (including panic tests), IntoIterator, Clone, serde round-trips, connection_destination,
+    //! and Debug formatting.
+
     use test_log::test;
 
     use super::*;

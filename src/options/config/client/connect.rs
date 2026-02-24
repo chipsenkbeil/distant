@@ -22,6 +22,9 @@ impl From<ClientConnectConfig> for Map {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ClientConnectConfig`: defaults, `From<Map>`, `Into<Map>`,
+    //! round-trips, and serde serialization.
+
     use test_log::test;
 
     use super::*;

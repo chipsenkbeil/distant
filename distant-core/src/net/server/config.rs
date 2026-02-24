@@ -130,6 +130,10 @@ impl<'de> Deserialize<'de> for Shutdown {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for ServerConfig defaults and serde, Shutdown Display/FromStr/duration/serde
+    //! (including case insensitivity, fractional seconds, whitespace tolerance),
+    //! and ShutdownParseError Display.
+
     use test_log::test;
 
     use super::*;

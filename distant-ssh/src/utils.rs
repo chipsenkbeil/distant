@@ -237,6 +237,17 @@ pub fn convert_to_windows_path_string(s: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for utility functions: `convert_to_windows_path_string`, `ExecOutput`
+    //! Debug/equality behavior, `to_other_error`, constants, and `contains_subslice`.
+    //!
+    //! The `contains_subslice` function is replicated from the private function
+    //! defined inside `is_windows()`, since it is not directly accessible from test
+    //! code. If the production function diverges, these tests will not detect it.
+    //! Note: the `contains_subslice_both_empty` test documents that both-empty returns
+    //! `false` (the loop range `0..0` is empty), which differs from Rust's
+    //! `[].starts_with(&[])` returning `true`. This may reveal an edge case worth
+    //! checking in the production code.
+
     use super::*;
 
     // --- convert_to_windows_path_string tests ---

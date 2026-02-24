@@ -214,6 +214,10 @@ async fn wait_task(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `ProcessInstance` covering spawn (parse, validate, I/O channels),
+    //! stdout/stderr response forwarding, `on_done` callbacks, standalone task functions,
+    //! current_dir, PTY spawn, and the Drop-based kill behavior.
+
     use super::*;
     use std::sync::{Arc, Mutex};
     use test_log::test;

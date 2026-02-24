@@ -300,6 +300,11 @@ fn windows_main() -> MainResult {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for `suggestions_for_error`, `CliError`, `MainResult` conversions,
+    //! and `format_error_for_shell`. The `format_error_for_shell_*` tests are
+    //! smoke tests that verify no panics; they do not capture or assert on
+    //! formatted output because it writes to a `Ui` terminal handle.
+
     use test_log::test;
 
     use super::*;
@@ -480,10 +485,11 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // format_error_for_shell - doesn't panic
+    // format_error_for_shell — smoke tests (verify no panics, not output content)
     // -------------------------------------------------------
     #[test]
     fn format_error_for_shell_does_not_panic() {
+        // Smoke test: only verifies the function does not panic.
         let err = anyhow::anyhow!("test error");
         format_error_for_shell(&err);
     }

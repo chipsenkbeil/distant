@@ -109,6 +109,9 @@ impl FromStr for PtySize {
 }
 #[cfg(test)]
 mod tests {
+    //! Tests for PtySize: from_rows_and_cols constructor, Default, Display (conditional pixel
+    //! fields), FromStr parsing with error variants, round-trips, and parse error Display.
+
     use super::*;
 
     #[test]

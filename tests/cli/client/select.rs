@@ -1,3 +1,7 @@
+//! Integration tests for the `distant select` CLI subcommand.
+//!
+//! Tests selecting/switching the active connection by its ID.
+
 use rstest::*;
 
 use distant_test_harness::manager::*;

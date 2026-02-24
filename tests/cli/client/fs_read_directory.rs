@@ -1,3 +1,8 @@
+//! Integration tests for the `distant fs read` CLI subcommand when used on directories.
+//!
+//! Tests listing directory contents with various options (depth, absolute paths,
+//! include root) and error handling for missing directories.
+
 use std::path::Path;
 
 use assert_fs::prelude::*;

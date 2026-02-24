@@ -186,6 +186,10 @@ impl Codec for CompressionCodec {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for CompressionLevel, CompressionType, and CompressionCodec: defaults, constants,
+    //! ordering, serde, codec construction, encode/decode round-trips for all types and levels,
+    //! corrupted data handling, and Copy semantics.
+
     use test_log::test;
 
     use super::*;
