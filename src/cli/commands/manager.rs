@@ -249,7 +249,9 @@ async fn async_run(cmd: ManagerSubcommand) -> CliResult {
         }
         ManagerSubcommand::Version { format, network } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network, &ui).await?;
+            // Always use Shell auth (prompt-based) for the connection — the format
+            // flag only controls output formatting, not the auth protocol.
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             debug!("Getting version");
             let version = client.version().await.context("Failed to get version")?;

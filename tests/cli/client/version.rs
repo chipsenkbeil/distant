@@ -3,6 +3,8 @@
 //! Tests displaying client/server version information, protocol version,
 //! and capability support.
 
+use std::process::Stdio;
+
 use distant_core::protocol::{PROTOCOL_VERSION, semver};
 use rstest::*;
 
@@ -57,19 +59,12 @@ fn should_output_capabilities(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore = "version --format json hangs waiting for stdin in test environment"]
 fn should_support_json_format_flag(ctx: ManagerCtx) {
-    let mut child = ctx
+    let output = ctx
         .new_std_cmd(["version", "--format", "json"])
-        .spawn()
-        .expect("Failed to spawn version --format json");
-
-    // Close stdin to prevent the command from waiting for input
-    drop(child.stdin.take());
-
-    let output = child
-        .wait_with_output()
-        .expect("Failed to wait for version");
+        .stdin(Stdio::null())
+        .output()
+        .expect("Failed to run version --format json");
 
     assert!(
         output.status.success(),
