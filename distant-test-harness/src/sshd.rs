@@ -739,7 +739,9 @@ impl Sshd {
                     {
                         out.push_str(&format!("Windows Version: {}\n", version.trim()));
                         if version.contains("2025") || version.contains("26100") {
-                            out.push_str("Detected Windows Server 2025 - requires SYSTEM file ownership\n");
+                            out.push_str(
+                                "Detected Windows Server 2025 - requires SYSTEM file ownership\n",
+                            );
                         }
                     }
 
@@ -750,7 +752,9 @@ impl Sshd {
                         && let Ok(status) = String::from_utf8(output.stdout)
                         && status.contains("RUNNING")
                     {
-                        out.push_str("System SSH service is RUNNING - may conflict with test instances\n");
+                        out.push_str(
+                            "System SSH service is RUNNING - may conflict with test instances\n",
+                        );
                     }
 
                     out.push('\n');
