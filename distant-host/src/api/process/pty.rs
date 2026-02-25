@@ -193,7 +193,9 @@ impl Process for PtyProcess {
                 task.abort();
             }
             if let Some(task) = this.stdout_task.take() {
-                let _ = task.await;
+                // Abort rather than await: on Windows, portable_pty's ConPTY reader
+                // may never return EOF after child exit, causing a deadlock.
+                task.abort();
             }
 
             if status.success && status.code.is_none() {
@@ -451,17 +453,27 @@ mod tests {
             let (prog, args) = env_cmd();
             let mut proc = PtyProcess::spawn(prog, args, env, None, default_size()).unwrap();
 
-            // Read stdout and verify the env var is actually visible to the spawned process
+            // Read stdout until we find our env var or the process exits.
+            // We can't rely on EOF from the PTY reader (ConPTY on Windows may
+            // never signal EOF), so we read with a timeout instead.
             let mut stdout = proc.take_stdout().unwrap();
             let mut all_output = Vec::new();
-            while let Ok(Some(data)) = stdout.recv().await {
-                all_output.extend_from_slice(&data);
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                match tokio::time::timeout_at(deadline, stdout.recv()).await {
+                    Ok(Ok(Some(data))) => {
+                        all_output.extend_from_slice(&data);
+                        let output = String::from_utf8_lossy(&all_output);
+                        if output.contains("MY_TEST_VAR=my_test_value") {
+                            return; // Success
+                        }
+                    }
+                    Ok(Ok(None)) | Ok(Err(_)) => break, // EOF or error
+                    Err(_) => break,                    // Timeout
+                }
             }
             let output = String::from_utf8_lossy(&all_output);
-            assert!(
-                output.contains("MY_TEST_VAR=my_test_value"),
-                "Expected env output to contain MY_TEST_VAR=my_test_value, got: {output}"
-            );
+            panic!("Expected env output to contain MY_TEST_VAR=my_test_value, got: {output}");
         }
     }
 

@@ -1129,6 +1129,7 @@ dependencies = [
  "once_cell",
  "predicates",
  "rand 0.8.5",
+ "regex",
  "rpassword",
  "rstest",
  "serde",

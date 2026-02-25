@@ -80,7 +80,7 @@ fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
         .success()
         .stdout(regex_pred(&format!(
             concat!(
-                "Canonicalized Path: {:?}\n",
+                "Canonicalized Path: {}\n",
                 "Type: symlink\n",
                 "Len: .*\n",
                 "Readonly: false\n",
@@ -88,7 +88,7 @@ fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
                 "Last Accessed: .*\n",
                 "Last Modified: .*\n",
             ),
-            file.path().canonicalize().unwrap()
+            regex::escape(&format!("{:?}", file.path().canonicalize().unwrap()))
         )));
 }
 

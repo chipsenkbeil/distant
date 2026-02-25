@@ -2422,7 +2422,10 @@ mod tests {
                     "Got {}, but expected {} as process id",
                     id, proc_id
                 );
-                assert_eq!(data, b"some stdout", "Got wrong stdout");
+                // On Windows, cmd.exe `echo` appends \r\n and may include trailing spaces
+                let trimmed = String::from_utf8_lossy(data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "some stdout", "Got wrong stdout");
                 got_stdout = true;
             }
             Response::ProcDone { id, success, .. } => {
@@ -2484,7 +2487,10 @@ mod tests {
                     "Got {}, but expected {} as process id",
                     id, proc_id
                 );
-                assert_eq!(data, b"some stderr", "Got wrong stderr");
+                // On Windows, cmd.exe `echo` appends \r\n and may include trailing spaces
+                let trimmed = String::from_utf8_lossy(data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "some stderr", "Got wrong stderr");
                 got_stderr = true;
             }
             Response::ProcDone { id, success, .. } => {
@@ -2635,9 +2641,12 @@ mod tests {
             .unwrap();
 
         // Third, check the async response of stdout to verify we got stdin
+        // Note: On Windows, cmd.exe `echo` outputs \r\n instead of \n
         match rx.recv().await.unwrap() {
             Response::ProcStdout { data, .. } => {
-                assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
+                let trimmed = String::from_utf8_lossy(&data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "hello world", "Mirrored data didn't match");
             }
             x => panic!("Unexpected response: {:?}", x),
         }

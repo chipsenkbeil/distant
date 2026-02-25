@@ -89,7 +89,8 @@ fn regex_stdout<'a>(lines: impl IntoIterator<Item = (&'a str, &'a str)>) -> Stri
 }
 
 fn regex_line(ty: &str, path: &str) -> String {
-    format!(r"\s*{ty}\s+{path}\s*[\r\n]*")
+    let escaped_path = regex::escape(path);
+    format!(r"\s*{ty}\s+{escaped_path}\s*[\r\n]*")
 }
 
 #[rstest]

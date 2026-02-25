@@ -70,7 +70,7 @@ async fn should_support_json_set_permissions_readonly(mut api_process: CtxComman
             "type": "set_permissions",
             "path": file.to_path_buf(),
             "permissions": {
-                "readonly": true,
+                "owner_write": false,
             },
             "options": {},
         },

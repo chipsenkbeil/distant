@@ -417,6 +417,10 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
 
 #[rstest]
 #[test(tokio::test)]
+#[cfg_attr(
+    windows,
+    ignore = "SFTP returns forward-slash paths with 8.3 short names on Windows"
+)]
 async fn dir_read_should_support_including_directory_in_returned_entries(
     #[future] client: Ctx<Client>,
 ) {
@@ -461,6 +465,10 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
 
 #[rstest]
 #[test(tokio::test)]
+#[cfg_attr(
+    windows,
+    ignore = "SFTP returns forward-slash paths with 8.3 short names on Windows"
+)]
 async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -496,6 +504,10 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
 
 #[rstest]
 #[test(tokio::test)]
+#[cfg_attr(
+    windows,
+    ignore = "SFTP symlink canonicalization returns wrong file type on Windows"
+)]
 async fn dir_read_should_support_returning_canonicalized_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -1042,6 +1054,10 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(#[future] clien
 
 #[rstest]
 #[test(tokio::test)]
+#[cfg_attr(
+    windows,
+    ignore = "SFTP symlink canonicalization does not resolve on Windows"
+)]
 async fn metadata_should_include_canonicalized_path_if_flag_specified(
     #[future] client: Ctx<Client>,
 ) {
