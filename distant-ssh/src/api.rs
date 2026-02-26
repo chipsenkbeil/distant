@@ -27,6 +27,22 @@ fn to_sftp_path(path: PathBuf) -> io::Result<String> {
     Ok(typed_path.with_unix_encoding().as_str().to_string())
 }
 
+/// Convert an SFTP path string to a native Windows path string.
+/// SFTP returns paths like `/C:/Users/...` which need the leading `/` stripped
+/// before the drive letter, then converted to Windows encoding via typed-path.
+/// This is the reverse of `to_sftp_path` which uses `with_unix_encoding()`.
+fn sftp_to_windows_path(sftp_path: &str) -> String {
+    // Strip the leading / that SFTP prepends before drive letters (e.g. /C:/...)
+    // so that derive() correctly detects the Windows drive prefix.
+    let stripped = sftp_path
+        .strip_prefix('/')
+        .filter(|s| s.starts_with(|c: char| c.is_ascii_alphabetic()) && s[1..].starts_with(':'))
+        .unwrap_or(sftp_path);
+    Utf8TypedPath::derive(stripped)
+        .with_windows_encoding()
+        .to_string()
+}
+
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
     /// Active SSH session handle.
@@ -105,9 +121,7 @@ impl SshApi {
     /// that need conversion to native Windows format.
     fn sftp_path_to_native(&self, sftp_path: &str) -> PathBuf {
         if self.family == SshFamily::Windows {
-            crate::utils::convert_to_windows_path_string(sftp_path)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(sftp_path))
+            PathBuf::from(sftp_to_windows_path(sftp_path))
         } else {
             PathBuf::from(sftp_path)
         }
@@ -349,9 +363,7 @@ impl Api for SshApi {
 
                 let convert = |s: &str| -> PathBuf {
                     if family == SshFamily::Windows {
-                        crate::utils::convert_to_windows_path_string(s)
-                            .map(PathBuf::from)
-                            .unwrap_or_else(|| PathBuf::from(s))
+                        PathBuf::from(sftp_to_windows_path(s))
                     } else {
                         PathBuf::from(s)
                     }
@@ -371,16 +383,28 @@ impl Api for SshApi {
                     } else if canonicalize {
                         if entry.metadata().is_symlink() {
                             let full_path = format!("{}/{}", path, filename);
-                            match sftp.canonicalize(&full_path).await {
-                                Ok(canonical_str) => {
-                                    let canonical_path = convert(&canonical_str);
-                                    canonical_path
-                                        .strip_prefix(base_path)
-                                        .map(|p| p.to_path_buf())
-                                        .unwrap_or_else(|_| PathBuf::from(&filename))
+                            // On Windows, SFTP realpath doesn't resolve symlinks.
+                            // Use read_link to get the target, then canonicalize that.
+                            let resolved = if family == SshFamily::Windows {
+                                match sftp.read_link(&full_path).await {
+                                    Ok(target) => {
+                                        sftp.canonicalize(&target).await.unwrap_or(target)
+                                    }
+                                    Err(_) => sftp
+                                        .canonicalize(&full_path)
+                                        .await
+                                        .unwrap_or(full_path.clone()),
                                 }
-                                Err(_) => PathBuf::from(&filename),
-                            }
+                            } else {
+                                sftp.canonicalize(&full_path)
+                                    .await
+                                    .unwrap_or(full_path.clone())
+                            };
+                            let canonical_path = convert(&resolved);
+                            canonical_path
+                                .strip_prefix(base_path)
+                                .map(|p| p.to_path_buf())
+                                .unwrap_or_else(|_| PathBuf::from(&filename))
                         } else {
                             PathBuf::from(&filename)
                         }
@@ -735,10 +759,16 @@ impl Api for SshApi {
             };
 
             let canonical_path = if canonicalize {
-                match sftp.canonicalize(&sftp_path).await {
-                    Ok(p) => Some(self.sftp_path_to_native(&p)),
-                    Err(_) => None,
-                }
+                // On Windows, SFTP realpath doesn't resolve symlinks
+                let resolved = if self.family == SshFamily::Windows && attrs.is_symlink() {
+                    match sftp.read_link(&sftp_path).await {
+                        Ok(target) => sftp.canonicalize(&target).await.ok(),
+                        Err(_) => sftp.canonicalize(&sftp_path).await.ok(),
+                    }
+                } else {
+                    sftp.canonicalize(&sftp_path).await.ok()
+                };
+                resolved.map(|p| self.sftp_path_to_native(&p))
             } else {
                 None
             };
@@ -1041,11 +1071,7 @@ impl Api for SshApi {
 
                     // Fix Windows paths: /C:/... -> C:\...
                     let current_dir = if is_windows {
-                        current_dir
-                            .to_str()
-                            .and_then(crate::utils::convert_to_windows_path_string)
-                            .map(PathBuf::from)
-                            .unwrap_or(current_dir)
+                        PathBuf::from(sftp_to_windows_path(&current_dir.to_string_lossy()))
                     } else {
                         current_dir
                     };
@@ -1243,5 +1269,30 @@ mod tests {
         let result = to_sftp_path(PathBuf::from("./current/file.txt")).unwrap();
         // Result depends on typed_path behavior with leading dot
         assert!(result.contains("current/file.txt"));
+    }
+
+    #[test]
+    fn sftp_to_windows_path_strips_leading_slash_before_drive() {
+        // SFTP returns /C:/... — strip leading / so derive detects Windows prefix
+        let result = super::sftp_to_windows_path("/C:/Users/foo/bar");
+        assert_eq!(result, "C:/Users/foo/bar");
+    }
+
+    #[test]
+    fn sftp_to_windows_path_preserves_already_windows_path() {
+        assert_eq!(
+            super::sftp_to_windows_path("C:\\Users\\foo\\bar"),
+            "C:\\Users\\foo\\bar"
+        );
+    }
+
+    #[test]
+    fn sftp_to_windows_path_preserves_forward_slash_windows_path() {
+        // derive detects C:/ as Windows; with_windows_encoding is identity.
+        // Forward slashes are valid Windows separators and PathBuf handles them.
+        assert_eq!(
+            super::sftp_to_windows_path("C:/Users/foo/bar"),
+            "C:/Users/foo/bar"
+        );
     }
 }

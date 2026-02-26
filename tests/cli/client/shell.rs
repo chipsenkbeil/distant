@@ -3,6 +3,11 @@
 //! Uses `expectrl` to spawn the shell process inside a real PTY, which is
 //! required because `distant shell` uses `termwiz::terminal::new_terminal()`
 //! and needs stdin/stdout to be a TTY.
+//!
+//! On Windows, `expectrl`'s ConPTY `expect()` cannot read actual text output
+//! (only escape sequences flow through the pipe), so we use file-based
+//! verification: redirect command output to a temp file, wait for exit, then
+//! check the file contents.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -11,6 +16,7 @@ use expectrl::Session;
 use expectrl::process::Healthcheck;
 #[cfg(unix)]
 use expectrl::process::unix::WaitStatus;
+#[cfg(unix)]
 use expectrl::{Eof, Expect};
 use rstest::*;
 
@@ -68,140 +74,178 @@ where
 
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore = "expectrl ConPTY expect() times out on Windows CI")]
 fn should_run_single_command_via_shell(ctx: ManagerCtx) {
-    let echo_args: Vec<&str> = if cfg!(windows) {
-        vec!["--", "cmd.exe", "/c", "echo", "hello"]
-    } else {
-        vec!["--", "echo", "hello"]
-    };
-
-    let cmd = build_shell_command(&ctx, &echo_args);
-    let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-
-    session.expect("hello").expect("Expected 'hello' in output");
-
-    // Wait for process to finish
-    session.expect(Eof).ok();
     #[cfg(unix)]
     {
+        let cmd = build_shell_command(&ctx, &["--", "echo", "hello"]);
+        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
+        session.set_expect_timeout(Some(Duration::from_secs(30)));
+
+        session.expect("hello").expect("Expected 'hello' in output");
+
+        session.expect(Eof).ok();
         let status = wait_for_exit(&session);
         assert!(
             matches!(status, WaitStatus::Exited(_, 0)),
             "Expected exit code 0, got: {status:?}"
         );
     }
+
     #[cfg(windows)]
-    wait_for_exit(&session);
+    {
+        let temp = assert_fs::TempDir::new().unwrap();
+        let marker = temp.path().join("output.txt");
+        let marker_str = marker.to_str().unwrap();
+
+        let args = vec!["--", "cmd.exe", "/c", "echo", "hello", ">", marker_str];
+        let cmd = build_shell_command(&ctx, &args);
+        let session = Session::spawn(cmd).expect("Failed to spawn shell");
+        wait_for_exit(&session);
+
+        let contents = std::fs::read_to_string(&marker)
+            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
+        assert!(
+            contents.contains("hello"),
+            "Expected 'hello' in output file, got: {contents:?}"
+        );
+    }
 }
 
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore = "expectrl ConPTY expect() times out on Windows CI")]
 fn should_forward_exit_code(ctx: ManagerCtx) {
-    // Note: distant shell joins CMD args with spaces (`cmd.join(" ")`), so
-    // multi-word `-c` arguments like `bash -c "exit 42"` lose their grouping.
-    // Use `false` (exit code 1) to test non-zero exit code forwarding.
-    let exit_args: Vec<&str> = if cfg!(windows) {
-        vec!["--", "cmd.exe", "/c", "exit", "1"]
-    } else {
-        vec!["--", "false"]
-    };
-
-    let cmd = build_shell_command(&ctx, &exit_args);
-    let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-
-    // Wait for process to finish
-    session.expect(Eof).ok();
     #[cfg(unix)]
     {
+        let cmd = build_shell_command(&ctx, &["--", "false"]);
+        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
+        session.set_expect_timeout(Some(Duration::from_secs(30)));
+
+        session.expect(Eof).ok();
         let status = wait_for_exit(&session);
         assert!(
             matches!(status, WaitStatus::Exited(_, 1)),
             "Expected exit code 1, got: {status:?}"
         );
     }
+
     #[cfg(windows)]
-    wait_for_exit(&session);
+    {
+        // Verify that `distant shell -- cmd.exe /c exit 1` terminates.
+        // On Windows, expectrl doesn't expose the exit code, but we verify
+        // the process ran and exited (non-hanging).
+        let args = vec!["--", "cmd.exe", "/c", "exit", "1"];
+        let cmd = build_shell_command(&ctx, &args);
+        let session = Session::spawn(cmd).expect("Failed to spawn shell");
+        wait_for_exit(&session);
+        // If we get here without timeout, the process exited successfully
+    }
 }
 
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore = "expectrl ConPTY expect() times out on Windows CI")]
 fn should_support_current_dir(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let temp_str = temp.path().to_str().unwrap();
 
-    let pwd_args: Vec<&str> = if cfg!(windows) {
-        vec!["--current-dir", temp_str, "--", "cmd.exe", "/c", "cd"]
-    } else {
-        vec!["--current-dir", temp_str, "--", "pwd"]
-    };
-
-    let cmd = build_shell_command(&ctx, &pwd_args);
-    let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-
-    // The output should contain the temp directory path (possibly canonicalized)
-    let canonical = temp.path().canonicalize().unwrap();
-    let canonical_str = canonical.to_str().unwrap();
-    // On Windows, canonicalize() returns \\?\C:\... but cmd.exe outputs C:\...
-    #[cfg(windows)]
-    let expected = canonical_str.strip_prefix(r"\\?\").unwrap_or(canonical_str);
-    #[cfg(not(windows))]
-    let expected = canonical_str;
-    session
-        .expect(expected)
-        .unwrap_or_else(|_| panic!("Expected output to contain '{expected}'"));
-
-    // Wait for process to finish
-    session.expect(Eof).ok();
     #[cfg(unix)]
     {
+        let pwd_args = vec!["--current-dir", temp_str, "--", "pwd"];
+        let cmd = build_shell_command(&ctx, &pwd_args);
+        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
+        session.set_expect_timeout(Some(Duration::from_secs(30)));
+
+        let canonical = temp.path().canonicalize().unwrap();
+        let expected = canonical.to_str().unwrap();
+        session
+            .expect(expected)
+            .unwrap_or_else(|_| panic!("Expected output to contain '{expected}'"));
+
+        session.expect(Eof).ok();
         let status = wait_for_exit(&session);
         assert!(
             matches!(status, WaitStatus::Exited(_, 0)),
             "Expected exit code 0, got: {status:?}"
         );
     }
+
     #[cfg(windows)]
-    wait_for_exit(&session);
+    {
+        let marker = temp.path().join("cwd_output.txt");
+        let marker_str = marker.to_str().unwrap();
+
+        let args = vec![
+            "--current-dir",
+            temp_str,
+            "--",
+            "cmd.exe",
+            "/c",
+            "cd",
+            ">",
+            marker_str,
+        ];
+        let cmd = build_shell_command(&ctx, &args);
+        let session = Session::spawn(cmd).expect("Failed to spawn shell");
+        wait_for_exit(&session);
+
+        let contents = std::fs::read_to_string(&marker)
+            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
+        let canonical = temp.path().canonicalize().unwrap();
+        let canonical_str = canonical.to_str().unwrap();
+        let expected = canonical_str.strip_prefix(r"\\?\").unwrap_or(canonical_str);
+        assert!(
+            contents.contains(expected),
+            "Expected output to contain '{expected}', got: {contents:?}"
+        );
+    }
 }
 
 #[rstest]
 #[test_log::test]
-#[cfg_attr(windows, ignore = "expectrl ConPTY expect() times out on Windows CI")]
 fn should_support_environment(ctx: ManagerCtx) {
-    // Use `env` (or `set` on Windows) to list all environment variables, then
-    // search for our custom variable. This is more reliable than `printenv`
-    // through a PTY since `env` output is longer and gives the stdout task
-    // more time to flush before the process exits.
-    let env_args: Vec<&str> = if cfg!(windows) {
-        vec!["--environment", "FOO=\"bar\"", "--", "cmd.exe", "/c", "set"]
-    } else {
-        vec!["--environment", "FOO=\"bar\"", "--", "env"]
-    };
-
-    let cmd = build_shell_command(&ctx, &env_args);
-    let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-
-    session
-        .expect("FOO=bar")
-        .expect("Expected 'FOO=bar' in output");
-
-    // Wait for process to finish
-    session.expect(Eof).ok();
     #[cfg(unix)]
     {
+        let env_args = vec!["--environment", "FOO=\"bar\"", "--", "env"];
+        let cmd = build_shell_command(&ctx, &env_args);
+        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
+        session.set_expect_timeout(Some(Duration::from_secs(30)));
+
+        session
+            .expect("FOO=bar")
+            .expect("Expected 'FOO=bar' in output");
+
+        session.expect(Eof).ok();
         let status = wait_for_exit(&session);
         assert!(
             matches!(status, WaitStatus::Exited(_, 0)),
             "Expected exit code 0, got: {status:?}"
         );
     }
+
     #[cfg(windows)]
-    wait_for_exit(&session);
+    {
+        let temp = assert_fs::TempDir::new().unwrap();
+        let marker = temp.path().join("env_output.txt");
+        let marker_str = marker.to_str().unwrap();
+
+        let args = vec![
+            "--environment",
+            "FOO=\"bar\"",
+            "--",
+            "cmd.exe",
+            "/c",
+            "set",
+            ">",
+            marker_str,
+        ];
+        let cmd = build_shell_command(&ctx, &args);
+        let session = Session::spawn(cmd).expect("Failed to spawn shell");
+        wait_for_exit(&session);
+
+        let contents = std::fs::read_to_string(&marker)
+            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
+        assert!(
+            contents.contains("FOO=bar"),
+            "Expected 'FOO=bar' in output file, got: {contents:?}"
+        );
+    }
 }

@@ -2,7 +2,6 @@ use std::io;
 use std::time::Duration;
 
 use russh::client::Handle;
-use typed_path::{Components, WindowsComponent, WindowsPath, WindowsPathBuf};
 
 use crate::ClientHandler;
 
@@ -196,228 +195,16 @@ pub async fn is_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
         || contains_subslice(&output.stderr, b"Windows_NT"))
 }
 
-/// Attempts to convert UTF8 str into a path compliant with Windows
-pub fn convert_to_windows_path_string(s: &str) -> Option<String> {
-    let path = WindowsPath::new(s);
-    let mut components = path.components();
-
-    // If we start with a root directory, we may have the weird path
-    match components.next() {
-        // Something weird like /C:/... or /C/... that we need to convert to C:\...
-        Some(WindowsComponent::RootDir) => {
-            let path = WindowsPath::new(components.as_bytes());
-
-            // If we have a prefix, then that means we had something like /C:/...
-            if let Some(WindowsComponent::Prefix(_)) = path.components().next() {
-                std::str::from_utf8(path.as_bytes())
-                    .ok()
-                    .map(ToString::to_string)
-            } else if let Some(WindowsComponent::Normal(filename)) = components.next() {
-                // If we have a drive letter, convert it into a path, e.g. /C/... -> C:\...
-                if filename.len() == 1 && (filename[0] as char).is_alphabetic() {
-                    let mut path_buf = WindowsPathBuf::from(format!("{}:", filename[0]));
-                    for component in components {
-                        path_buf.push(component);
-                    }
-                    std::str::from_utf8(path.as_bytes())
-                        .ok()
-                        .map(ToString::to_string)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-
-        // Already is a Windows path, so just return string
-        Some(WindowsComponent::Prefix(_)) => Some(s.to_string()),
-
-        // Not a reliable Windows path, so return None
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    //! Tests for utility functions: `convert_to_windows_path_string`, `ExecOutput`
-    //! Debug/equality behavior, `to_other_error`, constants, and `contains_subslice`.
+    //! Tests for utility functions: `ExecOutput` Debug/equality behavior,
+    //! `to_other_error`, constants, and `contains_subslice`.
     //!
     //! The `contains_subslice` function is replicated from the private function
     //! defined inside `is_windows()`, since it is not directly accessible from test
     //! code. If the production function diverges, these tests will not detect it.
 
     use super::*;
-
-    // --- convert_to_windows_path_string tests ---
-
-    #[test]
-    fn convert_slash_c_colon_path_to_windows() {
-        // /C:/Users/test -> C:/Users/test
-        let result = convert_to_windows_path_string("/C:/Users/test");
-        assert_eq!(result, Some("C:/Users/test".to_string()));
-    }
-
-    #[test]
-    fn convert_already_windows_path_unchanged() {
-        // C:\Users\test is already a Windows path
-        let result = convert_to_windows_path_string("C:\\Users\\test");
-        assert_eq!(result, Some("C:\\Users\\test".to_string()));
-    }
-
-    #[test]
-    fn convert_relative_path_returns_none() {
-        assert_eq!(convert_to_windows_path_string("relative/path"), None);
-    }
-
-    #[test]
-    fn convert_root_only_returns_none() {
-        assert_eq!(convert_to_windows_path_string("/"), None);
-    }
-
-    #[test]
-    fn convert_c_colon_slash_root_path() {
-        // /C:/ -> just the drive root
-        let result = convert_to_windows_path_string("/C:/");
-        assert!(result.is_some(), "Should handle drive root path");
-    }
-
-    #[test]
-    fn convert_slash_c_slash_path_to_windows() {
-        // /C/Users/test -> should attempt drive-letter conversion
-        let result = convert_to_windows_path_string("/C/Users/test");
-        assert!(result.is_some(), "Should convert single-letter drive path");
-    }
-
-    #[test]
-    fn convert_multi_char_component_returns_none() {
-        // /notadrive/path -> not a single-letter drive, returns None
-        assert_eq!(convert_to_windows_path_string("/notadrive/path"), None);
-    }
-
-    #[test]
-    fn convert_lowercase_drive_letter() {
-        // /c/Users/test -> should handle lowercase drive letter
-        let result = convert_to_windows_path_string("/c/Users/test");
-        assert!(
-            result.is_some(),
-            "Should convert lowercase single-letter drive path"
-        );
-    }
-
-    #[test]
-    fn convert_empty_string_returns_none() {
-        assert_eq!(convert_to_windows_path_string(""), None);
-    }
-
-    #[test]
-    fn convert_slash_only_single_letter_no_further_components() {
-        // /C with no further path components
-        let result = convert_to_windows_path_string("/C");
-        assert!(
-            result.is_some(),
-            "Should handle single drive letter without trailing path"
-        );
-    }
-
-    #[test]
-    fn convert_windows_path_with_forward_slashes() {
-        // C:/Users/test should be treated as already a windows path
-        let result = convert_to_windows_path_string("C:/Users/test");
-        assert_eq!(result, Some("C:/Users/test".to_string()));
-    }
-
-    #[test]
-    fn convert_unc_style_returns_none() {
-        // A relative-looking path (no root, no prefix) should return None
-        let result = convert_to_windows_path_string("foo/bar/baz");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_numeric_component_returns_none() {
-        // /1/path -> '1' is not alphabetic, so this should return None
-        let result = convert_to_windows_path_string("/1/path");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_slash_d_colon_path() {
-        // /D:/Data/files -> D:/Data/files
-        let result = convert_to_windows_path_string("/D:/Data/files");
-        assert_eq!(result, Some("D:/Data/files".to_string()));
-    }
-
-    #[test]
-    fn convert_slash_z_colon_path() {
-        // /Z:/network/share -> Z:/network/share
-        let result = convert_to_windows_path_string("/Z:/network/share");
-        assert_eq!(result, Some("Z:/network/share".to_string()));
-    }
-
-    #[test]
-    fn convert_lowercase_d_colon_path() {
-        let result = convert_to_windows_path_string("/d:/data");
-        assert_eq!(result, Some("d:/data".to_string()));
-    }
-
-    #[test]
-    fn convert_backslash_windows_path() {
-        let result = convert_to_windows_path_string("D:\\Program Files\\App");
-        assert_eq!(result, Some("D:\\Program Files\\App".to_string()));
-    }
-
-    #[test]
-    fn convert_deep_nested_slash_c_colon() {
-        let result = convert_to_windows_path_string("/C:/Users/test/Documents/sub/dir/file.txt");
-        assert_eq!(
-            result,
-            Some("C:/Users/test/Documents/sub/dir/file.txt".to_string())
-        );
-    }
-
-    #[test]
-    fn convert_slash_c_colon_single_file() {
-        let result = convert_to_windows_path_string("/C:/file.txt");
-        assert_eq!(result, Some("C:/file.txt".to_string()));
-    }
-
-    #[test]
-    fn convert_special_char_component_returns_none() {
-        // /!/path -> '!' is a single char but not alphabetic
-        let result = convert_to_windows_path_string("/!/path");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_dot_component_returns_none() {
-        // /./path -> '.' is not alphabetic
-        let result = convert_to_windows_path_string("/./path");
-        // This depends on how WindowsPath parses '.' -- it may be a CurDir component
-        // Just verify it doesn't panic
-        let _ = result;
-    }
-
-    #[test]
-    fn convert_single_char_numeric_returns_none() {
-        // /9 -> '9' is not alphabetic
-        let result = convert_to_windows_path_string("/9");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_two_char_component_returns_none() {
-        // /AB/path -> "AB" is two chars, not a single drive letter
-        let result = convert_to_windows_path_string("/AB/path");
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_drive_letter_with_mixed_separators() {
-        // C:\Users/test -> already starts with prefix
-        let result = convert_to_windows_path_string("C:\\Users/test");
-        assert_eq!(result, Some("C:\\Users/test".to_string()));
-    }
 
     // --- ExecOutput Debug format tests ---
 
@@ -903,46 +690,6 @@ mod tests {
     #[test]
     fn contains_subslice_with_whitespace_prefix() {
         assert!(contains_subslice(b"  \t Windows_NT  ", b"Windows_NT"));
-    }
-
-    // --- convert_to_windows_path_string additional edge cases ---
-
-    #[test]
-    fn convert_slash_e_colon_path() {
-        let result = convert_to_windows_path_string("/E:/games");
-        assert_eq!(result, Some("E:/games".to_string()));
-    }
-
-    #[test]
-    fn convert_slash_x_colon_deep_path() {
-        let result = convert_to_windows_path_string("/X:/a/b/c/d/e/f");
-        assert_eq!(result, Some("X:/a/b/c/d/e/f".to_string()));
-    }
-
-    #[test]
-    fn convert_path_with_spaces_in_components() {
-        let result = convert_to_windows_path_string("/C:/Program Files/My App/config.ini");
-        assert_eq!(
-            result,
-            Some("C:/Program Files/My App/config.ini".to_string())
-        );
-    }
-
-    #[test]
-    fn convert_windows_path_backslash_deep() {
-        let result = convert_to_windows_path_string("C:\\Users\\Test\\Documents\\file.txt");
-        assert_eq!(
-            result,
-            Some("C:\\Users\\Test\\Documents\\file.txt".to_string())
-        );
-    }
-
-    #[test]
-    fn convert_double_dot_path_returns_none() {
-        // /.. is not a valid Windows drive path
-        let result = convert_to_windows_path_string("/..");
-        // This will be a CurDir or ParentDir component after RootDir
-        let _ = result; // Just verify no panic
     }
 
     // --- ExecOutput additional tests ---
