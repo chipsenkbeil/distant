@@ -1116,7 +1116,9 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_set_readonly_flag_if_specified(#[future] client: Ctx<Client>) {
+async fn set_permissions_should_set_readonly_flag_if_specified_on_unix(
+    #[future] client: Ctx<Client>,
+) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
@@ -1248,7 +1250,7 @@ async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ctx<Client>) {
+async fn set_permissions_should_not_recurse_if_option_false_on_unix(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
@@ -1323,7 +1325,7 @@ async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ct
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
+async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1370,7 +1372,7 @@ async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_s
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
+async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1420,7 +1422,7 @@ async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_followi
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
+async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1468,7 +1470,7 @@ async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_support_recursive_if_option_specified(
+async fn set_permissions_should_support_recursive_if_option_specified_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1523,7 +1525,7 @@ async fn set_permissions_should_support_recursive_if_option_specified(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_support_following_symlinks_if_option_specified(
+async fn set_permissions_should_support_following_symlinks_if_option_specified_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
