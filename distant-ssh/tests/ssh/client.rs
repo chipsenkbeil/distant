@@ -337,11 +337,8 @@ async fn setup_dir() -> assert_fs::TempDir {
     root_dir
 }
 
-// NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
-//       it only for the CI
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_depth_limits(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -374,11 +371,8 @@ async fn dir_read_should_support_depth_limits(#[future] client: Ctx<Client>) {
     assert_eq!(entries[2].depth, 1);
 }
 
-// NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
-//       it only for the CI
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -2079,7 +2073,6 @@ async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<C
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_explicit_depth_greater_than_one(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let root_dir = assert_fs::TempDir::new().unwrap();
