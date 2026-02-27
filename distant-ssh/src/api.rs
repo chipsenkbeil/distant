@@ -41,6 +41,7 @@ fn sftp_to_windows_path(sftp_path: &str) -> String {
     Utf8TypedPath::derive(stripped)
         .with_windows_encoding()
         .to_string()
+        .replace('/', "\\")
 }
 
 /// Represents implementation of [`Api`] for SSH.
@@ -1273,9 +1274,10 @@ mod tests {
 
     #[test]
     fn sftp_to_windows_path_strips_leading_slash_before_drive() {
-        // SFTP returns /C:/... — strip leading / so derive detects Windows prefix
+        // SFTP returns /C:/... — strip leading / so derive detects Windows prefix,
+        // then forward slashes are normalized to backslashes.
         let result = super::sftp_to_windows_path("/C:/Users/foo/bar");
-        assert_eq!(result, "C:/Users/foo/bar");
+        assert_eq!(result, "C:\\Users\\foo\\bar");
     }
 
     #[test]
@@ -1287,12 +1289,12 @@ mod tests {
     }
 
     #[test]
-    fn sftp_to_windows_path_preserves_forward_slash_windows_path() {
+    fn sftp_to_windows_path_converts_forward_slashes_to_backslashes() {
         // derive detects C:/ as Windows; with_windows_encoding is identity.
-        // Forward slashes are valid Windows separators and PathBuf handles them.
+        // Forward slashes are then normalized to backslashes.
         assert_eq!(
             super::sftp_to_windows_path("C:/Users/foo/bar"),
-            "C:/Users/foo/bar"
+            "C:\\Users\\foo\\bar"
         );
     }
 }

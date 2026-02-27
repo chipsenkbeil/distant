@@ -28,6 +28,20 @@ fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
     }
 }
 
+/// On Windows, resolve 8.3 short names (e.g. `RUNNER~1`) to long names via
+/// `dunce::canonicalize`. This works because tests run client+server on the
+/// same machine, so the path returned by the SFTP server is valid locally.
+/// On non-Windows, this is an identity function.
+#[cfg(windows)]
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(not(windows))]
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.to_path_buf()
+}
+
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 
 static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
@@ -435,7 +449,7 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
     // NOTE: Root entry is always absolute, resolved path
     assert_eq!(entries[0].file_type, FileType::Dir);
     assert_eq!(
-        entries[0].path,
+        normalize_path(&entries[0].path),
         dunce::canonicalize(root_dir.path()).unwrap()
     );
     assert_eq!(entries[0].depth, 0);
@@ -476,15 +490,15 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
     let root_path = dunce::canonicalize(root_dir.path()).unwrap();
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(entries[0].path, root_path.join("file1"));
+    assert_eq!(normalize_path(&entries[0].path), root_path.join("file1"));
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Symlink);
-    assert_eq!(entries[1].path, root_path.join("link1"));
+    assert_eq!(normalize_path(&entries[1].path), root_path.join("link1"));
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Dir);
-    assert_eq!(entries[2].path, root_path.join("sub1"));
+    assert_eq!(normalize_path(&entries[2].path), root_path.join("sub1"));
     assert_eq!(entries[2].depth, 1);
 }
 
@@ -1064,7 +1078,7 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(
             readonly: false,
             ..
         } => assert_eq!(
-            path,
+            normalize_path(&path),
             dunce::canonicalize(file.path()).unwrap(),
             "Symlink canonicalized path does not match referenced file"
         ),
