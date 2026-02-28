@@ -73,6 +73,39 @@ fn should_connect_and_show_in_status(manager_only_ctx: ManagerOnlyCtx) {
 
 #[rstest]
 #[test_log::test]
+fn should_connect_in_json_format(manager_only_ctx: ManagerOnlyCtx) {
+    let creds = fix_credentials(&manager_only_ctx.credentials);
+    let child = manager_only_ctx
+        .new_std_cmd(["connect", "--format", "json"])
+        .arg(&creds)
+        .spawn()
+        .expect("Failed to spawn connect --format json");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut proc = ApiProcess::new(child, TIMEOUT);
+
+        // Manager auth handshake (none)
+        handle_cli_auth(&mut proc).await;
+
+        // Read final JSON output
+        let json = proc
+            .read_json_from_stdout()
+            .await
+            .expect("Failed to read connect output")
+            .expect("Missing connect output");
+
+        assert_eq!(json["type"], "connected");
+        assert!(json["id"].is_number(), "Expected numeric id, got: {json}");
+        assert!(
+            json["reused"].is_boolean(),
+            "Expected boolean reused, got: {json}"
+        );
+    });
+}
+
+#[rstest]
+#[test_log::test]
 fn should_fail_with_invalid_destination(manager_only_ctx: ManagerOnlyCtx) {
     let output = manager_only_ctx
         .new_std_cmd(["connect"])
