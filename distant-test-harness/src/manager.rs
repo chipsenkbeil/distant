@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 
 static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
 static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
-const TIMEOUT: Duration = Duration::from_secs(3);
+pub const TIMEOUT: Duration = Duration::from_secs(3);
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 const RETRY_PAUSE_DURATION: Duration = Duration::from_millis(250);
@@ -655,6 +655,47 @@ pub async fn validate_authentication(proc: &mut ApiProcess) {
         .unwrap()
         .expect("Missing authentication finalization");
     assert_eq!(json, json!({"type": "auth_finished"}));
+}
+
+/// Performs a single "none" auth handshake over a spawned CLI process.
+/// Same protocol as [`validate_authentication`] — reads `auth_initialization`,
+/// sends `auth_initialization_response`, reads `auth_start_method`, reads `auth_finished`.
+pub async fn handle_cli_auth(proc: &mut ApiProcess) {
+    let json = proc
+        .read_json_from_stdout()
+        .await
+        .expect("auth read failed")
+        .expect("Missing auth_initialization");
+    assert_eq!(
+        json,
+        json!({"type": "auth_initialization", "methods": ["none"]}),
+        "Unexpected auth_initialization payload"
+    );
+
+    let json = proc
+        .write_and_read_json(json!({
+            "type": "auth_initialization_response",
+            "methods": ["none"]
+        }))
+        .await
+        .expect("auth write/read failed")
+        .expect("Missing auth_start_method");
+    assert_eq!(
+        json,
+        json!({"type": "auth_start_method", "method": "none"}),
+        "Unexpected auth_start_method payload"
+    );
+
+    let json = proc
+        .read_json_from_stdout()
+        .await
+        .expect("auth read failed")
+        .expect("Missing auth_finished");
+    assert_eq!(
+        json,
+        json!({"type": "auth_finished"}),
+        "Unexpected auth_finished payload"
+    );
 }
 
 // --- ApiProcess ---

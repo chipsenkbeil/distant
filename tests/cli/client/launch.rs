@@ -4,7 +4,7 @@
 
 use rstest::*;
 
-use distant_test_harness::manager::{ManagerOnlyCtx, bin_path, manager_only_ctx};
+use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
@@ -39,6 +39,36 @@ fn should_launch_local_server(manager_only_ctx: ManagerOnlyCtx) {
         !parsed.as_object().unwrap().is_empty(),
         "Expected at least one connection after launch"
     );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_launch_in_json_format(manager_only_ctx: ManagerOnlyCtx) {
+    let child = manager_only_ctx
+        .new_std_cmd(["launch", "--format", "json"])
+        .arg("--distant")
+        .arg(bin_path())
+        .arg("distant://localhost")
+        .spawn()
+        .expect("Failed to spawn launch --format json");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut proc = ApiProcess::new(child, TIMEOUT);
+
+        // Manager auth handshake (none)
+        handle_cli_auth(&mut proc).await;
+
+        // Read final JSON output
+        let json = proc
+            .read_json_from_stdout()
+            .await
+            .expect("Failed to read launch output")
+            .expect("Missing launch output");
+
+        assert_eq!(json["type"], "launched");
+        assert!(json["id"].is_number(), "Expected numeric id, got: {json}");
+    });
 }
 
 #[rstest]
