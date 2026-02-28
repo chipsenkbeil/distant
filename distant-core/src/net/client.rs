@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use std::{fmt, io};
 
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 

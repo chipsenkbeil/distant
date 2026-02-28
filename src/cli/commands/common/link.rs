@@ -1,11 +1,12 @@
 use std::io::{self, Write};
 use std::thread;
+use std::time::Duration;
 
 use distant_core::{
     RemoteLspStderr, RemoteLspStdin, RemoteLspStdout, RemoteStderr, RemoteStdin, RemoteStdout,
 };
 use log::*;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 
 use super::stdin;
 
@@ -102,27 +103,30 @@ impl RemoteProcessLink {
         from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size)
     }
 
-    /// Shuts down the link, aborting any running tasks, and swallowing join errors
+    /// Shuts down the link, letting stdout/stderr drain before returning.
+    ///
+    /// Stdin is aborted immediately (nothing to drain). Stdout and stderr tasks
+    /// are allowed to finish naturally — they terminate when the remote process
+    /// exits and the mpsc channel senders are dropped, causing `recv()` to
+    /// return `None` (mapped to `BrokenPipe`). A timeout acts as a safety net.
     pub async fn shutdown(self) {
-        self.abort();
-        let _ = self.wait().await;
-    }
-
-    /// Waits for the stdin, stdout, and stderr tasks to complete
-    pub async fn wait(self) -> Result<(), JoinError> {
+        // Abort stdin — we don't need to drain input
         if let Some(stdin_task) = self.stdin_task {
-            tokio::try_join!(stdin_task, self.stdout_task, self.stderr_task).map(|_| ())
-        } else {
-            tokio::try_join!(self.stdout_task, self.stderr_task).map(|_| ())
-        }
-    }
-
-    /// Aborts the link by aborting tasks processing stdin, stdout, and stderr
-    pub fn abort(&self) {
-        if let Some(stdin_task) = self.stdin_task.as_ref() {
             stdin_task.abort();
+            let _ = stdin_task.await;
         }
-        self.stdout_task.abort();
-        self.stderr_task.abort();
+
+        // Let stdout/stderr drain pending data before returning.
+        // They'll exit once their mpsc senders are dropped (on ProcDone).
+        let drain = async {
+            let _ = self.stdout_task.await;
+            let _ = self.stderr_task.await;
+        };
+        if tokio::time::timeout(Duration::from_secs(5), drain)
+            .await
+            .is_err()
+        {
+            warn!("stdout/stderr drain timed out after 5s");
+        }
     }
 }

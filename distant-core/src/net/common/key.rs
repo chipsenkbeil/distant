@@ -2,8 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use derive_more::{Display, Error};
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 
 #[derive(Debug, Display, Error)]
 pub struct SecretKeyError;

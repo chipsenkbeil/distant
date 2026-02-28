@@ -207,8 +207,7 @@ async fn response_task(
     while let Some(res) = mailbox.next().await {
         trace!(
             "[Conn {id}] Receiving response {} to request {}",
-            res.id,
-            res.origin_id
+            res.id, res.origin_id
         );
         if let Err(x) = tx.send(Action::Read { res }) {
             error!("[Conn {id}] Failed to forward received response: {x}");

@@ -381,13 +381,14 @@ impl Ssh {
                 error!("Russh error: {}", e);
                 debug!("Russh error debug: {:?}", e);
 
-                let detailed_msg =
-                    if let Some(io_err) = e.source().and_then(|s| s.downcast_ref::<io::Error>()) {
-                        error!("Underlying IO error: {}", io_err);
-                        error!("IO error kind: {:?}", io_err.kind());
-                        error!("OS error code: {:?}", io_err.raw_os_error());
+                let detailed_msg = if let Some(io_err) =
+                    e.source().and_then(|s| s.downcast_ref::<io::Error>())
+                {
+                    error!("Underlying IO error: {}", io_err);
+                    error!("IO error kind: {:?}", io_err.kind());
+                    error!("OS error code: {:?}", io_err.raw_os_error());
 
-                        format!(
+                    format!(
                         "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
                         host.as_ref(),
                         port,
@@ -396,9 +397,9 @@ impl Ssh {
                         io_err.kind(),
                         io_err.raw_os_error()
                     )
-                    } else {
-                        format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
-                    };
+                } else {
+                    format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
+                };
 
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,

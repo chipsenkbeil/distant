@@ -6,7 +6,7 @@ use crate::auth::msg::*;
 use crate::auth::{AuthHandler, Authenticate, Authenticator};
 use log::*;
 
-use crate::net::common::{utils, FramedTransport, Transport};
+use crate::net::common::{FramedTransport, Transport, utils};
 
 macro_rules! write_frame {
     ($transport:expr, $data:expr) => {{
@@ -27,7 +27,7 @@ macro_rules! next_frame_as {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("Unexpected frame: {x:?}"),
-                ))
+                ));
             }
         }
     }};

@@ -216,23 +216,23 @@ impl SearchQueryReporter {
             total_matches_cnt += 1;
 
             // Check if we've reached the limit, and quit if we have
-            if let Some(len) = options.limit {
-                if total_matches_cnt >= len {
-                    trace!("[Query {id}] Reached limit of {len} matches");
-                    break;
-                }
+            if let Some(len) = options.limit
+                && total_matches_cnt >= len
+            {
+                trace!("[Query {id}] Reached limit of {len} matches");
+                break;
             }
 
             // Check if we've reached pagination size, and send queued if so
-            if let Some(len) = options.pagination {
-                if matches.len() as u64 >= len {
-                    trace!("[Query {id}] Reached {len} paginated matches");
-                    if let Err(x) = reply.send(Response::SearchResults {
-                        id,
-                        matches: std::mem::take(&mut matches),
-                    }) {
-                        error!("[Query {id}] Failed to send paginated matches: {x}");
-                    }
+            if let Some(len) = options.pagination
+                && matches.len() as u64 >= len
+            {
+                trace!("[Query {id}] Reached {len} paginated matches");
+                if let Err(x) = reply.send(Response::SearchResults {
+                    id,
+                    matches: std::mem::take(&mut matches),
+                }) {
+                    error!("[Query {id}] Failed to send paginated matches: {x}");
                 }
             }
         }
@@ -2045,10 +2045,12 @@ mod tests {
 
         let result = channel.start(query, Box::new(reply)).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal search task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal search task closed")
+        );
     }
 
     #[test(tokio::test)]
@@ -2056,10 +2058,12 @@ mod tests {
         let channel = SearchChannel::default();
         let result = channel.cancel(42).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal search task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal search task closed")
+        );
     }
 
     // ---- SearchState lifecycle ----
@@ -2112,10 +2116,12 @@ mod tests {
         let state = SearchState::new();
         let result = state.cancel(99999).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Cancellation failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cancellation failed")
+        );
     }
 
     #[test(tokio::test)]

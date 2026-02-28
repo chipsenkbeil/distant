@@ -4,9 +4,9 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::auth::msg::*;
 use crate::auth::Authenticator;
-use tokio::sync::{oneshot, RwLock};
+use crate::auth::msg::*;
+use tokio::sync::{RwLock, oneshot};
 
 use crate::net::manager::data::{ManagerAuthenticationId, ManagerResponse};
 use crate::net::server::ServerReply;

@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::{
-    wait, ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
-    ProcessKiller, WaitRx,
+    ExitStatus, FutureReturn, InputChannel, NoProcessPty, OutputChannel, Process, ProcessId,
+    ProcessKiller, WaitRx, wait,
 };
 
 mod tasks;
@@ -226,7 +226,6 @@ impl ProcessKiller for SimpleProcessKiller {
 }
 
 #[cfg(test)]
-#[cfg(unix)]
 mod tests {
     //! Tests for `SimpleProcess` covering spawn, process trait accessors (stdin/stdout/stderr),
     //! wait/exit status, stdout capture, kill via clone, NoProcessPty behavior, and current_dir.
@@ -239,12 +238,58 @@ mod tests {
         Environment::new()
     }
 
+    /// Returns (program, args) for a command that echoes text to stdout.
+    fn echo_cmd(msg: &str) -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "echo".into(), msg.into()])
+        } else {
+            ("echo", vec![msg.into()])
+        }
+    }
+
+    /// Returns (program, args) for a command that exits with a nonzero code.
+    fn failing_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "exit".into(), "1".into()])
+        } else {
+            ("false", vec![])
+        }
+    }
+
+    /// Returns (program, args) for a long-running command suitable for kill tests.
+    fn long_running_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "cmd.exe",
+                vec![
+                    "/c".into(),
+                    "ping".into(),
+                    "-n".into(),
+                    "60".into(),
+                    "127.0.0.1".into(),
+                ],
+            )
+        } else {
+            ("sleep", vec!["60".into()])
+        }
+    }
+
+    /// Returns (program, args) for a command that prints the current directory.
+    fn pwd_cmd() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            ("cmd.exe", vec!["/c".into(), "cd".into()])
+        } else {
+            ("pwd", vec![])
+        }
+    }
+
     mod spawn {
         use super::*;
 
         #[test_log::test(tokio::test)]
         async fn with_valid_program_succeeds() {
-            let proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None);
+            let (prog, args) = echo_cmd("hello");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None);
             assert!(proc.is_ok());
         }
 
@@ -265,7 +310,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn id_returns_nonzero_value() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let id: ProcessId = proc.id();
             // Assert the id is actually nonzero, matching the test name.
             // With random u32 generation, the probability of 0 is negligible.
@@ -274,25 +320,29 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn stdin_is_some_initially() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.stdin().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn stdout_is_some_initially() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.stdout().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn stderr_is_some_initially() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.stderr().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn take_stdin_removes_it() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let stdin = proc.take_stdin();
             assert!(stdin.is_some());
             assert!(proc.stdin().is_none());
@@ -301,7 +351,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn take_stdout_removes_it() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let stdout = proc.take_stdout();
             assert!(stdout.is_some());
             assert!(proc.stdout().is_none());
@@ -310,7 +361,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn take_stderr_removes_it() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let stderr = proc.take_stderr();
             assert!(stderr.is_some());
             assert!(proc.stderr().is_none());
@@ -319,19 +371,22 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn mut_stdin_is_some_initially() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.mut_stdin().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn mut_stdout_is_some_initially() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.mut_stdout().is_some());
         }
 
         #[test_log::test(tokio::test)]
         async fn mut_stderr_is_some_initially() {
-            let mut proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.mut_stderr().is_some());
         }
     }
@@ -341,7 +396,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn echo_exits_successfully_with_code_zero() {
-            let mut proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("hello");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let status = proc.wait().await.unwrap();
             assert!(status.success);
             assert_eq!(status.code, Some(0));
@@ -349,8 +405,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn false_command_exits_with_nonzero_code() {
-            let mut proc =
-                SimpleProcess::spawn("false", Vec::<String>::new(), empty_env(), None).unwrap();
+            let (prog, args) = failing_cmd();
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let status = proc.wait().await.unwrap();
             assert!(!status.success);
             assert!(status.code.is_some());
@@ -359,8 +415,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn kill_then_wait_returns_killed_status() {
-            // Spawn a long-running process
-            let mut proc = SimpleProcess::spawn("sleep", ["60"], empty_env(), None).unwrap();
+            let (prog, args) = long_running_cmd();
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
 
             ProcessKiller::kill(&mut proc).await.unwrap();
             let status = proc.wait().await.unwrap();
@@ -373,7 +429,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn captures_stdout_from_echo() {
-            let mut proc = SimpleProcess::spawn("echo", ["hello"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("hello");
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let mut stdout = proc.take_stdout().unwrap();
 
             // Read from stdout
@@ -394,7 +451,8 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn cloned_killer_can_kill_process() {
-            let mut proc = SimpleProcess::spawn("sleep", ["60"], empty_env(), None).unwrap();
+            let (prog, args) = long_running_cmd();
+            let mut proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let mut killer = proc.clone_killer();
             killer.kill().await.unwrap();
 
@@ -409,13 +467,15 @@ mod tests {
 
         #[test_log::test(tokio::test)]
         async fn pty_size_returns_none() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             assert!(proc.pty_size().is_none());
         }
 
         #[test_log::test(tokio::test)]
         async fn resize_pty_returns_error() {
-            let proc = SimpleProcess::spawn("echo", ["test"], empty_env(), None).unwrap();
+            let (prog, args) = echo_cmd("test");
+            let proc = SimpleProcess::spawn(prog, args, empty_env(), None).unwrap();
             let size = distant_core::protocol::PtySize {
                 rows: 24,
                 cols: 80,
@@ -433,13 +493,10 @@ mod tests {
         #[test_log::test(tokio::test)]
         async fn uses_specified_current_dir() {
             let dir = tempfile::tempdir().unwrap();
-            let mut proc = SimpleProcess::spawn(
-                "pwd",
-                Vec::<String>::new(),
-                empty_env(),
-                Some(dir.path().to_path_buf()),
-            )
-            .unwrap();
+            let (prog, args) = pwd_cmd();
+            let mut proc =
+                SimpleProcess::spawn(prog, args, empty_env(), Some(dir.path().to_path_buf()))
+                    .unwrap();
 
             let mut stdout = proc.take_stdout().unwrap();
             let data = stdout.recv().await.unwrap();

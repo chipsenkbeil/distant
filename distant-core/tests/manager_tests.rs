@@ -3,13 +3,13 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use distant_core::Plugin;
 use distant_core::auth::Authenticator;
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, UntypedClient};
 use distant_core::net::common::{Destination, InmemoryTransport, Map, OneshotListener};
 use distant_core::net::manager::{Config, ManagerClient, ManagerServer};
 use distant_core::net::server::{RequestCtx, Server, ServerHandler};
-use distant_core::Plugin;
 use log::*;
 use test_log::test;
 

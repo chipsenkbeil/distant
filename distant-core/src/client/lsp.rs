@@ -434,8 +434,8 @@ mod tests {
     use std::future::Future;
     use std::time::Duration;
 
-    use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use crate::net::Client;
+    use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use test_log::test;
 
     use super::*;
@@ -782,8 +782,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn stdout_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available(
-    ) {
+    async fn stdout_read_should_only_consume_a_complete_lsp_message_even_if_more_output_is_available()
+     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         let msg = make_lsp_msg(serde_json::json!({
@@ -985,8 +985,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn stderr_read_should_only_consume_a_complete_lsp_message_even_if_more_errput_is_available(
-    ) {
+    async fn stderr_read_should_only_consume_a_complete_lsp_message_even_if_more_errput_is_available()
+     {
         let (mut transport, mut proc) = spawn_lsp_process().await;
 
         let msg = make_lsp_msg(serde_json::json!({

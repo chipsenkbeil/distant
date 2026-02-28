@@ -350,9 +350,7 @@ impl Permissions {
         let mut flags = UnixFilePermissionFlags::empty();
 
         macro_rules! is_true {
-            ($opt:expr) => {{
-                $opt.is_some() && $opt.unwrap()
-            }};
+            ($opt:expr) => {{ $opt.is_some() && $opt.unwrap() }};
         }
 
         if is_true!(self.owner_read) {

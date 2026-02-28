@@ -3,9 +3,9 @@ use std::time::SystemTime;
 use std::{env, io};
 
 use distant_core::protocol::{
-    semver, ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, Permissions,
-    ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
-    PROTOCOL_VERSION,
+    ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION,
+    Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
+    Version, semver,
 };
 use distant_core::{Api as DistantApi, Ctx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
@@ -435,11 +435,11 @@ impl DistantApi for Api {
                 })?
                 .permissions();
 
-            // Apply the readonly flag for all platforms but junix
-            if !cfg!(unix) {
-                if let Some(readonly) = permissions.is_readonly() {
-                    std_permissions.set_readonly(readonly);
-                }
+            // Apply the readonly flag for all platforms but unix
+            if !cfg!(unix)
+                && let Some(readonly) = permissions.is_readonly()
+            {
+                std_permissions.set_readonly(readonly);
             }
 
             // On Unix platforms, we can apply a bitset change
@@ -663,72 +663,13 @@ mod tests {
     use assert_fs::prelude::*;
     use distant_core::net::server::Reply;
     use distant_core::protocol::Response;
-    use once_cell::sync::Lazy;
     use predicates::prelude::*;
     use test_log::test;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::config::WatchConfig;
-
-    static TEMP_SCRIPT_DIR: Lazy<assert_fs::TempDir> =
-        Lazy::new(|| assert_fs::TempDir::new().unwrap());
-    static SCRIPT_RUNNER: Lazy<String> = Lazy::new(|| String::from("bash"));
-
-    static ECHO_ARGS_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-        let script = TEMP_SCRIPT_DIR.child("echo_args_to_stdout.sh");
-        script
-            .write_str(indoc::indoc!(
-                r#"
-                #/usr/bin/env bash
-                printf "%s" "$*"
-            "#
-            ))
-            .unwrap();
-        script
-    });
-
-    static ECHO_ARGS_TO_STDERR_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-        let script = TEMP_SCRIPT_DIR.child("echo_args_to_stderr.sh");
-        script
-            .write_str(indoc::indoc!(
-                r#"
-                #/usr/bin/env bash
-                printf "%s" "$*" 1>&2
-            "#
-            ))
-            .unwrap();
-        script
-    });
-
-    static ECHO_STDIN_TO_STDOUT_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-        let script = TEMP_SCRIPT_DIR.child("echo_stdin_to_stdout.sh");
-        script
-            .write_str(indoc::indoc!(
-                r#"
-                #/usr/bin/env bash
-                while IFS= read; do echo "$REPLY"; done
-            "#
-            ))
-            .unwrap();
-        script
-    });
-
-    static SLEEP_SH: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
-        let script = TEMP_SCRIPT_DIR.child("sleep.sh");
-        script
-            .write_str(indoc::indoc!(
-                r#"
-                #!/usr/bin/env bash
-                sleep "$1"
-            "#
-            ))
-            .unwrap();
-        script
-    });
-
-    static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
-        Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
+    use distant_test_harness::scripts::*;
 
     const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
@@ -2159,8 +2100,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
-    ) {
+    async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled()
+     {
         let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
@@ -2203,8 +2144,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
-    ) {
+    async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled()
+     {
         let (api, ctx, _rx) = setup().await;
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
@@ -2401,10 +2342,7 @@ mod tests {
         );
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_error_on_failure() {
         let (api, ctx, _rx) = setup().await;
 
@@ -2420,10 +2358,7 @@ mod tests {
             .unwrap_err();
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_return_id_of_spawned_process() {
         let (api, ctx, _rx) = setup().await;
 
@@ -2432,9 +2367,10 @@ mod tests {
                 ctx,
                 /* cmd */
                 format!(
-                    "{} {}",
+                    "{} {} {}",
                     *SCRIPT_RUNNER,
-                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
+                    *SCRIPT_RUNNER_ARG,
+                    ECHO_ARGS_TO_STDOUT.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
@@ -2445,10 +2381,7 @@ mod tests {
         assert!(id > 0);
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stdout_periodically_when_available() {
         let (api, ctx, mut rx) = setup().await;
 
@@ -2457,9 +2390,10 @@ mod tests {
                 ctx,
                 /* cmd */
                 format!(
-                    "{} {} some stdout",
+                    "{} {} {} some stdout",
                     *SCRIPT_RUNNER,
-                    ECHO_ARGS_TO_STDOUT_SH.to_str().unwrap()
+                    *SCRIPT_RUNNER_ARG,
+                    ECHO_ARGS_TO_STDOUT.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
@@ -2488,7 +2422,10 @@ mod tests {
                     "Got {}, but expected {} as process id",
                     id, proc_id
                 );
-                assert_eq!(data, b"some stdout", "Got wrong stdout");
+                // On Windows, cmd.exe `echo` appends \r\n and may include trailing spaces
+                let trimmed = String::from_utf8_lossy(data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "some stdout", "Got wrong stdout");
                 got_stdout = true;
             }
             Response::ProcDone { id, success, .. } => {
@@ -2509,10 +2446,7 @@ mod tests {
         assert!(got_done, "Missing done response");
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_back_stderr_periodically_when_available() {
         let (api, ctx, mut rx) = setup().await;
 
@@ -2521,9 +2455,10 @@ mod tests {
                 ctx,
                 /* cmd */
                 format!(
-                    "{} {} some stderr",
+                    "{} {} {} some stderr",
                     *SCRIPT_RUNNER,
-                    ECHO_ARGS_TO_STDERR_SH.to_str().unwrap()
+                    *SCRIPT_RUNNER_ARG,
+                    ECHO_ARGS_TO_STDERR.to_str().unwrap()
                 ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
@@ -2552,7 +2487,10 @@ mod tests {
                     "Got {}, but expected {} as process id",
                     id, proc_id
                 );
-                assert_eq!(data, b"some stderr", "Got wrong stderr");
+                // On Windows, cmd.exe `echo` appends \r\n and may include trailing spaces
+                let trimmed = String::from_utf8_lossy(data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "some stderr", "Got wrong stderr");
                 got_stderr = true;
             }
             Response::ProcDone { id, success, .. } => {
@@ -2573,10 +2511,7 @@ mod tests {
         assert!(got_done, "Missing done response");
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_send_done_signal_when_completed() {
         let (api, ctx, mut rx) = setup().await;
 
@@ -2584,7 +2519,12 @@ mod tests {
             .proc_spawn(
                 ctx,
                 /* cmd */
-                format!("{} {} 0.1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+                format!(
+                    "{} {} {} 1",
+                    *SCRIPT_RUNNER,
+                    *SCRIPT_RUNNER_ARG,
+                    SLEEP.to_str().unwrap()
+                ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
                 /* pty */ None,
@@ -2603,10 +2543,7 @@ mod tests {
         }
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_spawn_should_clear_process_from_state_when_killed() {
         let (api, ctx_1, mut rx) = setup().await;
         let (ctx_2, _rx) = {
@@ -2622,7 +2559,12 @@ mod tests {
             .proc_spawn(
                 ctx_1,
                 /* cmd */
-                format!("{} {} 1", *SCRIPT_RUNNER, SLEEP_SH.to_str().unwrap()),
+                format!(
+                    "{} {} {} 2",
+                    *SCRIPT_RUNNER,
+                    *SCRIPT_RUNNER_ARG,
+                    SLEEP.to_str().unwrap()
+                ),
                 /* environment */ Environment::new(),
                 /* current_dir */ None,
                 /* pty */ None,
@@ -2663,10 +2605,7 @@ mod tests {
             .unwrap_err();
     }
 
-    // NOTE: Ignoring on windows because it's using WSL which wants a Linux path
-    //       with / but thinks it's on windows and is providing \
     #[test(tokio::test)]
-    #[cfg_attr(windows, ignore)]
     async fn proc_stdin_should_send_stdin_to_process() {
         let (api, ctx_1, mut rx) = setup().await;
         let (ctx_2, _rx) = {
@@ -2684,9 +2623,10 @@ mod tests {
                 ctx_1,
                 /* cmd */
                 format!(
-                    "{} {}",
+                    "{} {} {}",
                     *SCRIPT_RUNNER,
-                    ECHO_STDIN_TO_STDOUT_SH.to_str().unwrap()
+                    *SCRIPT_RUNNER_ARG,
+                    ECHO_STDIN_TO_STDOUT.to_str().unwrap()
                 ),
                 Environment::new(),
                 /* current_dir */ None,
@@ -2701,9 +2641,12 @@ mod tests {
             .unwrap();
 
         // Third, check the async response of stdout to verify we got stdin
+        // Note: On Windows, cmd.exe `echo` outputs \r\n instead of \n
         match rx.recv().await.unwrap() {
             Response::ProcStdout { data, .. } => {
-                assert_eq!(data, b"hello world\n", "Mirrored data didn't match");
+                let trimmed = String::from_utf8_lossy(&data);
+                let trimmed = trimmed.trim();
+                assert_eq!(trimmed, "hello world", "Mirrored data didn't match");
             }
             x => panic!("Unexpected response: {:?}", x),
         }

@@ -117,5 +117,33 @@ pub static EXIT_CODE: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
     script
 });
 
+#[cfg(unix)]
+pub static SLEEP: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("sleep.sh");
+    script
+        .write_str(indoc::indoc!(
+            r#"
+            #!/usr/bin/env bash
+            sleep "$1"
+        "#
+        ))
+        .unwrap();
+    script
+});
+
+#[cfg(windows)]
+pub static SLEEP: Lazy<assert_fs::fixture::ChildPath> = Lazy::new(|| {
+    let script = TEMP_SCRIPT_DIR.child("sleep.cmd");
+    script
+        .write_str(indoc::indoc!(
+            r#"
+            @echo off
+            ping -n %1 127.0.0.1 >NUL
+        "#
+        ))
+        .unwrap();
+    script
+});
+
 pub static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
     Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));

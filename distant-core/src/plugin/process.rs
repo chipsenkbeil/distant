@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use crate::auth::msg::*;
 use crate::auth::Authenticator;
+use crate::auth::msg::*;
 use crate::net::client::{ClientConfig, UntypedClient};
 use crate::net::common::{Destination, FramedTransport, InmemoryTransport, Map};
 

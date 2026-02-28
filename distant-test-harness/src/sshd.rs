@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 use std::{fmt, io, thread};
 
 use anyhow::Context;
-use assert_fs::prelude::*;
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use derive_more::{Deref, DerefMut, Display};
 use distant_core::Client;
 use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
@@ -329,11 +329,7 @@ impl SshdConfig {
     }
 
     const fn yes_str(yes: bool) -> &'static str {
-        if yes {
-            "yes"
-        } else {
-            "no"
-        }
+        if yes { "yes" } else { "no" }
     }
 }
 
@@ -500,19 +496,21 @@ impl Sshd {
                         "sshd could not spawn on port {port}, exited with code {:?}: {msg}, so trying next port",
                         code
                     );
-                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                        if !log_content.trim().is_empty() {
-                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
-                        }
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                        && !log_content.trim().is_empty()
+                    {
+                        error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
                     }
                     continue;
                 }
                 Err(e) => {
-                    error!("sshd could not spawn on port {port} due to error: {e}, so trying next port");
-                    if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                        if !log_content.trim().is_empty() {
-                            error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
-                        }
+                    error!(
+                        "sshd could not spawn on port {port} due to error: {e}, so trying next port"
+                    );
+                    if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                        && !log_content.trim().is_empty()
+                    {
+                        error!("SSHD LOG CONTENT for port {port}:\n{}", log_content);
                     }
                     continue;
                 }
@@ -621,12 +619,14 @@ impl Sshd {
             #[cfg(windows)]
             {
                 // Detect Windows version
-                if let Ok(output) = Command::new("ver").output() {
-                    if let Ok(version) = String::from_utf8(output.stdout) {
-                        error!("Windows version: {}", version.trim());
-                        if version.contains("2025") || version.contains("26100") {
-                            error!("Windows Server 2025 detected - requires SYSTEM file ownership for sshd");
-                        }
+                if let Ok(output) = Command::new("ver").output()
+                    && let Ok(version) = String::from_utf8(output.stdout)
+                {
+                    error!("Windows version: {}", version.trim());
+                    if version.contains("2025") || version.contains("26100") {
+                        error!(
+                            "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
+                        );
                     }
                 }
 
@@ -634,7 +634,9 @@ impl Sshd {
                 if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
                     if let Ok(status) = String::from_utf8(output.stdout) {
                         if status.contains("RUNNING") {
-                            error!("System SSH service is RUNNING - may conflict with test sshd instances");
+                            error!(
+                                "System SSH service is RUNNING - may conflict with test sshd instances"
+                            );
                         } else if status.contains("STOPPED") {
                             error!("System SSH service is STOPPED");
                         }
@@ -644,19 +646,19 @@ impl Sshd {
                 }
 
                 // Check Windows OpenSSH version
-                if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output() {
-                    if let Ok(version) = String::from_utf8(output.stderr) {
-                        // SSH version goes to stderr
-                        error!("OpenSSH version: {}", version.trim());
-                    }
+                if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output()
+                    && let Ok(version) = String::from_utf8(output.stderr)
+                {
+                    // SSH version goes to stderr
+                    error!("OpenSSH version: {}", version.trim());
                 }
             }
 
             // Also print log file for immediate failures
-            if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-                if !log_content.trim().is_empty() {
-                    error!("sshd log file content:\n{}", log_content);
-                }
+            if let Ok(log_content) = std::fs::read_to_string(&log_path)
+                && !log_content.trim().is_empty()
+            {
+                error!("sshd log file content:\n{}", log_content);
             }
 
             return Ok(Err((
@@ -732,12 +734,14 @@ impl Sshd {
                     out.push_str("====================\n");
 
                     // Check if this is Windows Server 2025 which has stricter requirements
-                    if let Ok(output) = std::process::Command::new("ver").output() {
-                        if let Ok(version) = String::from_utf8(output.stdout) {
-                            out.push_str(&format!("Windows Version: {}\n", version.trim()));
-                            if version.contains("2025") || version.contains("26100") {
-                                out.push_str("Detected Windows Server 2025 - requires SYSTEM file ownership\n");
-                            }
+                    if let Ok(output) = std::process::Command::new("ver").output()
+                        && let Ok(version) = String::from_utf8(output.stdout)
+                    {
+                        out.push_str(&format!("Windows Version: {}\n", version.trim()));
+                        if version.contains("2025") || version.contains("26100") {
+                            out.push_str(
+                                "Detected Windows Server 2025 - requires SYSTEM file ownership\n",
+                            );
                         }
                     }
 
@@ -745,12 +749,12 @@ impl Sshd {
                     if let Ok(output) = std::process::Command::new("sc")
                         .args(["query", "sshd"])
                         .output()
+                        && let Ok(status) = String::from_utf8(output.stdout)
+                        && status.contains("RUNNING")
                     {
-                        if let Ok(status) = String::from_utf8(output.stdout) {
-                            if status.contains("RUNNING") {
-                                out.push_str("System SSH service is RUNNING - may conflict with test instances\n");
-                            }
-                        }
+                        out.push_str(
+                            "System SSH service is RUNNING - may conflict with test instances\n",
+                        );
                     }
 
                     out.push('\n');

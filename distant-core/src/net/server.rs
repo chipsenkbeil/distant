@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use crate::auth::Verifier;
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tokio::sync::{broadcast, RwLock};
+use serde::de::DeserializeOwned;
+use tokio::sync::{RwLock, broadcast};
 
 use crate::net::common::{ConnectionId, Listener, Response, Transport, Version};
 
@@ -363,8 +363,8 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn should_lonely_shutdown_if_last_connection_terminated_and_then_no_connections_after_n_secs(
-    ) {
+    async fn should_lonely_shutdown_if_last_connection_terminated_and_then_no_connections_after_n_secs()
+     {
         // Create a test listener where we will forward a connection
         let (tx, listener) = make_listener(100);
 

@@ -4,8 +4,8 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use assert_fs::prelude::*;
 use assert_fs::TempDir;
+use assert_fs::prelude::*;
 use distant_core::protocol::{
     ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, SearchQuery,
     SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
@@ -27,6 +27,8 @@ fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
         unix_cmd.to_string()
     }
 }
+
+use distant_test_harness::utils::normalize_path;
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 
@@ -337,11 +339,8 @@ async fn setup_dir() -> assert_fs::TempDir {
     root_dir
 }
 
-// NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
-//       it only for the CI
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_depth_limits(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -374,11 +373,8 @@ async fn dir_read_should_support_depth_limits(#[future] client: Ctx<Client>) {
     assert_eq!(entries[2].depth, 1);
 }
 
-// NOTE: CI fails this on Windows, but it's running Windows with bash and strange paths, so ignore
-//       it only for the CI
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -415,10 +411,8 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
     assert_eq!(entries[3].depth, 2);
 }
 
-// NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_including_directory_in_returned_entries(
     #[future] client: Ctx<Client>,
 ) {
@@ -443,7 +437,7 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
     // NOTE: Root entry is always absolute, resolved path
     assert_eq!(entries[0].file_type, FileType::Dir);
     assert_eq!(
-        entries[0].path,
+        normalize_path(&entries[0].path),
         dunce::canonicalize(root_dir.path()).unwrap()
     );
     assert_eq!(entries[0].depth, 0);
@@ -461,10 +455,8 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
     assert_eq!(entries[3].depth, 1);
 }
 
-// NOTE: This is failing on windows as canonicalization of root path is not correct!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -486,22 +478,20 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
     let root_path = dunce::canonicalize(root_dir.path()).unwrap();
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(entries[0].path, root_path.join("file1"));
+    assert_eq!(normalize_path(&entries[0].path), root_path.join("file1"));
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Symlink);
-    assert_eq!(entries[1].path, root_path.join("link1"));
+    assert_eq!(normalize_path(&entries[1].path), root_path.join("link1"));
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Dir);
-    assert_eq!(entries[2].path, root_path.join("sub1"));
+    assert_eq!(normalize_path(&entries[2].path), root_path.join("sub1"));
     assert_eq!(entries[2].depth, 1);
 }
 
-// NOTE: This is failing on windows as the symlink does not get resolved!
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn dir_read_should_support_returning_canonicalized_paths(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -1048,7 +1038,6 @@ async fn metadata_should_send_back_metadata_on_symlink_if_exists(#[future] clien
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(windows, ignore)]
 async fn metadata_should_include_canonicalized_path_if_flag_specified(
     #[future] client: Ctx<Client>,
 ) {
@@ -1077,7 +1066,7 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(
             readonly: false,
             ..
         } => assert_eq!(
-            path,
+            normalize_path(&path),
             dunce::canonicalize(file.path()).unwrap(),
             "Symlink canonicalized path does not match referenced file"
         ),
@@ -1123,7 +1112,9 @@ async fn metadata_should_resolve_file_type_of_symlink_if_flag_specified(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_set_readonly_flag_if_specified(#[future] client: Ctx<Client>) {
+async fn set_permissions_should_set_readonly_flag_if_specified_on_unix(
+    #[future] client: Ctx<Client>,
+) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
@@ -1255,7 +1246,7 @@ async fn set_permissions_should_set_readonly_flag_if_not_on_unix_platform(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ctx<Client>) {
+async fn set_permissions_should_not_recurse_if_option_false_on_unix(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
@@ -1330,7 +1321,7 @@ async fn set_permissions_should_not_recurse_if_option_false(#[future] client: Ct
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled(
+async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_symlinks_enabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1377,7 +1368,7 @@ async fn set_permissions_should_traverse_symlinks_while_recursing_if_following_s
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled(
+async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_following_symlinks_disabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1427,7 +1418,7 @@ async fn set_permissions_should_not_traverse_symlinks_while_recursing_if_followi
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
+async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1475,7 +1466,7 @@ async fn set_permissions_should_skip_symlinks_if_exclude_symlinks_enabled(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_support_recursive_if_option_specified(
+async fn set_permissions_should_support_recursive_if_option_specified_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -1530,7 +1521,7 @@ async fn set_permissions_should_support_recursive_if_option_specified(
 #[rstest]
 #[test(tokio::test)]
 #[cfg_attr(not(unix), ignore)]
-async fn set_permissions_should_support_following_symlinks_if_option_specified(
+async fn set_permissions_should_support_following_symlinks_if_option_specified_on_unix(
     #[future] client: Ctx<Client>,
 ) {
     let mut client = client.await;
@@ -2084,7 +2075,6 @@ async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<C
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(all(windows, ci), ignore)]
 async fn dir_read_should_support_explicit_depth_greater_than_one(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let root_dir = assert_fs::TempDir::new().unwrap();
@@ -2194,7 +2184,6 @@ async fn metadata_should_include_modified_timestamp(#[future] client: Ctx<Client
 
 #[rstest]
 #[test(tokio::test)]
-#[cfg_attr(not(unix), ignore)]
 async fn set_permissions_should_fail_if_path_does_not_exist(#[future] client: Ctx<Client>) {
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();

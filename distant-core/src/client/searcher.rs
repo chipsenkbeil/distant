@@ -95,7 +95,7 @@ impl Searcher {
             None => {
                 return Err(io::Error::other(
                     "Search query missing started confirmation",
-                ))
+                ));
             }
         };
 
@@ -195,11 +195,11 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::Client;
     use crate::protocol::{
         SearchQueryCondition, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
         SearchQuerySubmatch, SearchQueryTarget,
     };
-    use crate::Client;
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, Client) {
         let (t1, t2) = FramedTransport::pair(100);
@@ -722,9 +722,10 @@ mod tests {
         drop(transport);
 
         let err = search_task.await.unwrap().unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Search query missing started confirmation"));
+        assert!(
+            err.to_string()
+                .contains("Search query missing started confirmation")
+        );
     }
 
     #[test(tokio::test)]

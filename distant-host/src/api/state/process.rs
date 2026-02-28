@@ -258,10 +258,12 @@ mod tests {
 
         let result = channel.resize_pty(1, size).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal process task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal process task closed")
+        );
     }
 
     #[test(tokio::test)]
@@ -269,10 +271,12 @@ mod tests {
         let channel = ProcessChannel::default();
         let result = channel.send_stdin(1, b"data".to_vec()).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal process task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal process task closed")
+        );
     }
 
     #[test(tokio::test)]
@@ -280,10 +284,12 @@ mod tests {
         let channel = ProcessChannel::default();
         let result = channel.kill(1).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Internal process task closed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Internal process task closed")
+        );
     }
 
     // ---- ProcessState ----
@@ -380,10 +386,12 @@ mod tests {
 
         let result = state.resize_pty(99999, size).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No process found with id 99999"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No process found with id 99999")
+        );
     }
 
     #[test(tokio::test)]
@@ -391,10 +399,12 @@ mod tests {
         let state = ProcessState::new();
         let result = state.send_stdin(99999, b"data".to_vec()).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No process found with id 99999"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No process found with id 99999")
+        );
     }
 
     #[test(tokio::test)]
@@ -402,10 +412,12 @@ mod tests {
         let state = ProcessState::new();
         let result = state.kill(99999).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No process found with id 99999"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No process found with id 99999")
+        );
     }
 
     #[test(tokio::test)]
@@ -490,10 +502,12 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Command was empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Command was empty")
+        );
     }
 
     #[test(tokio::test)]

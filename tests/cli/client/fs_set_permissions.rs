@@ -88,7 +88,6 @@ fn should_fail_if_path_does_not_exist(ctx: ManagerCtx) {
         .failure();
 }
 
-#[cfg(unix)]
 #[rstest]
 #[test_log::test]
 fn should_support_readonly_keyword(ctx: ManagerCtx) {
@@ -110,7 +109,6 @@ fn should_support_readonly_keyword(ctx: ManagerCtx) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[test_log::test]
 fn should_support_notreadonly_keyword(ctx: ManagerCtx) {

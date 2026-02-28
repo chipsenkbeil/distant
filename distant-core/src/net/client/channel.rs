@@ -3,8 +3,8 @@ use std::sync::Weak;
 use std::{convert, fmt, io};
 
 use log::*;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 

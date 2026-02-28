@@ -181,10 +181,10 @@ impl ReconnectStrategy {
             }
 
             // Decrement remaining retries if we have a limit
-            if let Some(remaining) = retries_remaining.as_mut() {
-                if *remaining > 0 {
-                    *remaining -= 1;
-                }
+            if let Some(remaining) = retries_remaining.as_mut()
+                && *remaining > 0
+            {
+                *remaining -= 1;
             }
 
             // Sleep before making next attempt

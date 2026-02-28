@@ -4,7 +4,7 @@ use std::ops::RangeInclusive;
 use std::str::FromStr;
 
 use derive_more::Display;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 
 /// Represents some range of ports
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]

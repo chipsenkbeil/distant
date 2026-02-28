@@ -2,8 +2,8 @@ use std::io;
 use std::net::IpAddr;
 
 use crate::auth::Verifier;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::net::common::{PortRange, TcpListener, Version};
 use crate::net::server::{Server, ServerConfig, ServerHandler, TcpServerRef};

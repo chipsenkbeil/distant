@@ -503,11 +503,11 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use crate::Client;
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use crate::protocol::{
         self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, SystemInfo, Version,
     };
-    use crate::Client;
     use test_log::test;
 
     use super::*;

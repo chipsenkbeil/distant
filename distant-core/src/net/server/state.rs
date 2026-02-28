@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::net::common::{Backup, ConnectionId, Keychain};

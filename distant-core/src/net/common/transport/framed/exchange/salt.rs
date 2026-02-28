@@ -3,8 +3,8 @@ use std::ops::BitXor;
 use std::str::FromStr;
 use std::{fmt, io};
 
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Friendly wrapper around a 32-byte array representing a salt

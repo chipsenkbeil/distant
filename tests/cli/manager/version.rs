@@ -2,6 +2,8 @@
 //!
 //! Verifies the version output matches the compile-time `CARGO_PKG_VERSION`.
 
+use std::process::Stdio;
+
 use rstest::*;
 
 use distant_test_harness::manager::*;
@@ -17,19 +19,12 @@ fn should_output_version(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-#[ignore = "manager version --format json hangs waiting for stdin in test environment"]
 fn should_output_version_in_json_format(ctx: ManagerCtx) {
-    let mut child = ctx
+    let output = ctx
         .new_std_cmd(["manager", "version", "--format", "json"])
-        .spawn()
-        .expect("Failed to spawn manager version --format json");
-
-    // Close stdin to prevent the command from waiting for input
-    drop(child.stdin.take());
-
-    let output = child
-        .wait_with_output()
-        .expect("Failed to wait for manager version");
+        .stdin(Stdio::null())
+        .output()
+        .expect("Failed to run manager version --format json");
 
     assert!(
         output.status.success(),

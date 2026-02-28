@@ -6,7 +6,7 @@ use crate::net::common::{Request, Response};
 use log::*;
 use tokio::io;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::client::Channel;
@@ -110,7 +110,7 @@ impl RemoteCommand {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Got response type of {}", x.as_ref()),
-                        ))
+                        ));
                     }
                     protocol::Msg::Batch(_) => {
                         return Err(io::Error::new(
@@ -594,8 +594,8 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::protocol::{Error, ErrorKind};
     use crate::Client;
+    use crate::protocol::{Error, ErrorKind};
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, Client) {
         let (t1, t2) = FramedTransport::pair(100);

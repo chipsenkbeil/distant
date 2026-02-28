@@ -610,7 +610,9 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             network,
         } => {
             debug!("Connecting to manager");
-            let mut client = connect_to_manager(format, network, &ui).await?;
+            // Always use Shell auth (prompt-based) for the connection — the format
+            // flag only controls output formatting, not the auth protocol.
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =

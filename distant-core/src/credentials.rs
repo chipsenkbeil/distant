@@ -57,13 +57,13 @@ impl FromStr for Credentials {
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))?;
 
         // Can be scheme-less or explicitly distant
-        if let Some(scheme) = destination.scheme.as_deref() {
-            if scheme != SCHEME {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Unexpected scheme: {scheme}"),
-                ));
-            }
+        if let Some(scheme) = destination.scheme.as_deref()
+            && scheme != SCHEME
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unexpected scheme: {scheme}"),
+            ));
         }
 
         Ok(Self {
