@@ -189,12 +189,15 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
         let contents = std::fs::read_to_string(&marker)
             .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
+        let contents_path =
+            distant_test_harness::utils::normalize_path(std::path::Path::new(contents.trim()));
+        let contents_str = contents_path.to_string_lossy();
         let canonical = temp.path().canonicalize().unwrap();
         let canonical_str = canonical.to_str().unwrap();
         let expected = canonical_str.strip_prefix(r"\\?\").unwrap_or(canonical_str);
         assert!(
-            contents.contains(expected),
-            "Expected output to contain '{expected}', got: {contents:?}"
+            contents_str.contains(expected),
+            "Expected output to contain '{expected}', got: {contents_str:?}"
         );
     }
 }

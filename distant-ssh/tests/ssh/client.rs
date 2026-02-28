@@ -28,19 +28,7 @@ fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
     }
 }
 
-/// On Windows, resolve 8.3 short names (e.g. `RUNNER~1`) to long names via
-/// `dunce::canonicalize`. This works because tests run client+server on the
-/// same machine, so the path returned by the SFTP server is valid locally.
-/// On non-Windows, this is an identity function.
-#[cfg(windows)]
-fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-#[cfg(not(windows))]
-fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.to_path_buf()
-}
+use distant_test_harness::utils::normalize_path;
 
 static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
 
