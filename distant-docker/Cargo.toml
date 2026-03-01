@@ -1,0 +1,43 @@
+[package]
+name = "distant-docker"
+description = "Library to enable Docker container interaction for use with distant sessions"
+categories = ["network-programming"]
+version = "0.20.0"
+authors = ["Chip Senkbeil <chip@senkbeil.org>"]
+edition = "2024"
+homepage = "https://github.com/chipsenkbeil/distant"
+repository = "https://github.com/chipsenkbeil/distant"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+
+[dependencies]
+async-once-cell = "0.5.2"
+bollard = "0.20"
+bytes = "1"
+derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
+distant-core = { version = "=0.20.0", path = "../distant-core" }
+futures = "0.3.28"
+log = "0.4.18"
+rand = { version = "0.8.5", features = ["getrandom"] }
+semver = "1"
+tar = "0.4"
+tokio = { version = "1.28.2", features = ["full"] }
+
+# Optional serde support for data structures
+serde = { version = "1.0.163", features = ["derive"], optional = true }
+
+[dev-dependencies]
+anyhow = "1.0.71"
+assert_fs = "1.0.13"
+distant-test-harness = { path = "../distant-test-harness", features = ["docker"] }
+env_logger = "0.10.0"
+once_cell = "1.17.2"
+predicates = "3.0.3"
+rstest = "0.17.0"
+test-log = "0.2.11"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }

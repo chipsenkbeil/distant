@@ -128,6 +128,12 @@ jobs:
       - name: Ensure /run/sshd exists on Unix
         run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
+      - name: Pre-pull Docker test image (Linux)
+        run: docker pull ubuntu:22.04
+        if: matrix.os == 'ubuntu-latest'
+      - name: Pre-pull Docker test image (Windows)
+        run: docker pull mcr.microsoft.com/windows/nanoserver:ltsc2025
+        if: matrix.os == 'windows-latest'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace
       - name: Run all doc tests (all features)

@@ -4,14 +4,21 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[features]
+default = []
+docker = ["dep:distant-docker", "dep:bollard"]
+
 [dependencies]
 distant-core = { path = "../distant-core" }
 distant-host = { path = "../distant-host" }
 distant-ssh = { path = "../distant-ssh", default-features = false, features = ["serde"] }
+distant-docker = { path = "../distant-docker", optional = true }
 anyhow = "1"
 assert_cmd = "2"
 assert_fs = "1"
+bollard = { version = "0.20", optional = true }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "deref", "deref_mut"] }
+futures = "0.3.28"
 indoc = "2"
 log = "0.4"
 once_cell = "1"

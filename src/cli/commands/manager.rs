@@ -38,10 +38,14 @@ fn build_plugin_map(
     let mut map: HashMap<String, Arc<dyn Plugin>> = HashMap::new();
 
     // Built-in plugins
-    let builtins: Vec<Arc<dyn Plugin>> = vec![
+    #[allow(unused_mut)]
+    let mut builtins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(handlers::DistantPlugin::new()),
         Arc::new(handlers::SshPlugin),
     ];
+
+    #[cfg(feature = "docker")]
+    builtins.push(Arc::new(handlers::DockerPlugin));
 
     // External plugins from config file + CLI flags
     let external = plugins_config::load_external_plugins(extra_plugins)?;
@@ -362,11 +366,11 @@ mod tests {
     #[test]
     fn build_plugin_map_with_multiple_extra_plugins() {
         let extras = vec![
-            ("docker".to_string(), PathBuf::from("/bin/docker-plugin")),
+            ("custom".to_string(), PathBuf::from("/bin/custom-plugin")),
             ("k8s".to_string(), PathBuf::from("/bin/k8s-plugin")),
         ];
         let map = build_plugin_map(extras).unwrap();
-        assert!(map.contains_key("docker"));
+        assert!(map.contains_key("custom"));
         assert!(map.contains_key("k8s"));
         assert!(map.contains_key("distant"));
         assert!(map.contains_key("ssh"));

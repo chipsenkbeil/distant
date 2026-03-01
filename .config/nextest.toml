@@ -1,6 +1,9 @@
 [test-groups.ssh-integration]
 max-threads = 4
 
+[test-groups.docker-integration]
+max-threads = 2
+
 [profile.ci]
 fail-fast = false
 retries = 4
@@ -11,3 +14,7 @@ final-status-level = "fail"
 [[profile.ci.overrides]]
 filter = 'binary_id(distant-ssh::lib)'
 test-group = 'ssh-integration'
+
+[[profile.ci.overrides]]
+filter = 'binary_id(distant-docker::lib)'
+test-group = 'docker-integration'

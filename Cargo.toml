@@ -15,6 +15,7 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
     "distant-core",
+    "distant-docker",
     "distant-host",
     "distant-ssh",
     "distant-test-harness",
@@ -31,6 +32,7 @@ strip = true
 
 [features]
 default = []
+docker = ["dep:distant-docker"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -64,6 +66,9 @@ typed-path = "0.3.2"
 which = "4.4.0"
 winsplit = "0.1.0"
 whoami = "1.4.0"
+
+# Optional Docker backend
+distant-docker = { version = "=0.20.0", path = "distant-docker", optional = true }
 
 # Native SSH functionality (always enabled)
 distant-ssh = { version = "=0.20.0", path = "distant-ssh", default-features = false, features = ["serde"] }
