@@ -60,6 +60,9 @@ To move beyond basic code generation, use the following patterns:
 
 ## Memory Bank Maintenance (`CLAUDE.md` aka `AGENTS.md`)
 
+> **Note:** `CLAUDE.md` is a symlink to `AGENTS.md`. Edits to either file
+> automatically apply to both — no copying needed.
+
 Prevent *context drift* by treating project documentation as a living journal:
 
 1. **The Checkpoint Habit:** At the end of every session, run: *"Summarize
@@ -80,6 +83,11 @@ Prevent *context drift* by treating project documentation as a living journal:
 
 Decisions we make that are considered shortcuts that we need to come back to
 later to resolve will be placed here.
+
+1. `win_service.rs` has `#![allow(dead_code)]` — Windows service integration
+   may be incomplete/untested.
+2. Windows CI SSH tests have intermittent auth failures from resource
+   contention — mitigated with nextest retries (4x), not root-caused.
 
 ## Tooling & Command Reference
 
@@ -151,6 +159,10 @@ cargo install --locked cargo-nextest
 cargo nextest run --profile ci --all-features --workspace --all-targets
 ```
 
+The nextest configuration lives in `.config/nextest.toml` and defines SSH test
+throttling (`max-threads = 4` for `distant-ssh` tests), a retry policy (4
+retries), and slow-timeout settings (60s period, terminate after 3 periods).
+
 ## Coding Style & Standards
 
 To ensure the AI produces code that "feels right" we define the following
@@ -169,7 +181,16 @@ standards.
 
 Keep a list of patterns to **avoid**:
 
-1. TODO
+1. Needless borrows in `#[cfg(windows)]` code — use `["arg1", "arg2"]` not
+   `&["arg1", "arg2"]` with `.args()`, and `format!(...)` not `&format!(...)`
+   with `.arg()`. These cause clippy warnings only visible in Windows CI.
+2. Always verify Windows CI clippy output — `#[cfg(windows)]` blocks are
+   invisible to local macOS clippy runs.
+3. Don't spawn ssh-agent per-test — use direct key file loading to avoid fork
+   exhaustion.
+4. Don't run mass parallel SSH integration tests without throttling — use
+   nextest `test-groups` with `max-threads` (configured in
+   `.config/nextest.toml`).
 
 ### Format standards
 
@@ -211,7 +232,7 @@ pub enum CliError {
 }
 ```
 
-### Error handling
+### Derive Macros
 
 Use derive macros extensively:
 
