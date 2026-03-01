@@ -60,6 +60,17 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Cli
 
 #[rstest]
 #[test(tokio::test)]
+async fn read_file_text_should_send_error_if_fails_to_read_file(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+
+    let temp = assert_fs::TempDir::new().unwrap();
+    let path = temp.child("missing-file").path().to_path_buf();
+
+    let _ = client.read_file_text(path).await.unwrap_err();
+}
+
+#[rstest]
+#[test(tokio::test)]
 async fn append_file_text_should_send_error_if_fails_to_create_file(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
@@ -667,6 +678,25 @@ async fn copy_should_send_error_on_failure(#[future] client: Ctx<Client>) {
 
     // Also, verify that destination does not exist
     dst.assert(predicate::path::missing());
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn copy_should_support_copying_a_single_file(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+    let temp = assert_fs::TempDir::new().unwrap();
+    let src = temp.child("src");
+    src.write_str("some text").unwrap();
+    let dst = temp.child("dst");
+
+    client
+        .copy(src.path().to_path_buf(), dst.path().to_path_buf())
+        .await
+        .unwrap();
+
+    // Verify that we still have source and that destination has source's contents
+    src.assert(predicate::path::is_file());
+    dst.assert(predicate::path::eq_file(src.path()));
 }
 
 #[rstest]
