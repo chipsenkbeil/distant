@@ -454,7 +454,7 @@ pub struct SearchTools {
 impl SearchTools {
     /// Returns true if at least basic search capability is available.
     pub fn has_any(&self) -> bool {
-        self.has_rg || self.has_find || self.has_findstr
+        self.has_rg || self.has_grep || self.has_find || self.has_findstr
     }
 }
 
@@ -488,8 +488,12 @@ pub async fn probe_search_tools(
         }
         DockerFamily::Windows => {
             // Nanoserver lacks `which` and `where.exe`, so probe by direct invocation.
+            // `findstr /?` prints help text but exits with code 1 on nanoserver,
+            // so we check for stdout output rather than exit code. If findstr is
+            // not found, stdout will be empty (the "not recognized" message goes
+            // to stderr).
             if let Ok(output) = execute_output(client, container, &["findstr", "/?"], None).await {
-                tools.has_findstr = output.success();
+                tools.has_findstr = !output.stdout.is_empty();
             }
         }
     }

@@ -132,6 +132,8 @@ where
             let stderr_reply = reply.clone_reply();
             let exit_reply = reply;
             let msg_id = id;
+            let exit_client = client.clone();
+            let exit_exec_id = exec_id.clone();
 
             // Reader task: forwards stdout/stderr to the client
             tokio::spawn(async move {
@@ -157,11 +159,25 @@ where
                     }
                 }
 
-                // Process has exited
+                // Retrieve the real exit code from the Docker exec API
+                let (success, code) = match exit_client.inspect_exec(&exit_exec_id).await {
+                    Ok(inspect) => {
+                        let exit_code = inspect.exit_code.unwrap_or(-1);
+                        (exit_code == 0, Some(exit_code as i32))
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to inspect exec {} for process {}: {}",
+                            exit_exec_id, msg_id, e
+                        );
+                        (false, None)
+                    }
+                };
+
                 let _ = exit_reply.send(Response::ProcDone {
                     id: msg_id,
-                    success: true,
-                    code: None,
+                    success,
+                    code,
                 });
 
                 cleanup(msg_id).await;
@@ -268,18 +284,6 @@ where
 
     let exec_id = created.id.clone();
 
-    // Resize the PTY to the requested size before starting
-    client
-        .resize_exec(
-            &exec_id,
-            ResizeExecOptions {
-                height: size.rows,
-                width: size.cols,
-            },
-        )
-        .await
-        .map_err(|e| io::Error::other(format!("Failed to resize PTY: {}", e)))?;
-
     let start_result = client
         .start_exec(
             &created.id,
@@ -290,6 +294,20 @@ where
         )
         .await
         .map_err(|e| io::Error::other(format!("Failed to start PTY process: {}", e)))?;
+
+    // Resize the PTY after starting — the Docker API requires the exec to be
+    // running before resize_exec is valid. This is best-effort; if it fails,
+    // the writer task's resize handler will correct the size on the next
+    // client-initiated resize.
+    let _ = client
+        .resize_exec(
+            &exec_id,
+            ResizeExecOptions {
+                height: size.rows,
+                width: size.cols,
+            },
+        )
+        .await;
 
     let id: ProcessId = rand::random();
 
@@ -305,6 +323,8 @@ where
             let stdout_reply = reply.clone_reply();
             let exit_reply = reply;
             let msg_id = id;
+            let exit_client = client.clone();
+            let exit_exec_id = exec_id.clone();
 
             // Reader task: PTY combines stdout+stderr into one stream
             tokio::spawn(async move {
@@ -325,10 +345,25 @@ where
                     }
                 }
 
+                // Retrieve the real exit code from the Docker exec API
+                let (success, code) = match exit_client.inspect_exec(&exit_exec_id).await {
+                    Ok(inspect) => {
+                        let exit_code = inspect.exit_code.unwrap_or(-1);
+                        (exit_code == 0, Some(exit_code as i32))
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to inspect exec {} for PTY process {}: {}",
+                            exit_exec_id, msg_id, e
+                        );
+                        (false, None)
+                    }
+                };
+
                 let _ = exit_reply.send(Response::ProcDone {
                     id: msg_id,
-                    success: true,
-                    code: None,
+                    success,
+                    code,
                 });
 
                 cleanup(msg_id).await;

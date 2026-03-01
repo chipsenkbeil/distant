@@ -262,6 +262,34 @@ pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
     matches
 }
 
+/// Check if a string matches a search query condition.
+///
+/// Used by the tar-based search fallback on Windows nanoserver, where exec-based
+/// search tools (`findstr`, `dir`) cannot access paths created via the Docker tar API.
+pub fn condition_matches(condition: &SearchQueryCondition, text: &str) -> bool {
+    match condition {
+        SearchQueryCondition::Contains { value } => {
+            text.to_lowercase().contains(&value.to_lowercase())
+        }
+        SearchQueryCondition::Equals { value } => text.eq_ignore_ascii_case(value),
+        SearchQueryCondition::StartsWith { value } => {
+            text.to_lowercase().starts_with(&value.to_lowercase())
+        }
+        SearchQueryCondition::EndsWith { value } => {
+            text.to_lowercase().ends_with(&value.to_lowercase())
+        }
+        SearchQueryCondition::Regex { .. } => {
+            // Regex matching is not supported in the tar-based fallback.
+            // On Windows nanoserver, Regex conditions are already rejected
+            // by `build_findstr_pattern` before reaching this path.
+            false
+        }
+        SearchQueryCondition::Or { value } => {
+            value.iter().any(|cond| condition_matches(cond, text))
+        }
+    }
+}
+
 /// Parse path search output into search matches.
 pub fn parse_path_matches(output: &str) -> Vec<SearchQueryMatch> {
     output
