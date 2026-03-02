@@ -82,7 +82,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { rust: stable, os: windows-2022, target: x86_64-pc-windows-msvc }
           - { rust: stable, os: macos-latest }
           - { rust: stable, os: ubuntu-latest }
           - { rust: 1.88.0, os: ubuntu-latest }
@@ -107,14 +107,14 @@ jobs:
         run: |
           # Windows Server 2025 has OpenSSH installed by default
           # We don't start the system sshd service as our tests spawn their own sshd instances
-          
+
           # Ensure ssh-agent is available for key management
           Set-Service ssh-agent -StartupType Automatic
           Start-Service ssh-agent
-          
+
           # Configure firewall for SSH tests on high ports used by tests
           New-NetFirewallRule -Name sshd-tests -DisplayName 'OpenSSH Tests (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 49152-65535
-          
+
           # Ensure we have proper permissions for file operations
           # Grant current user SeCreateSymbolicLinkPrivilege if needed for tests
       - name: Extend Windows retry count to be more resilient
@@ -128,6 +128,12 @@ jobs:
       - name: Ensure /run/sshd exists on Unix
         run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
+      - name: Pre-pull Docker test image (Linux)
+        run: docker pull ubuntu:22.04
+        if: matrix.os == 'ubuntu-latest'
+      - name: Pre-pull Docker test image (Windows)
+        run: docker pull mcr.microsoft.com/windows/nanoserver:ltsc2025
+        if: matrix.os == 'windows-latest'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace
       - name: Run all doc tests (all features)

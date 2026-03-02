@@ -513,6 +513,89 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distan
     Ssh::connect(host, opts).await
 }
 
+/// Plugin for connecting to and launching Docker containers.
+///
+/// Handles the `"docker"` scheme. Connect attaches to an existing running container.
+/// Launch creates a new container from an image and connects to it.
+#[cfg(feature = "docker")]
+pub struct DockerPlugin;
+
+#[cfg(feature = "docker")]
+impl Plugin for DockerPlugin {
+    fn name(&self) -> &str {
+        "docker"
+    }
+
+    fn connect<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        _authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling docker connect of {destination} with options '{options}'");
+            let container = destination.host.to_string();
+            let docker_opts = parse_docker_opts(options);
+            let docker = distant_docker::Docker::connect(&container, docker_opts).await?;
+            Ok(docker.into_distant_client().await?.into_untyped_client())
+        })
+    }
+
+    fn launch<'a>(
+        &'a self,
+        destination: &'a Destination,
+        options: &'a Map,
+        _authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
+        Box::pin(async move {
+            debug!("Handling docker launch of {destination} with options '{options}'");
+            let image = destination.host.to_string();
+            let docker_opts = parse_docker_opts(options);
+
+            let auto_remove = options
+                .get("auto_remove")
+                .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
+
+            let launch_opts = distant_docker::LaunchOpts { image, auto_remove };
+
+            let docker = distant_docker::Docker::launch(launch_opts, docker_opts).await?;
+            let container = docker.container().to_string();
+
+            // Return a destination pointing to the launched container
+            Ok(Destination {
+                scheme: Some("docker".to_string()),
+                host: container.into(),
+                port: None,
+                username: None,
+                password: None,
+            })
+        })
+    }
+}
+
+/// Parse Docker-specific options from the options map.
+#[cfg(feature = "docker")]
+fn parse_docker_opts(options: &Map) -> distant_docker::DockerOpts {
+    distant_docker::DockerOpts {
+        docker_host: options
+            .get("docker_host")
+            .or_else(|| options.get("docker.host"))
+            .cloned(),
+        user: options
+            .get("user")
+            .or_else(|| options.get("docker.user"))
+            .cloned(),
+        working_dir: options
+            .get("working_dir")
+            .or_else(|| options.get("docker.working_dir"))
+            .cloned(),
+        shell: options
+            .get("shell")
+            .or_else(|| options.get("docker.shell"))
+            .cloned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Tests for handler helpers (`missing`/`invalid`), plugin types, SSH option

@@ -642,7 +642,12 @@ impl Api for SshApi {
             let dst_str = dst.to_string_lossy();
 
             let command = if family == SshFamily::Windows {
-                format!("xcopy /E /I /Y \"{}\" \"{}\"", src_str, dst_str)
+                // Use `copy /Y` for files, `xcopy /E /I /Y` for directories.
+                // `if exist "src\*"` returns true only for directories.
+                format!(
+                    "if exist \"{}\\*\" (xcopy /E /I /Y \"{}\" \"{}\") else (copy /Y \"{}\" \"{}\")",
+                    src_str, src_str, dst_str, src_str, dst_str
+                )
             } else {
                 format!("cp -r \"{}\" \"{}\"", src_str, dst_str)
             };
