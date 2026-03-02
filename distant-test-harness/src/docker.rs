@@ -3,11 +3,17 @@
 //! Provides [`DockerContainer`] for managing test container lifecycles and rstest fixtures
 //! for obtaining [`Client`] instances connected to Docker containers.
 
+use std::process::{Child, Command as StdCommand, Stdio};
+use std::time::Duration;
+
+use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
 use distant_core::Client;
 use distant_docker::{Docker, DockerClient, DockerOpts};
 use log::*;
 use rstest::*;
+
+use crate::manager::bin_path;
 
 /// Checks whether the Docker daemon is available by pinging it.
 pub async fn docker_available() -> bool {
@@ -164,4 +170,184 @@ fn random_suffix() -> String {
     let mut rng = rand::thread_rng();
     let bytes: [u8; 4] = rng.r#gen();
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn random_log_file(prefix: &str) -> std::path::PathBuf {
+    let log_dir = std::env::temp_dir().join("distant");
+    std::fs::create_dir_all(&log_dir).ok();
+    log_dir.join(format!("docker-{}.{}.log", prefix, rand::random::<u16>()))
+}
+
+/// CLI test context that starts a manager and connects to a Docker container.
+///
+/// Spawns a `distant manager listen`, creates a Docker container, then runs
+/// `distant connect docker://{container}` to register the connection with the manager.
+/// Tests can then issue CLI commands against the Docker backend.
+pub struct DockerManagerCtx {
+    manager: Child,
+    container: DockerContainer,
+    socket_or_pipe: String,
+}
+
+impl DockerManagerCtx {
+    /// Creates the context. Returns `None` if Docker is unavailable.
+    pub async fn start() -> Option<Self> {
+        let container = DockerContainer::new().await?;
+
+        // Start the manager
+        let mut manager_cmd = StdCommand::new(bin_path());
+        manager_cmd
+            .arg("manager")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let socket_or_pipe = if cfg!(windows) {
+            format!("distant_docker_test_{}", rand::random::<usize>())
+        } else {
+            std::env::temp_dir()
+                .join(format!(
+                    "distant_docker_test_{}.sock",
+                    rand::random::<usize>()
+                ))
+                .to_string_lossy()
+                .to_string()
+        };
+
+        if cfg!(windows) {
+            manager_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            manager_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        eprintln!("DockerManagerCtx: Spawning manager cmd: {manager_cmd:?}");
+        let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
+        std::thread::sleep(Duration::from_millis(50));
+        if let Ok(Some(status)) = manager.try_wait() {
+            panic!("Manager exited ({}): {:?}", status.success(), status.code());
+        }
+
+        // Connect to the Docker container via the manager
+        let destination = format!("docker://{}", container.name);
+        let mut connect_cmd = StdCommand::new(bin_path());
+        connect_cmd
+            .arg("connect")
+            .arg("--log-file")
+            .arg(random_log_file("connect"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        if cfg!(windows) {
+            connect_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            connect_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        connect_cmd.arg(&destination);
+
+        eprintln!("DockerManagerCtx: Connecting to {destination}");
+        let output = connect_cmd.output().expect("Failed to run connect command");
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("DockerManagerCtx: Connect failed: {stderr}");
+            let _ = manager.kill();
+            return None;
+        }
+        eprintln!("DockerManagerCtx: Connected. Proceeding with test...");
+
+        Some(Self {
+            manager,
+            container,
+            socket_or_pipe,
+        })
+    }
+
+    /// Returns the name of the Docker container.
+    pub fn container_name(&self) -> &str {
+        &self.container.name
+    }
+
+    /// Produces a new test command configured with subcommands.
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
+        let mut cmd = Command::new(bin_path());
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd
+    }
+
+    /// Produces a new [`StdCommand`] configured with subcommands.
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
+        let mut cmd = StdCommand::new(bin_path());
+
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        cmd
+    }
+}
+
+impl Drop for DockerManagerCtx {
+    fn drop(&mut self) {
+        let _ = self.manager.kill();
+        let _ = self.manager.wait();
+        // container cleanup handled by DockerContainer::drop
+    }
+}
+
+/// rstest fixture that provides an [`Option<DockerManagerCtx>`].
+///
+/// Returns `None` if Docker is not available.
+#[fixture]
+pub fn docker_ctx() -> Option<DockerManagerCtx> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create runtime");
+    rt.block_on(DockerManagerCtx::start())
 }

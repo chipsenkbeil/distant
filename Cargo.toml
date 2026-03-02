@@ -32,7 +32,7 @@ strip = true
 
 [features]
 default = []
-docker = ["dep:distant-docker"]
+docker = ["dep:distant-docker", "distant-test-harness/docker"]
 
 [dependencies]
 anyhow = "1.0.71"
