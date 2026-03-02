@@ -30,8 +30,11 @@ use ssh2_config_rs::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
+mod plugin;
 mod process;
 mod utils;
+
+pub use plugin::SshPlugin;
 
 use api::SshApi;
 

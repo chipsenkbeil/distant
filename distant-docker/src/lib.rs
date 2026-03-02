@@ -164,9 +164,12 @@ impl DockerClient {
 }
 
 mod api;
+mod plugin;
 mod process;
 pub(crate) mod search;
 pub mod utils;
+
+pub use plugin::DockerPlugin;
 
 use api::DockerApi;
 

@@ -7,7 +7,6 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use distant_core::Plugin;
-use distant_core::auth::msg::*;
 use distant_core::auth::{
     AuthHandler, Authenticator, DynAuthHandler, ProxyAuthHandler, SingleAuthHandler,
     StaticKeyAuthMethodHandler,
@@ -18,7 +17,7 @@ use distant_core::protocol::PROTOCOL_VERSION;
 use log::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 
 use crate::options::{BindAddress, ClientLaunchConfig};
 
@@ -319,299 +318,15 @@ impl Plugin for DistantPlugin {
     }
 }
 
-/// Plugin for launching and connecting via SSH.
-///
-/// Handles the `"ssh"` scheme. Launch uses SSH to start a distant server on the remote host.
-/// Connect establishes a direct SSH connection and wraps it as a distant client.
-pub struct SshPlugin;
-
-impl Plugin for SshPlugin {
-    fn name(&self) -> &str {
-        "ssh"
-    }
-
-    fn connect<'a>(
-        &'a self,
-        raw_destination: &'a str,
-        options: &'a Map,
-        authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
-        Box::pin(async move {
-            let destination = distant_core::parse_destination(raw_destination)?;
-            debug!("Handling connect of {destination} with options '{options}'");
-            let mut ssh = load_ssh(&destination, options).await?;
-            let handler = AuthClientSshAuthHandler::new(authenticator);
-            ssh.authenticate(handler).await?;
-            Ok(ssh.into_distant_client().await?.into_untyped_client())
-        })
-    }
-
-    fn launch<'a>(
-        &'a self,
-        raw_destination: &'a str,
-        options: &'a Map,
-        authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
-        Box::pin(async move {
-            let destination = distant_core::parse_destination(raw_destination)?;
-            debug!("Handling launch of {destination} with options '{options}'");
-            let config = ClientLaunchConfig::from(options.clone());
-
-            use distant_ssh::LaunchOpts;
-            let mut ssh = load_ssh(&destination, options).await?;
-            let handler = AuthClientSshAuthHandler::new(authenticator);
-            ssh.authenticate(handler).await?;
-            let opts = {
-                let opts = LaunchOpts::default();
-                LaunchOpts {
-                    binary: config.distant.bin.unwrap_or(opts.binary),
-                    args: config.distant.args.unwrap_or(opts.args),
-                    timeout: match options.get("timeout") {
-                        Some(s) => std::time::Duration::from_millis(
-                            s.parse::<u64>().map_err(|_| invalid("timeout"))?,
-                        ),
-                        None => opts.timeout,
-                    },
-                }
-            };
-
-            debug!("Launching via ssh: {opts:?}");
-            ssh.launch(opts).await?.try_to_destination()
-        })
-    }
-}
-
-struct AuthClientSshAuthHandler<'a>(Mutex<&'a mut dyn Authenticator>);
-
-impl<'a> AuthClientSshAuthHandler<'a> {
-    pub fn new(authenticator: &'a mut dyn Authenticator) -> Self {
-        Self(Mutex::new(authenticator))
-    }
-}
-
-impl<'a> distant_ssh::SshAuthHandler for AuthClientSshAuthHandler<'a> {
-    async fn on_authenticate(&self, event: distant_ssh::SshAuthEvent) -> io::Result<Vec<String>> {
-        use std::collections::HashMap;
-        let mut options = HashMap::new();
-        let mut questions = Vec::new();
-
-        for prompt in event.prompts {
-            let mut options = HashMap::new();
-            options.insert("echo".to_string(), prompt.echo.to_string());
-            questions.push(Question {
-                label: "ssh-prompt".to_string(),
-                text: prompt.prompt,
-                options,
-            });
-        }
-
-        options.insert("instructions".to_string(), event.instructions);
-        options.insert("username".to_string(), event.username);
-
-        Ok(self
-            .0
-            .lock()
-            .await
-            .challenge(Challenge { questions, options })
-            .await?
-            .answers)
-    }
-
-    async fn on_verify_host<'b>(&'b self, host: &'b str) -> io::Result<bool> {
-        Ok(self
-            .0
-            .lock()
-            .await
-            .verify(Verification {
-                kind: VerificationKind::Host,
-                text: host.to_string(),
-            })
-            .await?
-            .valid)
-    }
-
-    async fn on_banner<'b>(&'b self, text: &'b str) {
-        if let Err(x) = self
-            .0
-            .lock()
-            .await
-            .info(Info {
-                text: text.to_string(),
-            })
-            .await
-        {
-            error!("ssh on_banner failed: {}", x);
-        }
-    }
-
-    async fn on_error<'b>(&'b self, text: &'b str) {
-        if let Err(x) = self
-            .0
-            .lock()
-            .await
-            .error(Error {
-                kind: ErrorKind::Fatal,
-                text: text.to_string(),
-            })
-            .await
-        {
-            error!("ssh on_error failed: {}", x);
-        }
-    }
-}
-
-fn parse_ssh_opts(destination: &Destination, options: &Map) -> io::Result<distant_ssh::SshOpts> {
-    use distant_ssh::SshOpts;
-
-    Ok(SshOpts {
-        identity_files: options
-            .get("identity_files")
-            .or_else(|| options.get("ssh.identity_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default(),
-
-        identities_only: match options
-            .get("identities_only")
-            .or_else(|| options.get("ssh.identities_only"))
-        {
-            Some(s) => Some(s.parse().map_err(|_| invalid("identities_only"))?),
-            None => None,
-        },
-
-        port: destination.port,
-
-        proxy_command: options
-            .get("proxy_command")
-            .or_else(|| options.get("ssh.proxy_command"))
-            .cloned(),
-
-        user: destination.username.clone(),
-
-        user_known_hosts_files: options
-            .get("user_known_hosts_files")
-            .or_else(|| options.get("ssh.user_known_hosts_files"))
-            .map(|s| s.split(',').map(|s| PathBuf::from(s.trim())).collect())
-            .unwrap_or_default(),
-
-        verbose: match options
-            .get("verbose")
-            .or_else(|| options.get("ssh.verbose"))
-            .or_else(|| options.get("client.verbose"))
-        {
-            Some(s) => s.parse().map_err(|_| invalid("verbose"))?,
-            None => false,
-        },
-
-        ..Default::default()
-    })
-}
-
-async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<distant_ssh::Ssh> {
-    trace!("load_ssh({destination}, {options})");
-    use distant_ssh::Ssh;
-
-    let host = destination.host.to_string();
-    let opts = parse_ssh_opts(destination, options)?;
-
-    debug!("Connecting to {host} via ssh with {opts:?}");
-    Ssh::connect(host, opts).await
-}
-
-/// Plugin for connecting to and launching Docker containers.
-///
-/// Handles the `"docker"` scheme. Connect attaches to an existing running container.
-/// Launch creates a new container from an image and connects to it.
-#[cfg(feature = "docker")]
-pub struct DockerPlugin;
-
-#[cfg(feature = "docker")]
-impl Plugin for DockerPlugin {
-    fn name(&self) -> &str {
-        "docker"
-    }
-
-    fn connect<'a>(
-        &'a self,
-        raw_destination: &'a str,
-        options: &'a Map,
-        _authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
-        Box::pin(async move {
-            debug!("Handling docker connect of {raw_destination} with options '{options}'");
-            let container = raw_destination
-                .split_once("://")
-                .map(|(_, rest)| rest)
-                .unwrap_or(raw_destination)
-                .to_string();
-            let docker_opts = parse_docker_opts(options);
-            let docker = distant_docker::Docker::connect(&container, docker_opts).await?;
-            Ok(docker.into_distant_client().await?.into_untyped_client())
-        })
-    }
-
-    fn launch<'a>(
-        &'a self,
-        raw_destination: &'a str,
-        options: &'a Map,
-        _authenticator: &'a mut dyn Authenticator,
-    ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
-        Box::pin(async move {
-            debug!("Handling docker launch of {raw_destination} with options '{options}'");
-            let image = raw_destination
-                .split_once("://")
-                .map(|(_, rest)| rest)
-                .unwrap_or(raw_destination)
-                .to_string();
-            let docker_opts = parse_docker_opts(options);
-
-            let auto_remove = options
-                .get("auto_remove")
-                .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1");
-
-            let launch_opts = distant_docker::LaunchOpts { image, auto_remove };
-
-            let docker = distant_docker::Docker::launch(launch_opts, docker_opts).await?;
-            let container = docker.container().to_string();
-
-            // Return a destination pointing to the launched container
-            Ok(Destination {
-                scheme: Some("docker".to_string()),
-                host: container.into(),
-                port: None,
-                username: None,
-                password: None,
-            })
-        })
-    }
-}
-
-/// Parse Docker-specific options from the options map.
-#[cfg(feature = "docker")]
-fn parse_docker_opts(options: &Map) -> distant_docker::DockerOpts {
-    distant_docker::DockerOpts {
-        docker_host: options
-            .get("docker_host")
-            .or_else(|| options.get("docker.host"))
-            .cloned(),
-        user: options
-            .get("user")
-            .or_else(|| options.get("docker.user"))
-            .cloned(),
-        working_dir: options
-            .get("working_dir")
-            .or_else(|| options.get("docker.working_dir"))
-            .cloned(),
-        shell: options
-            .get("shell")
-            .or_else(|| options.get("docker.shell"))
-            .cloned(),
-    }
-}
+// SshPlugin is defined in the distant-ssh crate and re-exported from there.
+// DockerPlugin is defined in the distant-docker crate and re-exported from there.
 
 #[cfg(test)]
 mod tests {
-    //! Tests for handler helpers (`missing`/`invalid`), plugin types, SSH option
-    //! parsing via `parse_ssh_opts`, args quote-stripping, and `bind_server` filtering.
+    //! Tests for handler helpers (`missing`/`invalid`), DistantPlugin,
+    //! ClientLaunchConfig extraction, args quote-stripping, and `bind_server` filtering.
+    //!
+    //! SSH option parsing tests now live in `distant-ssh/src/plugin.rs`.
 
     use distant_core::net::common::Host;
     use test_log::test;
@@ -673,15 +388,6 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // SshPlugin::name
-    // -------------------------------------------------------
-    #[test]
-    fn ssh_plugin_name_is_ssh() {
-        let plugin = SshPlugin;
-        assert_eq!(Plugin::name(&plugin), "ssh");
-    }
-
-    // -------------------------------------------------------
     // ClientLaunchConfig from options — used in launch path
     // -------------------------------------------------------
     #[test]
@@ -697,151 +403,8 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // parse_ssh_opts — option parsing tests
-    // -------------------------------------------------------
-
-    fn make_destination(host: &str) -> Destination {
-        Destination {
-            scheme: None,
-            username: None,
-            password: None,
-            host: host.parse().unwrap(),
-            port: None,
-        }
-    }
-
-    #[test]
-    fn ssh_opts_identity_files_parsing() {
-        let mut options = Map::new();
-        options.insert(
-            "identity_files".to_string(),
-            "/home/user/.ssh/id_rsa,/home/user/.ssh/id_ed25519".to_string(),
-        );
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert_eq!(opts.identity_files.len(), 2);
-        assert_eq!(
-            opts.identity_files[0],
-            PathBuf::from("/home/user/.ssh/id_rsa")
-        );
-        assert_eq!(
-            opts.identity_files[1],
-            PathBuf::from("/home/user/.ssh/id_ed25519")
-        );
-    }
-
-    #[test]
-    fn ssh_opts_identity_files_with_ssh_prefix() {
-        let mut options = Map::new();
-        options.insert(
-            "ssh.identity_files".to_string(),
-            "/home/user/.ssh/id_rsa".to_string(),
-        );
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert_eq!(opts.identity_files.len(), 1);
-        assert_eq!(
-            opts.identity_files[0],
-            PathBuf::from("/home/user/.ssh/id_rsa")
-        );
-    }
-
-    #[test]
-    fn ssh_opts_identities_only_parsing() {
-        let mut options = Map::new();
-        options.insert("identities_only".to_string(), "true".to_string());
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert_eq!(opts.identities_only, Some(true));
-    }
-
-    #[test]
-    fn ssh_opts_verbose_parsing() {
-        let mut options = Map::new();
-        options.insert("verbose".to_string(), "true".to_string());
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert!(opts.verbose);
-    }
-
-    #[test]
-    fn ssh_opts_verbose_with_ssh_prefix() {
-        let mut options = Map::new();
-        options.insert("ssh.verbose".to_string(), "true".to_string());
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert!(opts.verbose);
-    }
-
-    #[test]
-    fn ssh_opts_verbose_with_client_prefix() {
-        let mut options = Map::new();
-        options.insert("client.verbose".to_string(), "true".to_string());
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert!(opts.verbose);
-    }
-
-    #[test]
-    fn ssh_opts_verbose_defaults_to_false() {
-        let options = Map::new();
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert!(!opts.verbose);
-    }
-
-    #[test]
-    fn ssh_opts_proxy_command_parsing() {
-        let mut options = Map::new();
-        options.insert(
-            "proxy_command".to_string(),
-            "ssh -W %h:%p proxy.example.com".to_string(),
-        );
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert_eq!(
-            opts.proxy_command.as_deref(),
-            Some("ssh -W %h:%p proxy.example.com")
-        );
-    }
-
-    #[test]
-    fn ssh_opts_user_known_hosts_files_parsing() {
-        let mut options = Map::new();
-        options.insert(
-            "user_known_hosts_files".to_string(),
-            "/home/user/.ssh/known_hosts,/etc/ssh/known_hosts".to_string(),
-        );
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert_eq!(opts.user_known_hosts_files.len(), 2);
-        assert_eq!(
-            opts.user_known_hosts_files[0],
-            PathBuf::from("/home/user/.ssh/known_hosts")
-        );
-        assert_eq!(
-            opts.user_known_hosts_files[1],
-            PathBuf::from("/etc/ssh/known_hosts")
-        );
-    }
-
-    #[test]
-    fn ssh_opts_empty_options_produces_defaults() {
-        let options = Map::new();
-
-        let opts = super::parse_ssh_opts(&make_destination("example.com"), &options).unwrap();
-        assert!(opts.identity_files.is_empty());
-        assert!(opts.user_known_hosts_files.is_empty());
-        assert!(opts.proxy_command.is_none());
-    }
-
-    // -------------------------------------------------------
     // launch — args quote stripping logic
     // -------------------------------------------------------
-    // These tests replicate the quote-stripping loop from the launch path.
-    // The loop is not yet extracted into a standalone function, so we test
-    // a copy of the pattern here.
-
     #[test]
     fn args_quote_stripping_double_quotes() {
         let mut distant_args: &str = "\"--port 8080\"";
@@ -973,7 +536,7 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // SshPlugin launch config extraction
+    // SshPlugin launch config extraction (timeout parsing)
     // -------------------------------------------------------
     #[test]
     fn ssh_launch_config_timeout_parsing() {

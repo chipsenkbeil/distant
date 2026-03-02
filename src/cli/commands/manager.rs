@@ -41,11 +41,11 @@ fn build_plugin_map(
     #[allow(unused_mut)]
     let mut builtins: Vec<Arc<dyn Plugin>> = vec![
         Arc::new(handlers::DistantPlugin::new()),
-        Arc::new(handlers::SshPlugin),
+        Arc::new(distant_ssh::SshPlugin),
     ];
 
     #[cfg(feature = "docker")]
-    builtins.push(Arc::new(handlers::DockerPlugin));
+    builtins.push(Arc::new(distant_docker::DockerPlugin));
 
     // External plugins from config file + CLI flags
     let external = plugins_config::load_external_plugins(extra_plugins)?;
