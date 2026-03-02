@@ -16,8 +16,7 @@ manipulation.
   - `distant-core` - Core library with API, protocol, plugin trait, and
     utilities
   - `distant-docker` - Docker backend plugin using the Bollard API to interact
-    with containers; supports both Unix and Windows (`nanoserver`) containers
-    via `DockerFamily` dispatch
+    with Unix containers (the Docker host can be any platform)
   - `distant-host` - Custom server implementation to run on a host machine that
     implements the full distant specification, also providing a client-side
     plugin
@@ -104,87 +103,35 @@ Each item is tagged with a category:
 2. **(Acknowledgement)** Windows CI SSH tests have intermittent auth failures
    from resource contention — mitigated with nextest retries (4x), not
    root-caused.
-3. **(Limitation)** `distant-docker` search on Windows containers uses
-   `findstr.exe` which has limited regex support (no `+`, `?`, `|`, `{n,m}`).
-   `Regex` and `Or` query conditions return `Unsupported` on Windows — only
-   `Contains`, `Equals`, `StartsWith`, and `EndsWith` are supported.
-4. **(Workaround)** `distant-docker` `append_file` on Windows falls back to tar
-   read-modify-write because there's no good stdin-append equivalent to `cat >>`
-   on nanoserver.
-5. **(Limitation)** Nanoserver `ContainerUser` cannot write to
-   `C:\Windows\Temp` or other system directories via exec commands (`mkdir`,
-   `move`, etc.). The Docker tar API bypasses permissions but exec-based
-   operations require a user-writable directory. Tests use `C:\temp`
-   (pre-created via tar API in the test harness).
-6. **(Workaround)** `distant-docker` tar directory creation uses a `.distant`
-   zero-byte marker file workaround — Docker's `PUT /archive` API silently
-   accepts directory-only tar archives on Windows nanoserver but never
-   materializes the directories. The marker file forces creation; it is
-   best-effort deleted afterward via exec, but may remain if the delete fails.
-   A cleaner solution would require Docker engine changes.
-7. **(Workaround)** `distant-docker` `rename` on Windows nanoserver falls back
-   to tar-read + tar-write + exec-delete when the `move` command fails. This
-   only works for files, not directories. The `move` failure appears to be a
-   `ContainerUser` permission issue with directory entries created by Docker's
-   overlay filesystem.
-8. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
+3. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
    (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
    `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
    directory, which causes "Cannot perform a cyclic copy" when src and dst are
    sibling files in the same directory.
-9. **(Bug)** Shell injection via unescaped paths — all `run_shell_cmd`
+4. **(Bug)** Shell injection via unescaped paths — all `run_shell_cmd`
    calls in `distant-docker/src/api.rs` embed paths in single quotes
    without escaping `'`. A path containing a single-quote character
    (e.g. `/home/user/it's_a_file.txt`) causes a shell parse error and
    falls through to tar fallback silently. Fix: switch to direct argv via
    `run_cmd` where no shell features are needed, or add a
    `shell_quote()` helper.
-10. **(Bug)** `distant-docker` `read_dir` on Windows always classifies
-    all entries as `FileType::File` — `dir /b /a` provides no type
-    information, and the code hardcodes `FileType::File` for every entry.
-    Subdirectories are reported as files to the client. Fix: fall through
-    to tar-based listing on Windows (which already handles types
-    correctly).
-11. **(Bug)** `distant-docker` `exists` on Windows — `if exist "path"`
-    may not match directories depending on cmd.exe version, and the
-    tar-based fallback is only reached on exec infrastructure failure (not
-    on exit code 1). Fix: use both forms:
-    `if exist "path\" (exit 0) else if exist "path" (exit 0) else (exit 1)`.
-12. **(Bug)** `distant-docker` `remove` on Windows — the cmd.exe
-    compound `rmdir ... 2>nul & if errorlevel 1 del /f ...` has subtle
-    errorlevel propagation issues with the `&` operator. Fix: use
-    `rmdir ... 2>nul || del /f ...` with `||` (run second only if first
-    fails).
-13. **(Bug)** Cross-platform path parsing in `distant-docker/src/utils.rs`
-    — `tar_write_file`, `tar_create_dir`, and `tar_create_dir_all` use
-    `std::path::Path` which parses with the host OS separator. Windows
-    container paths like `C:\temp\file.txt` are misinterpreted when the
-    Docker host is a Unix machine (backslash treated as literal, not
-    separator). Fix: add a manual Windows-aware path splitter for
-    container paths.
-14. **(Bug)** `distant-docker` search shell injection — `path` is
-    completely unquoted in search commands (`rg`, `grep`, `find`,
-    `findstr`), and `shell_escape_pattern` doesn't escape single quotes.
-    Fix: quote paths and escape `'` → `'\''` in patterns.
-15. **(Limitation)** `distant-docker` `copy` tar fallback uses
-    `tar_read_file` which skips directory entries — directory copies that
-    fail via exec silently return `NotFound` from the fallback. Needs a
-    `tar_copy_path` utility that handles both files and directories.
-16. **(Limitation)** `auto_remove` on `LaunchOpts` is stored but never
-    honored — launched containers are never cleaned up automatically.
-    Needs `auto_remove: bool` on the `Docker` struct and lifecycle cleanup
-    (e.g. on `ServerRef` drop or shutdown hook).
-17. **(Limitation)** `distant-docker` search error handling — `grep`
-    exit code 1 (no matches) vs exit code 2 (error) are not distinguished.
-    A non-existent search path produces a silent empty result instead of
-    an error. Fix: check exit code > 1 as an error, or use `set -o
-    pipefail` in the shell command.
-18. **(Acknowledgement)** OS detection inconsistency —
-    `is_windows_image` (launch path) uses exact `== "windows"` while
-    `detect_family_from_inspect` (connect path) uses
-    `.contains("windows")`. Could misdetect if an image's OS field is
-    something other than exactly `"windows"` (e.g. `"windows server"`).
-    Fix: unify with a shared helper using `.contains("windows")`.
+5. **(Bug)** `distant-docker` search shell injection — `path` is
+   completely unquoted in search commands (`rg`, `grep`, `find`),
+   and `shell_escape_pattern` doesn't escape single quotes.
+   Fix: quote paths and escape `'` → `'\''` in patterns.
+6. **(Limitation)** `distant-docker` `copy` tar fallback uses
+   `tar_read_file` which skips directory entries — directory copies that
+   fail via exec silently return `NotFound` from the fallback. Needs a
+   `tar_copy_path` utility that handles both files and directories.
+7. **(Limitation)** `auto_remove` on `LaunchOpts` is stored but never
+   honored — launched containers are never cleaned up automatically.
+   Needs `auto_remove: bool` on the `Docker` struct and lifecycle cleanup
+   (e.g. on `ServerRef` drop or shutdown hook).
+8. **(Limitation)** `distant-docker` search error handling — `grep`
+   exit code 1 (no matches) vs exit code 2 (error) are not distinguished.
+   A non-existent search path produces a silent empty result instead of
+   an error. Fix: check exit code > 1 as an error, or use `set -o
+   pipefail` in the shell command.
 
 ## Tooling & Command Reference
 
@@ -299,45 +246,22 @@ Keep a list of patterns to **avoid**:
 7. Always **run tests** (`cargo test --all-features -p <crate>`) after creating
    or modifying test files — don't assume tests compile or pass without actually
    executing them.
-8. Don't hardcode `sh -c` for shell commands in `distant-docker` — Windows
-   containers (nanoserver) don't have `sh`. Use the `run_shell_cmd` /
-   `run_shell_cmd_stdout` helpers which dispatch to `sh -c` or `cmd /c` based
-   on `DockerFamily`.
-9. Don't hardcode Unix paths like `/tmp` in Docker tests — use `test_temp_dir()`
-   which returns `/tmp` on Unix and `C:\temp` on Windows. Don't use
-   `C:\Windows\Temp` — `ContainerUser` cannot write there.
-10. Don't double-wrap Windows commands with `cmd /c` — when using
-    `run_shell_cmd` the shell prefix is already provided, so command strings
-    should contain only the inner command (e.g. `mkdir "path"` not
-    `cmd /c mkdir "path"`).
-11. Don't use forward-slash separators inside `PathBuf::join()` for
-    multi-component paths — `join("a/b/c")` embeds a Unix separator and
-    can break on Windows. Use chained `.join("a").join("b").join("c")`.
-12. When writing Docker tests (commands, paths, filenames), always consider
-    Windows container compatibility — use `test_temp_dir()` for temp paths,
-    chain `.join()` calls for path components, and use `cfg!(windows)` for
-    any platform-specific commands or assertions.
-13. Never bypass GPG commit signing — don't use `-c commit.gpgsign=false`
-    or `--no-gpg-sign`. If `gpg failed to sign the data`, stop and let the
-    user resolve the signing issue. The user's GPG key also handles SSH
-    push authentication.
-14. Never dismiss test failures as "intermittent" or "pre-existing" without
+8. Don't use forward-slash separators inside `PathBuf::join()` for
+   multi-component paths — `join("a/b/c")` embeds a Unix separator and
+   can break on Windows. Use chained `.join("a").join("b").join("c")`.
+9. Never bypass GPG commit signing — don't use `-c commit.gpgsign=false`
+   or `--no-gpg-sign`. If `gpg failed to sign the data`, stop and let the
+   user resolve the signing issue. The user's GPG key also handles SSH
+   push authentication.
+10. Never dismiss test failures as "intermittent" or "pre-existing" without
     investigation. Every failure — even if it only reproduces sometimes —
     must be analyzed to determine the root cause and a recommendation given
     to fix it. If the root cause is a bug in production code, focus the
     recommendation on the production code fix, not on test workarounds.
-15. Don't rely on directory-only tar archives to create directories on Windows
-    nanoserver via the Docker archive API — Docker silently accepts the upload
-    but never materializes the directories. Always include a file entry (even a
-    zero-byte marker) in the tar to force directory creation.
-16. Don't use `xcopy /E /I /Y` for single-file copies on Windows via SSH — the
+11. Don't use `xcopy /E /I /Y` for single-file copies on Windows via SSH — the
     `/I` flag makes xcopy treat the destination as a directory, causing "Cannot
     perform a cyclic copy" when src and dst are in the same directory. Use
     `copy /Y` for files and reserve `xcopy` for directory copies.
-17. Don't assume exec-based `move` works reliably on Windows nanoserver — it
-    can fail for files in directories created by Docker's overlay filesystem.
-    Prefer a tar-read + tar-write + exec-delete fallback pattern for file
-    renames when exec fails.
 
 ### Format standards
 

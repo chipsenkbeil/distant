@@ -11,17 +11,9 @@ use distant_test_harness::skip_if_no_docker;
 use rstest::*;
 use test_log::test;
 
-/// Returns a temp directory path appropriate for the container OS.
-///
-/// On Windows, uses `C:\temp` instead of `C:\Windows\Temp` because nanoserver's
-/// `ContainerUser` cannot write to system directories via exec commands.
-/// The test harness pre-creates `C:\temp` via the tar API during container setup.
+/// Returns the temp directory path for the container.
 fn test_temp_dir() -> PathBuf {
-    if cfg!(windows) {
-        PathBuf::from(r"C:\temp")
-    } else {
-        PathBuf::from("/tmp")
-    }
+    PathBuf::from("/tmp")
 }
 
 // ---------------------------------------------------------------------------
@@ -310,13 +302,8 @@ async fn remove_should_delete_directory_recursively(#[future] client: Option<Ctx
 async fn proc_spawn_should_execute_command(#[future] client: Option<Ctx<Client>>) {
     let mut client = skip_if_no_docker!(client.await);
 
-    let cmd = if cfg!(windows) {
-        "cmd /c echo hello"
-    } else {
-        "echo hello"
-    };
     let proc = client
-        .spawn(cmd.to_string(), Default::default(), None, None)
+        .spawn("echo hello".to_string(), Default::default(), None, None)
         .await
         .unwrap();
 

@@ -9,15 +9,6 @@ use distant_docker::{Docker, DockerOpts};
 use log::*;
 use rstest::*;
 
-/// Default test image per platform.
-fn test_image() -> &'static str {
-    if cfg!(windows) {
-        "mcr.microsoft.com/windows/nanoserver:ltsc2025"
-    } else {
-        "ubuntu:22.04"
-    }
-}
-
 /// Checks whether the Docker daemon is available by pinging it.
 pub async fn docker_available() -> bool {
     match Docker::default_bollard_client() {
@@ -28,7 +19,7 @@ pub async fn docker_available() -> bool {
 
 /// A managed Docker container for testing.
 ///
-/// Creates a container from the test image on construction and removes it on drop.
+/// Creates a container from ubuntu:22.04 on construction and removes it on drop.
 pub struct DockerContainer {
     /// The container name.
     pub name: String,
@@ -49,7 +40,7 @@ impl DockerContainer {
 
         let client = Docker::default_bollard_client().ok()?;
 
-        let image = test_image();
+        let image = "ubuntu:22.04";
         info!("Creating test container from image: {}", image);
 
         // Pull image if needed
@@ -71,29 +62,12 @@ impl DockerContainer {
 
         let name = format!("distant-test-{}", random_suffix());
 
-        let (entrypoint, cmd) = if cfg!(windows) {
-            (
-                Some(vec!["cmd".to_string(), "/c".to_string()]),
-                Some(vec![
-                    "ping".to_string(),
-                    "-t".to_string(),
-                    "localhost".to_string(),
-                ]),
-            )
-        } else {
-            (
-                None,
-                Some(vec!["sleep".to_string(), "infinity".to_string()]),
-            )
-        };
-
         use bollard::models::ContainerCreateBody;
         use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
 
         let config = ContainerCreateBody {
             image: Some(image.to_string()),
-            entrypoint,
-            cmd,
+            cmd: Some(vec!["sleep".to_string(), "infinity".to_string()]),
             tty: Some(false),
             open_stdin: Some(true),
             ..Default::default()
@@ -117,23 +91,6 @@ impl DockerContainer {
         }
 
         info!("Test container started: {}", name);
-
-        // On Windows nanoserver, ContainerUser cannot write to C:\Windows\Temp.
-        // Create a writable temp directory via exec so ContainerUser gets
-        // FILE_DELETE_CHILD permission on it (tar-created dirs are SYSTEM-owned
-        // and ContainerUser can't delete children inside them).
-        if cfg!(windows) {
-            let result = distant_docker::utils::execute_output(
-                &client,
-                &name,
-                &["cmd", "/c", "mkdir", r"C:\temp"],
-                None,
-            )
-            .await;
-            if let Err(e) = result {
-                error!("Failed to create temp dir in container: {}", e);
-            }
-        }
 
         Some(Self { name, client })
     }

@@ -4,6 +4,9 @@
 //! calls, supporting file I/O (via tar archives), process management (via exec), directory
 //! operations, and search (best-effort with tool detection).
 //!
+//! Only Unix containers are supported. The Docker host can be any platform (Linux, macOS,
+//! Windows), but the container must run a Unix-based OS.
+//!
 //! # Usage
 //!
 //! ```no_run
@@ -41,28 +44,6 @@ pub(crate) mod search;
 pub mod utils;
 
 use api::DockerApi;
-
-/// Represents the OS family of the container.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-pub enum DockerFamily {
-    /// Container runs a Unix-based OS (Linux, etc.)
-    Unix,
-
-    /// Container runs a Windows-based OS
-    Windows,
-}
-
-impl DockerFamily {
-    /// Returns the family as a static string.
-    pub const fn as_static_str(&self) -> &'static str {
-        match self {
-            Self::Unix => "unix",
-            Self::Windows => "windows",
-        }
-    }
-}
 
 /// Options for connecting to or launching Docker containers.
 #[derive(Clone, Debug, Default)]
@@ -110,9 +91,6 @@ pub struct Docker {
     /// Name or ID of the connected container.
     container: String,
 
-    /// Detected OS family of the container.
-    family: DockerFamily,
-
     /// Connection options.
     opts: DockerOpts,
 }
@@ -120,7 +98,7 @@ pub struct Docker {
 impl Docker {
     /// Connect to an existing, running Docker container by name or ID.
     ///
-    /// Verifies the container is running and detects its OS family.
+    /// Verifies the container is running before returning.
     ///
     /// # Errors
     ///
@@ -156,17 +134,11 @@ impl Docker {
             ));
         }
 
-        let family = Self::detect_family_from_inspect(&inspect, &client, &container).await?;
-        info!(
-            "Connected to container '{}' (family: {})",
-            container,
-            family.as_static_str()
-        );
+        info!("Connected to container '{}'", container);
 
         Ok(Self {
             client,
             container,
-            family,
             opts,
         })
     }
@@ -174,7 +146,7 @@ impl Docker {
     /// Launch a new container from an image and connect to it.
     ///
     /// Pulls the image if it is not available locally. The container is started with a
-    /// keep-alive entrypoint (`sleep infinity` on Linux, `ping -t localhost` on Windows).
+    /// keep-alive entrypoint (`sleep infinity`).
     ///
     /// # Errors
     ///
@@ -188,31 +160,11 @@ impl Docker {
         // Pull the image if needed
         Self::pull_image_if_needed(&client, &launch_opts.image).await?;
 
-        // Detect if this is a Windows image by inspecting the image
-        let is_windows = Self::is_windows_image(&client, &launch_opts.image).await;
-
-        let (entrypoint, cmd) = if is_windows {
-            (
-                Some(vec!["cmd".to_string(), "/c".to_string()]),
-                Some(vec![
-                    "ping".to_string(),
-                    "-t".to_string(),
-                    "localhost".to_string(),
-                ]),
-            )
-        } else {
-            (
-                None,
-                Some(vec!["sleep".to_string(), "infinity".to_string()]),
-            )
-        };
-
         let container_name = format!("distant-{}", &uuid_like_id());
 
         let config = ContainerCreateBody {
             image: Some(launch_opts.image.clone()),
-            entrypoint,
-            cmd,
+            cmd: Some(vec!["sleep".to_string(), "infinity".to_string()]),
             tty: Some(false),
             open_stdin: Some(true),
             ..Default::default()
@@ -238,16 +190,9 @@ impl Docker {
 
         info!("Container started: {}", container_name);
 
-        let family = if is_windows {
-            DockerFamily::Windows
-        } else {
-            DockerFamily::Unix
-        };
-
         Ok(Self {
             client,
             container: container_name,
-            family,
             opts: docker_opts,
         })
     }
@@ -256,7 +201,7 @@ impl Docker {
     ///
     /// Creates an in-memory server/client pair where the server side is backed by [`DockerApi`].
     pub async fn into_distant_client(self) -> io::Result<Client> {
-        let api = DockerApi::new(self.client, self.container, self.family, self.opts).await;
+        let api = DockerApi::new(self.client, self.container, self.opts).await;
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -281,7 +226,7 @@ impl Docker {
 
     /// Converts this Docker connection into a pair of distant client and server ref.
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
-        let api = DockerApi::new(self.client, self.container, self.family, self.opts).await;
+        let api = DockerApi::new(self.client, self.container, self.opts).await;
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -307,11 +252,6 @@ impl Docker {
     /// Returns the container name or ID.
     pub fn container(&self) -> &str {
         &self.container
-    }
-
-    /// Returns the detected OS family.
-    pub fn family(&self) -> DockerFamily {
-        self.family
     }
 
     /// Creates a bollard Docker client from the provided options.
@@ -372,51 +312,6 @@ impl Docker {
         ))
     }
 
-    /// Detects the container's OS family from inspection data, with exec fallback.
-    async fn detect_family_from_inspect(
-        inspect: &bollard::models::ContainerInspectResponse,
-        client: &BollardDocker,
-        container: &str,
-    ) -> io::Result<DockerFamily> {
-        // Check platform from container config labels
-        if let Some(platform) = inspect
-            .config
-            .as_ref()
-            .and_then(|c| c.labels.as_ref())
-            .and_then(|l| l.get("org.opencontainers.image.os"))
-        {
-            if platform.to_lowercase().contains("windows") {
-                return Ok(DockerFamily::Windows);
-            }
-            return Ok(DockerFamily::Unix);
-        }
-
-        // Fallback: try running uname via exec
-        match utils::execute_output(client, container, &["uname", "-s"], None).await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let lower = stdout.trim().to_lowercase();
-                if lower.contains("windows") || lower.contains("mingw") || lower.contains("msys") {
-                    Ok(DockerFamily::Windows)
-                } else {
-                    Ok(DockerFamily::Unix)
-                }
-            }
-            Err(_) => {
-                // If uname fails, try `cmd /c ver` for Windows detection
-                match utils::execute_output(client, container, &["cmd", "/c", "ver"], None).await {
-                    Ok(output) if output.stdout_str().to_lowercase().contains("windows") => {
-                        Ok(DockerFamily::Windows)
-                    }
-                    _ => {
-                        debug!("Could not determine container OS family, defaulting to Unix");
-                        Ok(DockerFamily::Unix)
-                    }
-                }
-            }
-        }
-    }
-
     /// Pulls an image if it doesn't exist locally.
     async fn pull_image_if_needed(client: &BollardDocker, image: &str) -> io::Result<()> {
         if client.inspect_image(image).await.is_ok() {
@@ -451,17 +346,6 @@ impl Docker {
 
         info!("Image '{}' pulled successfully", image);
         Ok(())
-    }
-
-    /// Checks if an image is Windows-based by inspecting its OS field.
-    async fn is_windows_image(client: &BollardDocker, image: &str) -> bool {
-        match client.inspect_image(image).await {
-            Ok(info) => info
-                .os
-                .as_ref()
-                .is_some_and(|os| os.to_lowercase() == "windows"),
-            Err(_) => false,
-        }
     }
 
     /// Stops and removes the container. Used for auto-remove cleanup.

@@ -11,8 +11,6 @@ use futures::StreamExt;
 use log::*;
 use tokio::sync::mpsc;
 
-use crate::DockerFamily;
-
 /// Represents a spawned process tracked by the Docker API.
 #[allow(dead_code)]
 pub struct Process {
@@ -58,7 +56,6 @@ pub async fn spawn_simple<F, Fut>(
     cmd: &str,
     environment: Environment,
     current_dir: Option<std::path::PathBuf>,
-    family: DockerFamily,
     user: Option<&str>,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
@@ -67,11 +64,6 @@ where
     F: FnOnce(ProcessId) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    let (shell, shell_flag) = match family {
-        DockerFamily::Unix => ("sh", "-c"),
-        DockerFamily::Windows => ("cmd", "/c"),
-    };
-
     let env_vec: Vec<String> = environment
         .iter()
         .map(|(k, v)| format!("{}={}", k, v))
@@ -81,11 +73,7 @@ where
         .create_exec(
             container,
             CreateExecOptions {
-                cmd: Some(vec![
-                    shell.to_string(),
-                    shell_flag.to_string(),
-                    cmd.to_string(),
-                ]),
+                cmd: Some(vec!["sh".to_string(), "-c".to_string(), cmd.to_string()]),
                 attach_stdin: Some(true),
                 attach_stdout: Some(true),
                 attach_stderr: Some(true),
@@ -232,7 +220,6 @@ pub async fn spawn_pty<F, Fut>(
     environment: Environment,
     current_dir: Option<std::path::PathBuf>,
     size: PtySize,
-    family: DockerFamily,
     user: Option<&str>,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
@@ -241,11 +228,6 @@ where
     F: FnOnce(ProcessId) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    let (shell, shell_flag) = match family {
-        DockerFamily::Unix => ("sh", "-c"),
-        DockerFamily::Windows => ("cmd", "/c"),
-    };
-
     let env_vec: Vec<String> = environment
         .iter()
         .map(|(k, v)| format!("{}={}", k, v))
@@ -253,9 +235,9 @@ where
 
     // For PTY mode, if cmd is empty, just open a shell
     let cmd_parts = if cmd.is_empty() {
-        vec![shell.to_string()]
+        vec!["sh".to_string()]
     } else {
-        vec![shell.to_string(), shell_flag.to_string(), cmd.to_string()]
+        vec!["sh".to_string(), "-c".to_string(), cmd.to_string()]
     };
 
     let created = client

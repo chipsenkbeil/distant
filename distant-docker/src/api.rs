@@ -15,24 +15,23 @@ use distant_core::protocol::{
 use distant_core::{Api, Ctx};
 use tokio::sync::RwLock;
 
+use crate::DockerOpts;
 use crate::process::{self, Process, SpawnResult};
 use crate::search;
 use crate::utils::{self, SearchTools};
-use crate::{DockerFamily, DockerOpts};
 
 /// Docker implementation of the distant [`Api`] trait.
 ///
 /// Translates distant operations to Docker API calls using a combination of the tar archive
 /// API (for file I/O) and container exec (for process and filesystem operations).
+///
+/// Only Unix containers are supported.
 pub struct DockerApi {
     /// Docker client handle.
     client: Docker,
 
     /// Container name or ID.
     container: String,
-
-    /// Detected OS family.
-    family: DockerFamily,
 
     /// Connection options.
     opts: DockerOpts,
@@ -59,18 +58,12 @@ pub struct DockerApi {
 
 impl DockerApi {
     /// Creates a new `DockerApi`, probing the container for available tools.
-    pub async fn new(
-        client: Docker,
-        container: String,
-        family: DockerFamily,
-        opts: DockerOpts,
-    ) -> Self {
-        let search_tools = utils::probe_search_tools(&client, &container, family).await;
+    pub async fn new(client: Docker, container: String, opts: DockerOpts) -> Self {
+        let search_tools = utils::probe_search_tools(&client, &container).await;
 
         Self {
             client,
             container,
-            family,
             opts,
             processes: Arc::new(RwLock::new(HashMap::new())),
             searches: Arc::new(RwLock::new(HashMap::new())),
@@ -105,14 +98,9 @@ impl DockerApi {
         }
     }
 
-    /// Execute a shell command string using the appropriate shell for the container OS.
-    ///
-    /// Uses `sh -c` on Unix and `cmd /c` on Windows.
+    /// Execute a shell command string using `sh -c`.
     async fn run_shell_cmd(&self, script: &str) -> io::Result<utils::ExecOutput> {
-        match self.family {
-            DockerFamily::Unix => self.run_cmd(&["sh", "-c", script]).await,
-            DockerFamily::Windows => self.run_cmd(&["cmd", "/c", script]).await,
-        }
+        self.run_cmd(&["sh", "-c", script]).await
     }
 
     /// Execute a shell command and return stdout, or error if the command fails.
@@ -137,16 +125,12 @@ impl Api for DockerApi {
                 Version::CAP_EXEC.to_string(),
                 Version::CAP_FS_IO.to_string(),
                 Version::CAP_SYS_INFO.to_string(),
+                Version::CAP_FS_PERM.to_string(),
             ];
 
             // Only advertise search if we have tools
             if self.search_tools.has_any() {
                 capabilities.push(Version::CAP_FS_SEARCH.to_string());
-            }
-
-            // Advertise permissions for Unix containers
-            if self.family == DockerFamily::Unix {
-                capabilities.push(Version::CAP_FS_PERM.to_string());
             }
 
             let mut server_version: semver::Version = env!("CARGO_PKG_VERSION")
@@ -230,26 +214,19 @@ impl Api for DockerApi {
             let path_str = path.to_string_lossy().to_string();
 
             // Primary: try exec-based append
-            match self.family {
-                DockerFamily::Unix => {
-                    let result = utils::execute_with_stdin(
-                        &self.client,
-                        &self.container,
-                        &["sh", "-c", &format!("cat >> '{}'", path_str)],
-                        &data,
-                        self.user(),
-                    )
-                    .await;
+            let result = utils::execute_with_stdin(
+                &self.client,
+                &self.container,
+                &["sh", "-c", &format!("cat >> '{}'", path_str)],
+                &data,
+                self.user(),
+            )
+            .await;
 
-                    if let Ok(output) = result
-                        && output.success()
-                    {
-                        return Ok(());
-                    }
-                }
-                DockerFamily::Windows => {
-                    // Windows doesn't have a good stdin append; fall through to tar
-                }
+            if let Ok(output) = result
+                && output.success()
+            {
+                return Ok(());
             }
 
             // Fallback: tar-read, append in memory, tar-write back
@@ -272,24 +249,19 @@ impl Api for DockerApi {
             let path_str = path.to_string_lossy().to_string();
 
             // Primary: try exec-based append
-            match self.family {
-                DockerFamily::Unix => {
-                    let result = utils::execute_with_stdin(
-                        &self.client,
-                        &self.container,
-                        &["sh", "-c", &format!("cat >> '{}'", path_str)],
-                        data.as_bytes(),
-                        self.user(),
-                    )
-                    .await;
+            let result = utils::execute_with_stdin(
+                &self.client,
+                &self.container,
+                &["sh", "-c", &format!("cat >> '{}'", path_str)],
+                data.as_bytes(),
+                self.user(),
+            )
+            .await;
 
-                    if let Ok(output) = result
-                        && output.success()
-                    {
-                        return Ok(());
-                    }
-                }
-                DockerFamily::Windows => {}
+            if let Ok(output) = result
+                && output.success()
+            {
+                return Ok(());
             }
 
             // Fallback: tar-read, append in memory, tar-write back
@@ -323,17 +295,10 @@ impl Api for DockerApi {
             let mut errors: Vec<io::Error> = Vec::new();
 
             // Try exec-based listing first for richer output
-            let cmd = match self.family {
-                DockerFamily::Unix => {
-                    if depth == 0 || depth > 1 {
-                        format!("find '{}' -printf '%y %p\\n'", path_str)
-                    } else {
-                        format!("find '{}' -maxdepth 1 -printf '%y %p\\n'", path_str)
-                    }
-                }
-                DockerFamily::Windows => {
-                    format!("dir /b /a \"{}\"", path_str)
-                }
+            let cmd = if depth == 0 || depth > 1 {
+                format!("find '{}' -printf '%y %p\\n'", path_str)
+            } else {
+                format!("find '{}' -maxdepth 1 -printf '%y %p\\n'", path_str)
             };
 
             match self.run_shell_cmd(&cmd).await {
@@ -344,25 +309,19 @@ impl Api for DockerApi {
                             continue;
                         }
 
-                        let (file_type, entry_path) = if self.family == DockerFamily::Unix {
-                            // Format: "type_char path"
-                            let mut parts = line.splitn(2, ' ');
-                            let type_char = parts.next().unwrap_or("f");
-                            let p = parts.next().unwrap_or("");
-                            if p.is_empty() {
-                                continue;
-                            }
-                            let ft = match type_char {
-                                "d" => FileType::Dir,
-                                "l" => FileType::Symlink,
-                                _ => FileType::File,
-                            };
-                            (ft, PathBuf::from(p))
-                        } else {
-                            // Windows: just filenames
-                            let full_path = PathBuf::from(&path_str).join(line.trim());
-                            (FileType::File, full_path)
+                        // Format: "type_char path"
+                        let mut parts = line.splitn(2, ' ');
+                        let type_char = parts.next().unwrap_or("f");
+                        let p = parts.next().unwrap_or("");
+                        if p.is_empty() {
+                            continue;
+                        }
+                        let file_type = match type_char {
+                            "d" => FileType::Dir,
+                            "l" => FileType::Symlink,
+                            _ => FileType::File,
                         };
+                        let entry_path = PathBuf::from(p);
 
                         // Calculate depth relative to root path
                         let rel_depth = entry_path
@@ -446,25 +405,16 @@ impl Api for DockerApi {
             let path_str = path.to_string_lossy().to_string();
 
             // Try exec-based mkdir first (faster, simpler)
-            let cmd = match self.family {
-                DockerFamily::Unix => {
-                    if all {
-                        format!("mkdir -p '{}'", path_str)
-                    } else {
-                        format!("mkdir '{}'", path_str)
-                    }
-                }
-                DockerFamily::Windows => {
-                    format!("mkdir \"{}\"", path_str)
-                }
+            let cmd = if all {
+                format!("mkdir -p '{}'", path_str)
+            } else {
+                format!("mkdir '{}'", path_str)
             };
 
             match self.run_shell_cmd(&cmd).await {
                 Ok(output) if output.success() => Ok(()),
                 _ => {
                     // Fallback to tar-based directory creation.
-                    // The tar helpers include a zero-byte `.distant` marker file to force
-                    // Docker to materialize directories on Windows nanoserver.
                     if all {
                         utils::tar_create_dir_all(&self.client, &self.container, &path_str).await?;
                     } else {
@@ -472,14 +422,8 @@ impl Api for DockerApi {
                     }
 
                     // Best-effort cleanup of the marker file
-                    let marker = match self.family {
-                        DockerFamily::Unix => format!("{}/.distant", path_str),
-                        DockerFamily::Windows => format!("{}\\.distant", path_str),
-                    };
-                    let del_cmd = match self.family {
-                        DockerFamily::Unix => format!("rm -f '{}'", marker),
-                        DockerFamily::Windows => format!("del /f \"{}\"", marker),
-                    };
+                    let marker = format!("{}/.distant", path_str);
+                    let del_cmd = format!("rm -f '{}'", marker);
                     let _ = self.run_shell_cmd(&del_cmd).await;
 
                     Ok(())
@@ -498,10 +442,7 @@ impl Api for DockerApi {
             let src_str = src.to_string_lossy().to_string();
             let dst_str = dst.to_string_lossy().to_string();
 
-            let cmd = match self.family {
-                DockerFamily::Unix => format!("cp -r '{}' '{}'", src_str, dst_str),
-                DockerFamily::Windows => format!("xcopy /E /I /Y \"{}\" \"{}\"", src_str, dst_str),
-            };
+            let cmd = format!("cp -r '{}' '{}'", src_str, dst_str);
 
             let output = self.run_shell_cmd_stdout(&cmd).await;
             match output {
@@ -525,21 +466,10 @@ impl Api for DockerApi {
         async move {
             let path_str = path.to_string_lossy().to_string();
 
-            let cmd = match self.family {
-                DockerFamily::Unix => {
-                    if force {
-                        format!("rm -rf '{}'", path_str)
-                    } else {
-                        format!("rm -r '{}'", path_str)
-                    }
-                }
-                DockerFamily::Windows => {
-                    // Try rmdir first (for dirs), fall back to del (for files)
-                    format!(
-                        "rmdir /s /q \"{}\" 2>nul & if errorlevel 1 del /f \"{}\"",
-                        path_str, path_str
-                    )
-                }
+            let cmd = if force {
+                format!("rm -rf '{}'", path_str)
+            } else {
+                format!("rm -r '{}'", path_str)
             };
 
             self.run_shell_cmd_stdout(&cmd).await.map(|_| ())
@@ -556,10 +486,7 @@ impl Api for DockerApi {
             let src_str = src.to_string_lossy().to_string();
             let dst_str = dst.to_string_lossy().to_string();
 
-            let cmd = match self.family {
-                DockerFamily::Unix => format!("mv '{}' '{}'", src_str, dst_str),
-                DockerFamily::Windows => format!("move \"{}\" \"{}\"", src_str, dst_str),
-            };
+            let cmd = format!("mv '{}' '{}'", src_str, dst_str);
 
             match self.run_shell_cmd_stdout(&cmd).await {
                 Ok(_) => Ok(()),
@@ -575,10 +502,7 @@ impl Api for DockerApi {
                     utils::tar_write_file(&self.client, &self.container, &dst_str, &data).await?;
 
                     // Best-effort delete of source
-                    let del_cmd = match self.family {
-                        DockerFamily::Unix => format!("rm -f '{}'", src_str),
-                        DockerFamily::Windows => format!("del /f \"{}\"", src_str),
-                    };
+                    let del_cmd = format!("rm -f '{}'", src_str);
                     let _ = self.run_shell_cmd(&del_cmd).await;
 
                     Ok(())
@@ -628,12 +552,7 @@ impl Api for DockerApi {
             let path_str = path.to_string_lossy().to_string();
 
             // Try exec-based check first
-            let cmd = match self.family {
-                DockerFamily::Unix => format!("test -e '{}'", path_str),
-                DockerFamily::Windows => {
-                    format!("if exist \"{}\" (exit 0) else (exit 1)", path_str)
-                }
-            };
+            let cmd = format!("test -e '{}'", path_str);
 
             match self.run_shell_cmd(&cmd).await {
                 Ok(output) => Ok(output.success()),
@@ -655,16 +574,14 @@ impl Api for DockerApi {
         async move {
             let path_str = path.to_string_lossy().to_string();
 
-            // Try exec-based stat first (Unix)
-            if self.family == DockerFamily::Unix {
-                let cmd = format!("stat -c '%F %s %Y %X %W %a %u %g %h %i' '{}'", path_str);
-                if let Ok(output) = self.run_shell_cmd(&cmd).await
-                    && output.success()
-                {
-                    let stdout = output.stdout_str();
-                    if let Some(metadata) = parse_stat_output(stdout.trim(), &path, canonicalize) {
-                        return Ok(metadata);
-                    }
+            // Try exec-based stat first
+            let cmd = format!("stat -c '%F %s %Y %X %W %a %u %g %h %i' '{}'", path_str);
+            if let Ok(output) = self.run_shell_cmd(&cmd).await
+                && output.success()
+            {
+                let stdout = output.stdout_str();
+                if let Some(metadata) = parse_stat_output(stdout.trim(), &path, canonicalize) {
+                    return Ok(metadata);
                 }
             }
 
@@ -710,13 +627,6 @@ impl Api for DockerApi {
         options: SetPermissionsOptions,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            if self.family == DockerFamily::Windows {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "Permission setting is not fully supported on Windows containers",
-                ));
-            }
-
             let path_str = path.to_string_lossy().to_string();
             let mode = permissions.to_unix_mode();
             let mode_str = format!("{:o}", mode);
@@ -745,7 +655,7 @@ impl Api for DockerApi {
                 ));
             }
 
-            let cmd = search::build_search_command(&query, &self.search_tools, self.family)?;
+            let cmd = search::build_search_command(&query, &self.search_tools)?;
             let search_id: SearchId = rand::random();
 
             // Run the search command
@@ -796,7 +706,6 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<ProcessId>> + Send {
         let client = &self.client;
         let container = &self.container;
-        let family = self.family;
         let user = self.user().map(|s| s.to_string());
         let processes = &self.processes;
         let global_processes = Arc::downgrade(processes);
@@ -824,7 +733,6 @@ impl Api for DockerApi {
                         &cmd,
                         environment,
                         current_dir,
-                        family,
                         user.as_deref(),
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),
@@ -839,7 +747,6 @@ impl Api for DockerApi {
                         environment,
                         current_dir,
                         size,
-                        family,
                         user.as_deref(),
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),
@@ -962,16 +869,8 @@ impl Api for DockerApi {
                         return Ok::<PathBuf, io::Error>(PathBuf::from(wd));
                     }
 
-                    match self.family {
-                        DockerFamily::Unix => {
-                            let output = self.run_cmd_stdout(&["pwd"]).await?;
-                            Ok(PathBuf::from(output.trim()))
-                        }
-                        DockerFamily::Windows => {
-                            let output = self.run_cmd_stdout(&["cmd", "/c", "cd"]).await?;
-                            Ok(PathBuf::from(output.trim()))
-                        }
-                    }
+                    let output = self.run_cmd_stdout(&["pwd"]).await?;
+                    Ok(PathBuf::from(output.trim()))
                 })
                 .await?
                 .clone();
@@ -990,47 +889,33 @@ impl Api for DockerApi {
             let shell = self
                 .cached_shell
                 .get_or_try_init(async {
-                    match self.family {
-                        DockerFamily::Unix => {
-                            match self.run_shell_cmd_stdout("echo $SHELL").await {
-                                Ok(output) => {
-                                    let s = output.trim().to_string();
-                                    if s.is_empty() {
-                                        Ok::<String, io::Error>(String::from("/bin/sh"))
-                                    } else {
-                                        Ok(s)
-                                    }
-                                }
-                                Err(_) => Ok(String::from("/bin/sh")),
+                    match self.run_shell_cmd_stdout("echo $SHELL").await {
+                        Ok(output) => {
+                            let s = output.trim().to_string();
+                            if s.is_empty() {
+                                Ok::<String, io::Error>(String::from("/bin/sh"))
+                            } else {
+                                Ok(s)
                             }
                         }
-                        DockerFamily::Windows => Ok(String::from("cmd.exe")),
+                        Err(_) => Ok(String::from("/bin/sh")),
                     }
                 })
                 .await?
                 .clone();
 
-            let (family, os, main_separator) = match self.family {
-                DockerFamily::Unix => ("unix".to_string(), "linux".to_string(), '/'),
-                DockerFamily::Windows => ("windows".to_string(), "windows".to_string(), '\\'),
-            };
-
-            // Try to get architecture
-            let arch = match self.family {
-                DockerFamily::Unix => self
-                    .run_cmd_stdout(&["uname", "-m"])
-                    .await
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|_| "unknown".to_string()),
-                DockerFamily::Windows => "x86_64".to_string(),
-            };
+            let arch = self
+                .run_cmd_stdout(&["uname", "-m"])
+                .await
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
 
             Ok(SystemInfo {
-                family,
-                os,
+                family: "unix".to_string(),
+                os: "linux".to_string(),
                 arch,
                 current_dir,
-                main_separator,
+                main_separator: '/',
                 username,
                 shell,
             })

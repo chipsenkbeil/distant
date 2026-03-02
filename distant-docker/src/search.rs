@@ -8,7 +8,6 @@ use distant_core::protocol::{
     SearchQueryMatchData, SearchQueryPathMatch, SearchQuerySubmatch, SearchQueryTarget,
 };
 
-use crate::DockerFamily;
 use crate::utils::SearchTools;
 
 /// Escape regex metacharacters in a string for use in grep/rg patterns.
@@ -26,82 +25,13 @@ fn shell_escape_pattern(s: &str) -> String {
     escaped
 }
 
-/// Escape findstr regex metacharacters.
-///
-/// Findstr supports only: `.` `*` `^` `$` `[class]` `\x` — much more limited than POSIX regex.
-fn findstr_escape_pattern(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len() * 2);
-    for c in s.chars() {
-        match c {
-            '\\' | '.' | '*' | '^' | '$' | '[' | ']' => {
-                escaped.push('\\');
-                escaped.push(c);
-            }
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
-
-/// Build a findstr-compatible pattern from a search query condition.
-///
-/// Returns `(pattern, is_literal)` where `is_literal` indicates the pattern should be used
-/// with `/C:` (literal) rather than `/R` (regex).
-///
-/// # Errors
-///
-/// Returns `Unsupported` for `Regex` and `Or` conditions — findstr's regex is too limited
-/// for arbitrary patterns and does not support alternation.
-fn build_findstr_pattern(condition: &SearchQueryCondition) -> io::Result<(String, bool)> {
-    match condition {
-        SearchQueryCondition::Contains { value } => Ok((value.clone(), true)),
-        SearchQueryCondition::Equals { value } => {
-            Ok((format!("^{}$", findstr_escape_pattern(value)), false))
-        }
-        SearchQueryCondition::StartsWith { value } => {
-            Ok((format!("^{}", findstr_escape_pattern(value)), false))
-        }
-        SearchQueryCondition::EndsWith { value } => {
-            Ok((format!("{}$", findstr_escape_pattern(value)), false))
-        }
-        SearchQueryCondition::Regex { .. } | SearchQueryCondition::Or { .. } => {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "findstr does not support full regex or alternation patterns",
-            ))
-        }
-    }
-}
-
 /// Build a shell command for a search query based on available tools.
-pub fn build_search_command(
-    query: &SearchQuery,
-    tools: &SearchTools,
-    family: DockerFamily,
-) -> io::Result<String> {
+pub fn build_search_command(query: &SearchQuery, tools: &SearchTools) -> io::Result<String> {
     let path = query
         .paths
         .first()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string());
-
-    // When findstr is the only available tool (Windows), use the findstr pattern builder
-    // which handles the limited regex subset and returns Unsupported for Or/Regex.
-    let uses_findstr = tools.has_findstr
-        && !tools.has_rg
-        && !tools.has_grep
-        && !tools.has_find
-        && family == DockerFamily::Windows;
-
-    if uses_findstr {
-        let (pattern, is_literal) = build_findstr_pattern(&query.condition)?;
-        return match query.target {
-            SearchQueryTarget::Path => build_findstr_path_command(&path, &pattern, is_literal),
-            SearchQueryTarget::Contents => {
-                build_findstr_contents_command(&path, &pattern, is_literal)
-            }
-        };
-    }
 
     let pattern = build_unix_pattern(&query.condition);
 
@@ -181,39 +111,9 @@ fn build_contents_search_command(
     }
 }
 
-/// Build a findstr path search command using `dir /s /b` piped to `findstr`.
-fn build_findstr_path_command(path: &str, pattern: &str, is_literal: bool) -> io::Result<String> {
-    let flag = if is_literal {
-        format!("/I /C:\"{}\"", pattern)
-    } else {
-        format!("/I /R \"{}\"", pattern)
-    };
-    Ok(format!("dir /s /b \"{}\" | findstr {}", path, flag))
-}
-
-/// Build a findstr contents search command.
-///
-/// Uses `/N` for line numbers and `/S` for recursive search.
-/// Output format matches grep: `filepath:linenum:content`.
-fn build_findstr_contents_command(
-    path: &str,
-    pattern: &str,
-    is_literal: bool,
-) -> io::Result<String> {
-    let flag = if is_literal {
-        format!("/N /S /I /C:\"{}\"", pattern)
-    } else {
-        format!("/N /S /I /R \"{}\"", pattern)
-    };
-    Ok(format!("findstr {} \"{}\\*\"", flag, path))
-}
-
-/// Parse grep/rg/findstr output lines into search matches.
+/// Parse grep/rg output lines into search matches.
 ///
 /// Expected format: `filepath:linenum:matched_line`
-///
-/// Handles Windows drive-letter paths where output is `C:\path:10:content` — the drive
-/// letter and backslash-prefixed path are reconstituted from the first two colon-split parts.
 pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
     let mut matches = Vec::new();
 
@@ -222,26 +122,15 @@ pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
             continue;
         }
 
-        // Split into up to 4 parts to handle Windows drive-letter paths (C:\path:linenum:content)
-        let parts: Vec<&str> = line.splitn(4, ':').collect();
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
 
-        // Try Windows drive-letter path: single ASCII letter + backslash-prefixed path
-        let (filepath, line_num_str, content) = if parts.len() >= 4
-            && parts[0].len() == 1
-            && parts[0]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic())
-            && parts[1].starts_with('\\')
-        {
-            // Recombine drive letter: "C" + ":" + "\path"
-            let path = format!("{}:{}", parts[0], parts[1]);
-            (path, parts[2], parts[3])
-        } else if parts.len() >= 3 {
-            (parts[0].to_string(), parts[1], parts[2])
-        } else {
+        if parts.len() < 3 {
             continue;
-        };
+        }
+
+        let filepath = parts[0].to_string();
+        let line_num_str = parts[1];
+        let content = parts[2];
 
         if let Ok(line_num) = line_num_str.parse::<u64>() {
             let content = content.to_string();
@@ -260,35 +149,6 @@ pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
     }
 
     matches
-}
-
-/// Check if a string matches a search query condition.
-///
-/// Used by the tar-based search fallback on Windows nanoserver, where exec-based
-/// search tools (`findstr`, `dir`) cannot access paths created via the Docker tar API.
-#[allow(dead_code)]
-pub fn condition_matches(condition: &SearchQueryCondition, text: &str) -> bool {
-    match condition {
-        SearchQueryCondition::Contains { value } => {
-            text.to_lowercase().contains(&value.to_lowercase())
-        }
-        SearchQueryCondition::Equals { value } => text.eq_ignore_ascii_case(value),
-        SearchQueryCondition::StartsWith { value } => {
-            text.to_lowercase().starts_with(&value.to_lowercase())
-        }
-        SearchQueryCondition::EndsWith { value } => {
-            text.to_lowercase().ends_with(&value.to_lowercase())
-        }
-        SearchQueryCondition::Regex { .. } => {
-            // Regex matching is not supported in the tar-based fallback.
-            // On Windows nanoserver, Regex conditions are already rejected
-            // by `build_findstr_pattern` before reaching this path.
-            false
-        }
-        SearchQueryCondition::Or { value } => {
-            value.iter().any(|cond| condition_matches(cond, text))
-        }
-    }
 }
 
 /// Parse path search output into search matches.

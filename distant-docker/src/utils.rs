@@ -3,7 +3,6 @@
 use std::io::{self, Read};
 use std::path::Path;
 
-use crate::DockerFamily;
 use bollard::Docker;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::query_parameters::{
@@ -59,7 +58,7 @@ pub async fn execute_output(
     cmd: &[&str],
     user: Option<&str>,
 ) -> io::Result<ExecOutput> {
-    let exec = client
+    let created = client
         .create_exec(
             container,
             CreateExecOptions {
@@ -75,7 +74,7 @@ pub async fn execute_output(
 
     let start_result = client
         .start_exec(
-            &exec.id,
+            &created.id,
             Some(StartExecOptions {
                 detach: false,
                 ..Default::default()
@@ -116,7 +115,7 @@ pub async fn execute_output(
 
     // Get the exit code
     let inspect = client
-        .inspect_exec(&exec.id)
+        .inspect_exec(&created.id)
         .await
         .map_err(|e| io::Error::other(format!("Failed to inspect exec: {}", e)))?;
 
@@ -139,7 +138,7 @@ pub async fn execute_with_stdin(
 ) -> io::Result<ExecOutput> {
     use tokio::io::AsyncWriteExt;
 
-    let exec = client
+    let created = client
         .create_exec(
             container,
             CreateExecOptions {
@@ -156,7 +155,7 @@ pub async fn execute_with_stdin(
 
     let start_result = client
         .start_exec(
-            &exec.id,
+            &created.id,
             Some(StartExecOptions {
                 detach: false,
                 ..Default::default()
@@ -210,7 +209,7 @@ pub async fn execute_with_stdin(
     }
 
     let inspect = client
-        .inspect_exec(&exec.id)
+        .inspect_exec(&created.id)
         .await
         .map_err(|e| io::Error::other(format!("Failed to inspect exec: {}", e)))?;
 
@@ -328,9 +327,8 @@ fn build_tar_with_file(filename: &str, data: &[u8]) -> io::Result<Vec<u8>> {
 
 /// Build a tar archive containing a directory entry and a zero-byte marker file.
 ///
-/// The Docker `PUT /containers/{id}/archive` API silently accepts tar archives containing
-/// only directory entries on Windows nanoserver but never materializes those directories.
-/// Including a zero-byte `.distant` marker file forces Docker to create the directory.
+/// A zero-byte `.distant` marker file is included to ensure the directory is materialized
+/// by Docker's archive API on all platforms.
 pub fn build_tar_with_dir(dirname: &str) -> io::Result<Vec<u8>> {
     let mut tar_buf = Vec::new();
     {
@@ -356,7 +354,6 @@ pub fn build_tar_with_dir(dirname: &str) -> io::Result<Vec<u8>> {
         builder.append(&header, &[] as &[u8])?;
 
         // Add a zero-byte marker file to force Docker to materialize the directory
-        // on Windows nanoserver (directory-only tars are silently ignored).
         let marker_path = format!("{}.distant", dir_path);
         let mut marker_header = tar::Header::new_gnu();
         marker_header.set_path(&marker_path)?;
@@ -446,61 +443,39 @@ pub struct SearchTools {
 
     /// Whether find is available.
     pub has_find: bool,
-
-    /// Whether Windows `findstr.exe` is available.
-    pub has_findstr: bool,
 }
 
 impl SearchTools {
     /// Returns true if at least basic search capability is available.
     pub fn has_any(&self) -> bool {
-        self.has_rg || self.has_grep || self.has_find || self.has_findstr
+        self.has_rg || self.has_grep || self.has_find
     }
 }
 
 /// Probe the container for available search tools.
 ///
-/// Uses `which` on Unix containers and direct invocation on Windows containers
-/// (nanoserver lacks `which` and `where.exe`).
-pub async fn probe_search_tools(
-    client: &Docker,
-    container: &str,
-    family: DockerFamily,
-) -> SearchTools {
+/// Uses `which` to check for ripgrep, grep, and find.
+pub async fn probe_search_tools(client: &Docker, container: &str) -> SearchTools {
     let mut tools = SearchTools::default();
 
-    match family {
-        DockerFamily::Unix => {
-            // Check for ripgrep
-            if let Ok(output) = execute_output(client, container, &["which", "rg"], None).await {
-                tools.has_rg = output.success();
-            }
+    // Check for ripgrep
+    if let Ok(output) = execute_output(client, container, &["which", "rg"], None).await {
+        tools.has_rg = output.success();
+    }
 
-            // Check for grep
-            if let Ok(output) = execute_output(client, container, &["which", "grep"], None).await {
-                tools.has_grep = output.success();
-            }
+    // Check for grep
+    if let Ok(output) = execute_output(client, container, &["which", "grep"], None).await {
+        tools.has_grep = output.success();
+    }
 
-            // Check for find
-            if let Ok(output) = execute_output(client, container, &["which", "find"], None).await {
-                tools.has_find = output.success();
-            }
-        }
-        DockerFamily::Windows => {
-            // Nanoserver lacks `which` and `where.exe`, so probe by direct invocation.
-            // `findstr /?` prints help text but exits with code 1 on nanoserver,
-            // so we check for stdout output rather than exit code. If findstr is
-            // not found, stdout will be empty (the "not recognized" message goes
-            // to stderr).
-            if let Ok(output) = execute_output(client, container, &["findstr", "/?"], None).await {
-                tools.has_findstr = !output.stdout.is_empty();
-            }
-        }
+    // Check for find
+    if let Ok(output) = execute_output(client, container, &["which", "find"], None).await {
+        tools.has_find = output.success();
     }
 
     debug!(
-        "Search tools: rg={}, grep={}, find={}, findstr={}",
-        tools.has_rg, tools.has_grep, tools.has_find, tools.has_findstr
+        "Search tools: rg={}, grep={}, find={}",
+        tools.has_rg, tools.has_grep, tools.has_find
     );
 
     tools
@@ -547,23 +522,14 @@ pub async fn tar_create_dir(client: &Docker, container: &str, path: &str) -> io:
 pub async fn tar_create_dir_all(client: &Docker, container: &str, path: &str) -> io::Result<()> {
     let path_obj = Path::new(path);
 
-    // Determine the filesystem root and the relative components to create.
-    // On Windows paths like C:\foo\bar, the root is C:\ and components are [foo, bar].
-    // On Unix paths like /foo/bar, the root is / and components are [foo, bar].
+    // Collect path components (skip RootDir, grab Normal components)
     let mut components = Vec::new();
     let mut root = String::new();
 
     for component in path_obj.components() {
         match component {
-            std::path::Component::Prefix(p) => {
-                root = p.as_os_str().to_string_lossy().to_string();
-            }
             std::path::Component::RootDir => {
-                if root.is_empty() {
-                    root = "/".to_string();
-                } else {
-                    root.push(std::path::MAIN_SEPARATOR);
-                }
+                root = "/".to_string();
             }
             std::path::Component::Normal(c) => {
                 components.push(c.to_string_lossy().to_string());
@@ -581,9 +547,9 @@ pub async fn tar_create_dir_all(client: &Docker, container: &str, path: &str) ->
     }
 
     // Build a tar archive with directory entries for each cumulative path.
-    // e.g. for components [a, b, c] → entries "a/", "a/b/", "a/b/c/"
+    // e.g. for components [a, b, c] -> entries "a/", "a/b/", "a/b/c/"
     // A zero-byte marker file is added at the deepest directory to force
-    // Docker to materialize the directories on Windows nanoserver.
+    // Docker to materialize the directories.
     let mut tar_buf = Vec::new();
     {
         let mut builder = tar::Builder::new(&mut tar_buf);
