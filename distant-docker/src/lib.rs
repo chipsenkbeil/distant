@@ -332,7 +332,18 @@ impl Docker {
             match result {
                 Ok(info) => {
                     if let Some(status) = &info.status {
-                        trace!("Pull progress: {}", status);
+                        if let Some(detail) = &info.progress_detail {
+                            match (detail.current, detail.total) {
+                                (Some(current), Some(total)) => {
+                                    info!("Pull: {} ({}/{})", status, current, total);
+                                }
+                                _ => {
+                                    info!("Pull: {}", status);
+                                }
+                            }
+                        } else {
+                            info!("Pull: {}", status);
+                        }
                     }
                 }
                 Err(e) => {
