@@ -15,10 +15,14 @@ use rstest::*;
 
 use crate::manager::bin_path;
 
-/// Checks whether the Docker daemon is available by pinging it.
+/// Checks whether a Linux Docker daemon is available.
+///
+/// Returns `true` only when the daemon is reachable **and** is running Linux containers.
+/// The `distant-docker` crate only supports Unix containers, so Windows container daemons
+/// are treated as unavailable.
 pub async fn docker_available() -> bool {
     match DockerClient::connect_default() {
-        Ok(client) => client.ping().await.is_ok(),
+        Ok(client) => client.ping().await.is_ok() && client.is_linux_engine().await,
         Err(_) => false,
     }
 }

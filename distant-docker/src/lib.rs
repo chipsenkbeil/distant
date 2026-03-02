@@ -157,6 +157,21 @@ impl DockerClient {
         Ok(response.id)
     }
 
+    /// Check whether the Docker daemon is running a Linux engine.
+    ///
+    /// Returns `true` when the daemon reports `OSType` as anything other than `"windows"`,
+    /// or when the info call succeeds but `os_type` is absent (assumed Linux).
+    /// Returns `false` if the daemon reports Windows containers or if the info call fails.
+    ///
+    /// This is useful for gating tests that require Linux containers — the `distant-docker`
+    /// crate only supports Unix containers.
+    pub async fn is_linux_engine(&self) -> bool {
+        match self.0.info().await {
+            Ok(info) => info.os_type.as_deref() != Some("windows"),
+            Err(_) => false,
+        }
+    }
+
     /// Returns a reference to the inner bollard client.
     pub(crate) fn inner(&self) -> &BollardDocker {
         &self.0
