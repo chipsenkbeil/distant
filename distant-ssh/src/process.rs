@@ -3,7 +3,7 @@ use std::io;
 use std::sync::Arc;
 
 use distant_core::net::server::Reply;
-use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
+use distant_core::protocol::{Environment, ProcessId, PtySize, RemotePath, Response};
 use russh::ChannelMsg;
 use russh::client::Handle;
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ pub async fn spawn_simple<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
     environment: Environment,
-    current_dir: Option<std::path::PathBuf>,
+    current_dir: Option<RemotePath>,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
@@ -160,7 +160,7 @@ pub async fn spawn_pty<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
     environment: Environment,
-    current_dir: Option<std::path::PathBuf>,
+    current_dir: Option<RemotePath>,
     size: PtySize,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,

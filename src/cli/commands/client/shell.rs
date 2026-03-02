@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use distant_core::protocol::{Environment, PtySize};
+use distant_core::protocol::{Environment, PtySize, RemotePath};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use log::*;
 use terminal_size::{Height, Width, terminal_size};
@@ -68,7 +68,7 @@ impl Shell {
                 terminal_size()
                     .map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
             )
-            .current_dir(current_dir)
+            .current_dir(current_dir.map(RemotePath::from))
             .spawn(self.0, &cmd)
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;

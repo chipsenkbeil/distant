@@ -8,8 +8,8 @@ use std::sync::{Arc, Weak};
 use async_once_cell::OnceCell;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
-    ProcessId, PtySize, SearchId, SearchQuery, SearchQueryTarget, SetPermissionsOptions,
-    SystemInfo, UnixMetadata, Version,
+    ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SearchQueryTarget,
+    SetPermissionsOptions, SystemInfo, UnixMetadata, Version,
 };
 use distant_core::{Api, Ctx};
 use tokio::sync::RwLock;
@@ -174,18 +174,18 @@ impl Api for DockerApi {
     fn read_file(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
-            utils::tar_read_file(self.client.inner(), &self.container, &path_str).await
+            let path_str = path.as_str();
+            utils::tar_read_file(self.client.inner(), &self.container, path_str).await
         }
     }
 
     fn read_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<String>> + Send {
         async move {
             let data = self.read_file(ctx, path).await?;
@@ -201,19 +201,19 @@ impl Api for DockerApi {
     fn write_file(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: Vec<u8>,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
-            utils::tar_write_file(self.client.inner(), &self.container, &path_str, &data).await
+            let path_str = path.as_str();
+            utils::tar_write_file(self.client.inner(), &self.container, path_str, &data).await
         }
     }
 
     fn write_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: String,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move { self.write_file(ctx, path, data.into_bytes()).await }
@@ -222,11 +222,11 @@ impl Api for DockerApi {
     fn append_file(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: Vec<u8>,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str().to_string();
 
             // Primary: try exec-based append
             let result = utils::execute_with_stdin(
@@ -257,7 +257,7 @@ impl Api for DockerApi {
     fn append_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: String,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move { self.append_file(ctx, path, data.into_bytes()).await }
@@ -266,7 +266,7 @@ impl Api for DockerApi {
     fn read_dir(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         depth: usize,
         absolute: bool,
         _canonicalize: bool,
@@ -275,7 +275,7 @@ impl Api for DockerApi {
         async move {
             // Resolve relative paths (like ".") to absolute to ensure find output
             // and strip_prefix work correctly
-            let path = self.resolve_path(&path).await?;
+            let path = self.resolve_path(Path::new(path.as_str())).await?;
             let path_str = path.to_string_lossy().to_string();
             let mut entries = Vec::new();
             let mut errors: Vec<io::Error> = Vec::new();
@@ -326,12 +326,15 @@ impl Api for DockerApi {
                         }
 
                         let display_path = if absolute {
-                            entry_path.clone()
+                            RemotePath::new(entry_path.to_string_lossy().to_string())
                         } else {
-                            entry_path
-                                .strip_prefix(&path)
-                                .unwrap_or(&entry_path)
-                                .to_path_buf()
+                            RemotePath::new(
+                                entry_path
+                                    .strip_prefix(&path)
+                                    .unwrap_or(&entry_path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            )
                         };
 
                         entries.push(DirEntry {
@@ -367,7 +370,7 @@ impl Api for DockerApi {
                                 }
 
                                 entries.push(DirEntry {
-                                    path: full_path,
+                                    path: RemotePath::new(entry_path),
                                     file_type,
                                     depth: rel_depth,
                                 });
@@ -385,11 +388,11 @@ impl Api for DockerApi {
     fn create_dir(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         all: bool,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str().to_string();
 
             // Try exec-based mkdir first (faster, simpler)
             let cmd = if all {
@@ -424,12 +427,12 @@ impl Api for DockerApi {
     fn copy(
         &self,
         _ctx: Ctx,
-        src: PathBuf,
-        dst: PathBuf,
+        src: RemotePath,
+        dst: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let src_str = src.to_string_lossy().to_string();
-            let dst_str = dst.to_string_lossy().to_string();
+            let src_str = src.as_str().to_string();
+            let dst_str = dst.as_str().to_string();
 
             let cmd = format!("cp -r '{}' '{}'", src_str, dst_str);
 
@@ -450,11 +453,11 @@ impl Api for DockerApi {
     fn remove(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         force: bool,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str();
 
             let cmd = if force {
                 format!("rm -rf '{}'", path_str)
@@ -469,12 +472,12 @@ impl Api for DockerApi {
     fn rename(
         &self,
         _ctx: Ctx,
-        src: PathBuf,
-        dst: PathBuf,
+        src: RemotePath,
+        dst: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let src_str = src.to_string_lossy().to_string();
-            let dst_str = dst.to_string_lossy().to_string();
+            let src_str = src.as_str().to_string();
+            let dst_str = dst.as_str().to_string();
 
             let cmd = format!("mv '{}' '{}'", src_str, dst_str);
 
@@ -508,7 +511,7 @@ impl Api for DockerApi {
     fn watch(
         &self,
         _ctx: Ctx,
-        _path: PathBuf,
+        _path: RemotePath,
         _recursive: bool,
         _only: Vec<ChangeKind>,
         _except: Vec<ChangeKind>,
@@ -526,7 +529,7 @@ impl Api for DockerApi {
     fn unwatch(
         &self,
         _ctx: Ctx,
-        _path: PathBuf,
+        _path: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async {
             Err(io::Error::new(
@@ -539,10 +542,10 @@ impl Api for DockerApi {
     fn exists(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
     ) -> impl std::future::Future<Output = io::Result<bool>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str();
 
             // Try exec-based check first
             let cmd = format!("test -e '{}'", path_str);
@@ -552,7 +555,7 @@ impl Api for DockerApi {
                 Err(_) => {
                     // Fallback to tar-based existence check
                     Ok(
-                        utils::tar_path_exists(self.client.inner(), &self.container, &path_str)
+                        utils::tar_path_exists(self.client.inner(), &self.container, path_str)
                             .await,
                     )
                 }
@@ -563,12 +566,12 @@ impl Api for DockerApi {
     fn metadata(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         canonicalize: bool,
         _resolve_file_type: bool,
     ) -> impl std::future::Future<Output = io::Result<Metadata>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str();
 
             // Try exec-based stat first
             let cmd = format!("stat -c '%F %s %Y %X %W %a %u %g %h %i' '{}'", path_str);
@@ -576,14 +579,14 @@ impl Api for DockerApi {
                 && output.success()
             {
                 let stdout = output.stdout_str();
-                if let Some(metadata) = parse_stat_output(stdout.trim(), &path, canonicalize) {
+                if let Some(metadata) = parse_stat_output(stdout.trim(), path_str, canonicalize) {
                     return Ok(metadata);
                 }
             }
 
             // Fallback to tar-based metadata
             let entries =
-                utils::tar_list_dir(self.client.inner(), &self.container, &path_str).await?;
+                utils::tar_list_dir(self.client.inner(), &self.container, path_str).await?;
 
             if let Some((entry_type, _entry_path, size, mtime)) = entries.first() {
                 let file_type = match entry_type {
@@ -619,12 +622,12 @@ impl Api for DockerApi {
     fn set_permissions(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         permissions: Permissions,
         options: SetPermissionsOptions,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.as_str();
             let mode = permissions.to_unix_mode();
             let mode_str = format!("{:o}", mode);
 
@@ -698,7 +701,7 @@ impl Api for DockerApi {
         ctx: Ctx,
         cmd: String,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> impl std::future::Future<Output = io::Result<ProcessId>> + Send {
         let client = self.client.inner();
@@ -715,6 +718,8 @@ impl Api for DockerApi {
                     }
                 }
             };
+
+            let current_dir: Option<PathBuf> = current_dir.map(Into::into);
 
             let SpawnResult {
                 id,
@@ -869,8 +874,9 @@ impl Api for DockerApi {
                     let output = self.run_cmd_stdout(&["pwd"]).await?;
                     Ok(PathBuf::from(output.trim()))
                 })
-                .await?
-                .clone();
+                .await?;
+
+            let current_dir = RemotePath::new(current_dir.to_string_lossy().to_string());
 
             let username = self
                 .cached_username
@@ -924,7 +930,7 @@ impl Api for DockerApi {
 ///
 /// Expected format: `%F %s %Y %X %W %a %u %g %h %i`
 /// Example: `regular file 1234 1700000000 1700000000 1699000000 644 1000 1000 1 12345`
-fn parse_stat_output(line: &str, path: &Path, canonicalize: bool) -> Option<Metadata> {
+fn parse_stat_output(line: &str, path: &str, canonicalize: bool) -> Option<Metadata> {
     let parts: Vec<&str> = line.splitn(10, ' ').collect();
     if parts.len() < 6 {
         return None;
@@ -976,7 +982,7 @@ fn parse_stat_output(line: &str, path: &Path, canonicalize: bool) -> Option<Meta
 
     Some(Metadata {
         canonicalized_path: if canonicalize {
-            Some(path.to_path_buf())
+            Some(RemotePath::new(path))
         } else {
             None
         },

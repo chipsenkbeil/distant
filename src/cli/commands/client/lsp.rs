@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use distant_core::protocol::PtySize;
+use distant_core::protocol::{PtySize, RemotePath};
 use distant_core::{Channel, RemoteLspCommand};
 use terminal_size::{Height, Width, terminal_size};
 
@@ -33,7 +33,7 @@ impl Lsp {
             } else {
                 None
             })
-            .current_dir(current_dir)
+            .current_dir(current_dir.map(RemotePath::from))
             .scheme(scheme)
             .spawn(self.0, &cmd)
             .await

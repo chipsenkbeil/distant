@@ -187,7 +187,6 @@ mod tests {
     //! unexpected response), result queuing before started confirmation, is_active lifecycle,
     //! and iteration via next().
 
-    use std::path::PathBuf;
     use std::sync::Arc;
 
     use crate::net::common::{FramedTransport, InmemoryTransport, Response};
@@ -197,8 +196,8 @@ mod tests {
     use super::*;
     use crate::Client;
     use crate::protocol::{
-        SearchQueryCondition, SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch,
-        SearchQuerySubmatch, SearchQueryTarget,
+        RemotePath, SearchQueryCondition, SearchQueryMatchData, SearchQueryOptions,
+        SearchQueryPathMatch, SearchQuerySubmatch, SearchQueryTarget,
     };
 
     fn make_session() -> (FramedTransport<InmemoryTransport>, Client) {
@@ -210,7 +209,7 @@ mod tests {
     async fn searcher_should_have_query_reflect_ongoing_query() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -246,7 +245,7 @@ mod tests {
     async fn searcher_should_support_getting_next_match() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -286,7 +285,7 @@ mod tests {
                         id,
                         matches: vec![
                             SearchQueryMatch::Path(SearchQueryPathMatch {
-                                path: PathBuf::from("/some/path/1"),
+                                path: RemotePath::new("/some/path/1"),
                                 submatches: vec![SearchQuerySubmatch {
                                     r#match: SearchQueryMatchData::Text("test match".to_string()),
                                     start: 3,
@@ -294,7 +293,7 @@ mod tests {
                                 }],
                             }),
                             SearchQueryMatch::Path(SearchQueryPathMatch {
-                                path: PathBuf::from("/some/path/2"),
+                                path: RemotePath::new("/some/path/2"),
                                 submatches: vec![SearchQuerySubmatch {
                                     r#match: SearchQueryMatchData::Text("test match 2".to_string()),
                                     start: 88,
@@ -306,7 +305,7 @@ mod tests {
                     protocol::Response::SearchResults {
                         id,
                         matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                            path: PathBuf::from("/some/path/3"),
+                            path: RemotePath::new("/some/path/3"),
                             submatches: vec![SearchQuerySubmatch {
                                 r#match: SearchQueryMatchData::Text("test match 3".to_string()),
                                 start: 5,
@@ -324,7 +323,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/1"),
+                path: RemotePath::new("/some/path/1"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match".to_string()),
                     start: 3,
@@ -337,7 +336,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/2"),
+                path: RemotePath::new("/some/path/2"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match 2".to_string()),
                     start: 88,
@@ -350,7 +349,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/3"),
+                path: RemotePath::new("/some/path/3"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match 3".to_string()),
                     start: 5,
@@ -365,7 +364,7 @@ mod tests {
         let (mut transport, session) = make_session();
 
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -403,7 +402,7 @@ mod tests {
                 protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("/some/path/1"),
+                        path: RemotePath::new("/some/path/1"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text("test match".to_string()),
                             start: 3,
@@ -422,7 +421,7 @@ mod tests {
                 protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("/some/path/2"),
+                        path: RemotePath::new("/some/path/2"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text("test match 2".to_string()),
                             start: 88,
@@ -441,7 +440,7 @@ mod tests {
                 protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("/some/path/3"),
+                        path: RemotePath::new("/some/path/3"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text("test match 3".to_string()),
                             start: 5,
@@ -458,7 +457,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/1"),
+                path: RemotePath::new("/some/path/1"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match".to_string()),
                     start: 3,
@@ -471,7 +470,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/3"),
+                path: RemotePath::new("/some/path/3"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match 3".to_string()),
                     start: 5,
@@ -486,7 +485,7 @@ mod tests {
         let (mut transport, session) = make_session();
 
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -522,7 +521,7 @@ mod tests {
                     id,
                     matches: vec![
                         SearchQueryMatch::Path(SearchQueryPathMatch {
-                            path: PathBuf::from("/some/path/1"),
+                            path: RemotePath::new("/some/path/1"),
                             submatches: vec![SearchQuerySubmatch {
                                 r#match: SearchQueryMatchData::Text("test match".to_string()),
                                 start: 3,
@@ -530,7 +529,7 @@ mod tests {
                             }],
                         }),
                         SearchQueryMatch::Path(SearchQueryPathMatch {
-                            path: PathBuf::from("/some/path/2"),
+                            path: RemotePath::new("/some/path/2"),
                             submatches: vec![SearchQuerySubmatch {
                                 r#match: SearchQueryMatchData::Text("test match 2".to_string()),
                                 start: 88,
@@ -560,7 +559,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/1"),
+                path: RemotePath::new("/some/path/1"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match".to_string()),
                     start: 3,
@@ -590,7 +589,7 @@ mod tests {
                 protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("/some/path/3"),
+                        path: RemotePath::new("/some/path/3"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text("test match 3".to_string()),
                             start: 5,
@@ -607,7 +606,7 @@ mod tests {
         assert_eq!(
             searcher.lock().await.next().await,
             Some(SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/some/path/2"),
+                path: RemotePath::new("/some/path/2"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("test match 2".to_string()),
                     start: 88,
@@ -622,7 +621,7 @@ mod tests {
     async fn searcher_debug_should_include_id_and_query() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -655,7 +654,7 @@ mod tests {
     async fn searcher_is_active_should_return_true_while_task_is_running() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -702,7 +701,7 @@ mod tests {
     async fn searcher_should_fail_when_no_started_confirmation_received() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -732,7 +731,7 @@ mod tests {
     async fn searcher_should_fail_when_error_response_received_during_setup() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -767,7 +766,7 @@ mod tests {
     async fn searcher_should_fail_when_unexpected_response_received_during_setup() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -796,7 +795,7 @@ mod tests {
     async fn searcher_should_queue_results_received_before_started_confirmation() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -820,7 +819,7 @@ mod tests {
                     protocol::Response::SearchResults {
                         id,
                         matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                            path: PathBuf::from("/queued/path"),
+                            path: RemotePath::new("/queued/path"),
                             submatches: vec![SearchQuerySubmatch {
                                 r#match: SearchQueryMatchData::Text("queued".to_string()),
                                 start: 0,
@@ -841,7 +840,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/queued/path"),
+                path: RemotePath::new("/queued/path"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("queued".to_string()),
                     start: 0,
@@ -855,7 +854,7 @@ mod tests {
     async fn searcher_should_return_none_after_search_done() {
         let (mut transport, session) = make_session();
         let test_query = SearchQuery {
-            paths: vec![PathBuf::from("/some/test/path")],
+            paths: vec![RemotePath::new("/some/test/path")],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Regex {
                 value: String::from("."),
@@ -888,7 +887,7 @@ mod tests {
                 protocol::Response::SearchResults {
                     id,
                     matches: vec![SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("/done/path"),
+                        path: RemotePath::new("/done/path"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text("done".to_string()),
                             start: 0,
@@ -913,7 +912,7 @@ mod tests {
         assert_eq!(
             m,
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/done/path"),
+                path: RemotePath::new("/done/path"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text("done".to_string()),
                     start: 0,

@@ -412,7 +412,7 @@ mod tests {
     }
 
     mod dir_entries {
-        use std::path::PathBuf;
+        use crate::protocol::RemotePath;
 
         use super::*;
         use crate::protocol::common::{ErrorKind, FileType};
@@ -439,7 +439,7 @@ mod tests {
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Response::DirEntries {
                 entries: vec![DirEntry {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     file_type: FileType::File,
                     depth: usize::MAX,
                 }],
@@ -505,7 +505,7 @@ mod tests {
                 payload,
                 Response::DirEntries {
                     entries: vec![DirEntry {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         file_type: FileType::File,
                         depth: usize::MAX,
                     }],
@@ -535,7 +535,7 @@ mod tests {
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Response::DirEntries {
                 entries: vec![DirEntry {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     file_type: FileType::File,
                     depth: usize::MAX,
                 }],
@@ -582,7 +582,7 @@ mod tests {
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Response::DirEntries {
                 entries: vec![DirEntry {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     file_type: FileType::File,
                     depth: usize::MAX,
                 }],
@@ -598,7 +598,7 @@ mod tests {
                 payload,
                 Response::DirEntries {
                     entries: vec![DirEntry {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         file_type: FileType::File,
                         depth: usize::MAX,
                     }],
@@ -612,7 +612,7 @@ mod tests {
     }
 
     mod changed {
-        use std::path::PathBuf;
+        use crate::protocol::RemotePath;
 
         use super::*;
         use crate::protocol::common::{ChangeDetails, ChangeDetailsAttribute, ChangeKind};
@@ -622,7 +622,7 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails::default(),
             });
 
@@ -643,10 +643,10 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
-                    renamed: Some(PathBuf::from("renamed")),
+                    renamed: Some(RemotePath::new("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -685,7 +685,7 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     details: ChangeDetails::default(),
                 })
             );
@@ -712,10 +712,10 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     details: ChangeDetails {
                         attribute: Some(ChangeDetailsAttribute::Permissions),
-                        renamed: Some(PathBuf::from("renamed")),
+                        renamed: Some(RemotePath::new("renamed")),
                         timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },
@@ -728,7 +728,7 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails::default(),
             });
 
@@ -744,10 +744,10 @@ mod tests {
             let payload = Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
-                    renamed: Some(PathBuf::from("renamed")),
+                    renamed: Some(RemotePath::new("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -769,7 +769,7 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails::default(),
             }))
             .unwrap();
@@ -780,7 +780,7 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     details: ChangeDetails::default(),
                 })
             );
@@ -795,10 +795,10 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Response::Changed(Change {
                 timestamp: u64::MAX,
                 kind: ChangeKind::Access,
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
-                    renamed: Some(PathBuf::from("renamed")),
+                    renamed: Some(RemotePath::new("renamed")),
                     timestamp: Some(u64::MAX),
                     extra: Some(String::from("info")),
                 },
@@ -811,10 +811,10 @@ mod tests {
                 Response::Changed(Change {
                     timestamp: u64::MAX,
                     kind: ChangeKind::Access,
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     details: ChangeDetails {
                         attribute: Some(ChangeDetailsAttribute::Permissions),
-                        renamed: Some(PathBuf::from("renamed")),
+                        renamed: Some(RemotePath::new("renamed")),
                         timestamp: Some(u64::MAX),
                         extra: Some(String::from("info")),
                     },
@@ -876,7 +876,7 @@ mod tests {
     }
 
     mod metadata {
-        use std::path::PathBuf;
+        use crate::protocol::RemotePath;
 
         use super::*;
         use crate::protocol::common::{FileType, UnixMetadata, WindowsMetadata};
@@ -910,7 +910,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Response::Metadata(Metadata {
-                canonicalized_path: Some(PathBuf::from("path")),
+                canonicalized_path: Some(RemotePath::new("path")),
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
@@ -1062,7 +1062,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Response::Metadata(Metadata {
-                    canonicalized_path: Some(PathBuf::from("path")),
+                    canonicalized_path: Some(RemotePath::new("path")),
                     file_type: FileType::File,
                     len: u64::MAX,
                     readonly: true,
@@ -1125,7 +1125,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Response::Metadata(Metadata {
-                canonicalized_path: Some(PathBuf::from("path")),
+                canonicalized_path: Some(RemotePath::new("path")),
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
@@ -1212,7 +1212,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Response::Metadata(Metadata {
-                canonicalized_path: Some(PathBuf::from("path")),
+                canonicalized_path: Some(RemotePath::new("path")),
                 file_type: FileType::File,
                 len: u64::MAX,
                 readonly: true,
@@ -1254,7 +1254,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Response::Metadata(Metadata {
-                    canonicalized_path: Some(PathBuf::from("path")),
+                    canonicalized_path: Some(RemotePath::new("path")),
                     file_type: FileType::File,
                     len: u64::MAX,
                     readonly: true,
@@ -1349,7 +1349,7 @@ mod tests {
     }
 
     mod search_results {
-        use std::path::PathBuf;
+        use crate::protocol::RemotePath;
 
         use super::*;
         use crate::protocol::common::{
@@ -1361,7 +1361,7 @@ mod tests {
             let payload = Response::SearchResults {
                 id: SearchId::MAX,
                 matches: vec![SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: "some lines".into(),
                     line_number: u64::MAX,
                     absolute_offset: u64::MAX,
@@ -1416,7 +1416,7 @@ mod tests {
                 Response::SearchResults {
                     id: SearchId::MAX,
                     matches: vec![SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         lines: "some lines".into(),
                         line_number: u64::MAX,
                         absolute_offset: u64::MAX,
@@ -1431,7 +1431,7 @@ mod tests {
             let payload = Response::SearchResults {
                 id: SearchId::MAX,
                 matches: vec![SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: "some lines".into(),
                     line_number: u64::MAX,
                     absolute_offset: u64::MAX,
@@ -1455,7 +1455,7 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Response::SearchResults {
                 id: SearchId::MAX,
                 matches: vec![SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: "some lines".into(),
                     line_number: u64::MAX,
                     absolute_offset: u64::MAX,
@@ -1470,7 +1470,7 @@ mod tests {
                 Response::SearchResults {
                     id: SearchId::MAX,
                     matches: vec![SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         lines: "some lines".into(),
                         line_number: u64::MAX,
                         absolute_offset: u64::MAX,
@@ -1901,7 +1901,7 @@ mod tests {
     }
 
     mod system_info {
-        use std::path::PathBuf;
+        use crate::protocol::RemotePath;
 
         use super::*;
 
@@ -1911,7 +1911,7 @@ mod tests {
                 family: String::from("family"),
                 os: String::from("os"),
                 arch: String::from("arch"),
-                current_dir: PathBuf::from("current-dir"),
+                current_dir: RemotePath::new("current-dir"),
                 main_separator: '/',
                 username: String::from("username"),
                 shell: String::from("shell"),
@@ -1953,7 +1953,7 @@ mod tests {
                     family: String::from("family"),
                     os: String::from("os"),
                     arch: String::from("arch"),
-                    current_dir: PathBuf::from("current-dir"),
+                    current_dir: RemotePath::new("current-dir"),
                     main_separator: '/',
                     username: String::from("username"),
                     shell: String::from("shell"),
@@ -1967,7 +1967,7 @@ mod tests {
                 family: String::from("family"),
                 os: String::from("os"),
                 arch: String::from("arch"),
-                current_dir: PathBuf::from("current-dir"),
+                current_dir: RemotePath::new("current-dir"),
                 main_separator: '/',
                 username: String::from("username"),
                 shell: String::from("shell"),
@@ -1990,7 +1990,7 @@ mod tests {
                 family: String::from("family"),
                 os: String::from("os"),
                 arch: String::from("arch"),
-                current_dir: PathBuf::from("current-dir"),
+                current_dir: RemotePath::new("current-dir"),
                 main_separator: '/',
                 username: String::from("username"),
                 shell: String::from("shell"),
@@ -2004,7 +2004,7 @@ mod tests {
                     family: String::from("family"),
                     os: String::from("os"),
                     arch: String::from("arch"),
-                    current_dir: PathBuf::from("current-dir"),
+                    current_dir: RemotePath::new("current-dir"),
                     main_separator: '/',
                     username: String::from("username"),
                     shell: String::from("shell"),

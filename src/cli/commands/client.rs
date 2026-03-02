@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -9,8 +9,9 @@ use console::style;
 use distant_core::net::common::{ConnectionId, Destination, Host, Map, Request, Response};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
-    self, ChangeKind, ChangeKindSet, FileType, Permissions, SearchQuery, SearchQueryContentsMatch,
-    SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions, SystemInfo, Version, semver,
+    self, ChangeKind, ChangeKindSet, FileType, Permissions, RemotePath, SearchQuery,
+    SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
+    SystemInfo, Version, semver,
 };
 use distant_core::{Channel, ChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
@@ -548,7 +549,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 );
                 let mut proc = RemoteCommand::new()
                     .environment(environment.into_map())
-                    .current_dir(current_dir)
+                    .current_dir(current_dir.map(RemotePath::from))
                     .pty(None)
                     .spawn(channel, &cmd)
                     .await
@@ -819,10 +820,10 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             let results = channel
                 .send(protocol::Msg::Batch(vec![
                     protocol::Request::FileRead {
-                        path: path.to_path_buf(),
+                        path: RemotePath::from(path.as_path()),
                     },
                     protocol::Request::DirRead {
-                        path: path.to_path_buf(),
+                        path: RemotePath::from(path.as_path()),
                         depth,
                         absolute,
                         canonicalize,
@@ -928,7 +929,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             let query = SearchQuery {
                 target: target.into(),
                 condition,
-                paths,
+                paths: paths.into_iter().map(RemotePath::from).collect(),
                 options: options.into(),
             };
 
@@ -937,7 +938,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 .context("Failed to start search")?;
 
             // Continue to receive and process matches
-            let mut last_searched_path: Option<PathBuf> = None;
+            let mut last_searched_path: Option<RemotePath> = None;
             while let Some(m) = searcher.next().await {
                 let (output, path, _is_targeting_paths) =
                     format_search_match(m, &last_searched_path);
@@ -1030,11 +1031,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
 
             // Continue to receive and process changes
             while let Some(change) = watcher.next().await {
-                println!(
-                    "{} {}",
-                    format_change_kind(change.kind),
-                    change.path.to_string_lossy()
-                );
+                println!("{} {}", format_change_kind(change.kind), change.path);
             }
         }
         ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Write {
@@ -1554,7 +1551,7 @@ fn format_system_info(info: &SystemInfo) -> String {
         info.family,
         info.os,
         info.arch,
-        info.current_dir,
+        info.current_dir.as_str(),
         info.main_separator,
         info.username,
         info.shell
@@ -1667,7 +1664,7 @@ fn format_metadata(metadata: &protocol::Metadata) -> String {
         metadata
             .canonicalized_path
             .as_ref()
-            .map(|p| format!("Canonicalized Path: {p:?}\n"))
+            .map(|p| format!("Canonicalized Path: {:?}\n", p.as_str()))
             .unwrap_or_default(),
         metadata.file_type.as_ref(),
         metadata.len,
@@ -1771,7 +1768,7 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
                         FileType::File => "",
                         FileType::Symlink => "<SYMLINK>",
                     }),
-                    path: entry.path.to_string_lossy().to_string(),
+                    path: entry.path.to_string(),
                 }))
                 .with(Style::blank())
                 .with(Disable::row(Rows::new(..1)))
@@ -1801,8 +1798,8 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
 /// Returns the formatted output string and the path of the match (for tracking last-seen path).
 fn format_search_match(
     m: SearchQueryMatch,
-    last_searched_path: &Option<PathBuf>,
-) -> (String, PathBuf, bool) {
+    last_searched_path: &Option<RemotePath>,
+) -> (String, RemotePath, bool) {
     let (path, line, is_targeting_paths) = match m {
         SearchQueryMatch::Path(SearchQueryPathMatch { path, .. }) => (path, None, true),
         SearchQueryMatch::Contents(SearchQueryContentsMatch {
@@ -1820,7 +1817,7 @@ fn format_search_match(
     use std::fmt::Write;
 
     // If we are seeing a new path, print it out
-    if last_searched_path.as_deref() != Some(path.as_path()) {
+    if last_searched_path.as_ref() != Some(&path) {
         // If we have already seen some path before, we would have printed it, and
         // we want to add a space between it and the current path, but only if we are
         // printing out file content matches and not paths
@@ -1828,7 +1825,7 @@ fn format_search_match(
             writeln!(&mut output).unwrap();
         }
 
-        writeln!(&mut output, "{}", path.to_string_lossy()).unwrap();
+        writeln!(&mut output, "{}", path).unwrap();
     }
 
     if let Some(line) = line {
@@ -2033,7 +2030,6 @@ mod tests {
         self, DirEntry, FileType, Metadata, Msg, Permissions, SearchQueryContentsMatch,
         SearchQueryMatch, SearchQueryPathMatch, UnixMetadata, Version, WindowsMetadata,
     };
-    use std::path::PathBuf;
 
     // =====================================================================
     // parse_permissions_mode
@@ -2203,7 +2199,7 @@ mod tests {
         #[test]
         fn metadata_with_canonicalized_path() {
             let mut m = minimal_metadata();
-            m.canonicalized_path = Some(PathBuf::from("/resolved/path"));
+            m.canonicalized_path = Some(RemotePath::new("/resolved/path"));
             let output = format_metadata(&m);
             assert!(output.contains("Canonicalized Path:"));
             assert!(output.contains("/resolved/path"));
@@ -2322,12 +2318,12 @@ mod tests {
                 protocol::Response::DirEntries {
                     entries: vec![
                         DirEntry {
-                            path: PathBuf::from("subdir"),
+                            path: RemotePath::new("subdir"),
                             file_type: FileType::Dir,
                             depth: 1,
                         },
                         DirEntry {
-                            path: PathBuf::from("file.txt"),
+                            path: RemotePath::new("file.txt"),
                             file_type: FileType::File,
                             depth: 1,
                         },
@@ -2386,7 +2382,7 @@ mod tests {
         fn symlink_entry_shows_symlink_tag() {
             let response = Msg::Batch(vec![protocol::Response::DirEntries {
                 entries: vec![DirEntry {
-                    path: PathBuf::from("link"),
+                    path: RemotePath::new("link"),
                     file_type: FileType::Symlink,
                     depth: 1,
                 }],
@@ -2408,19 +2404,19 @@ mod tests {
         #[test]
         fn path_match_prints_path() {
             let m = SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from("/foo/bar"),
+                path: RemotePath::new("/foo/bar"),
                 submatches: vec![],
             });
             let (output, path, is_path) = format_search_match(m, &None);
             assert!(output.contains("/foo/bar"));
-            assert_eq!(path, PathBuf::from("/foo/bar"));
+            assert_eq!(path, RemotePath::new("/foo/bar"));
             assert!(is_path);
         }
 
         #[test]
         fn contents_match_prints_line_number_and_text() {
             let m = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: PathBuf::from("/foo/bar.rs"),
+                path: RemotePath::new("/foo/bar.rs"),
                 lines: protocol::SearchQueryMatchData::Text("fn main() {}".into()),
                 line_number: 42,
                 absolute_offset: 100,
@@ -2429,15 +2425,15 @@ mod tests {
             let (output, path, is_path) = format_search_match(m, &None);
             assert!(output.contains("/foo/bar.rs"));
             assert!(output.contains("42:fn main() {}"));
-            assert_eq!(path, PathBuf::from("/foo/bar.rs"));
+            assert_eq!(path, RemotePath::new("/foo/bar.rs"));
             assert!(!is_path);
         }
 
         #[test]
         fn same_path_as_last_does_not_reprint_path() {
-            let last = Some(PathBuf::from("/foo/bar.rs"));
+            let last = Some(RemotePath::new("/foo/bar.rs"));
             let m = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: PathBuf::from("/foo/bar.rs"),
+                path: RemotePath::new("/foo/bar.rs"),
                 lines: protocol::SearchQueryMatchData::Text("line 2".into()),
                 line_number: 10,
                 absolute_offset: 50,
@@ -2452,9 +2448,9 @@ mod tests {
 
         #[test]
         fn new_path_with_previous_adds_blank_line_for_contents() {
-            let last = Some(PathBuf::from("/old/path.rs"));
+            let last = Some(RemotePath::new("/old/path.rs"));
             let m = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: PathBuf::from("/new/path.rs"),
+                path: RemotePath::new("/new/path.rs"),
                 lines: protocol::SearchQueryMatchData::Text("content".into()),
                 line_number: 1,
                 absolute_offset: 0,
@@ -2600,7 +2596,7 @@ mod tests {
                 family: "unix".to_string(),
                 os: "linux".to_string(),
                 arch: "x86_64".to_string(),
-                current_dir: PathBuf::from("/home/user"),
+                current_dir: RemotePath::new("/home/user"),
                 main_separator: '/',
                 username: "testuser".to_string(),
                 shell: "bash".to_string(),

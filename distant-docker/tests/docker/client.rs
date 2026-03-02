@@ -146,7 +146,7 @@ async fn read_dir_should_list_entries(#[future] client: Option<Ctx<Client>>) {
 
     let names: Vec<String> = entries
         .iter()
-        .map(|e| e.path.file_name().unwrap().to_string_lossy().to_string())
+        .filter_map(|e| e.path.as_str().rsplit('/').next().map(|s| s.to_string()))
         .collect();
 
     assert!(names.contains(&"file1.txt".to_string()));
@@ -384,10 +384,11 @@ async fn search_contents_should_find_pattern_in_file(#[future] client: Option<Ct
         !found.is_empty(),
         "Expected at least one content search match"
     );
+    let file_str = file.to_string_lossy().to_string();
     assert!(
         found
             .iter()
-            .any(|m| matches!(m, SearchQueryMatch::Contents(c) if c.path == file))
+            .any(|m| matches!(m, SearchQueryMatch::Contents(c) if c.path.as_str() == file_str))
     );
 
     let _ = client.remove(dir, true).await;
@@ -419,9 +420,9 @@ async fn search_path_should_find_file_by_name(#[future] client: Option<Ctx<Clien
     }
 
     assert!(!found.is_empty(), "Expected at least one path search match");
-    assert!(found
-        .iter()
-        .any(|m| matches!(m, SearchQueryMatch::Path(p) if p.path.to_string_lossy().contains("unique-needle-file"))));
+    assert!(found.iter().any(
+        |m| matches!(m, SearchQueryMatch::Path(p) if p.path.as_str().contains("unique-needle-file"))
+    ));
 
     let _ = client.remove(dir, true).await;
 }

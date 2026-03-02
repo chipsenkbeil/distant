@@ -7,7 +7,7 @@ use std::time::Duration;
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use distant_core::protocol::{
-    ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, SearchQuery,
+    ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, RemotePath, SearchQuery,
     SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
 };
 use distant_core::{ChannelExt, Client};
@@ -372,15 +372,15 @@ async fn dir_read_should_support_depth_limits(#[future] client: Ctx<Client>) {
     assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(entries[0].path, Path::new("file1"));
+    assert_eq!(entries[0].path, RemotePath::new("file1"));
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Symlink);
-    assert_eq!(entries[1].path, Path::new("link1"));
+    assert_eq!(entries[1].path, RemotePath::new("link1"));
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Dir);
-    assert_eq!(entries[2].path, Path::new("sub1"));
+    assert_eq!(entries[2].path, RemotePath::new("sub1"));
     assert_eq!(entries[2].depth, 1);
 }
 
@@ -406,19 +406,19 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
     assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(entries[0].path, Path::new("file1"));
+    assert_eq!(entries[0].path, RemotePath::new("file1"));
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Symlink);
-    assert_eq!(entries[1].path, Path::new("link1"));
+    assert_eq!(entries[1].path, RemotePath::new("link1"));
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Dir);
-    assert_eq!(entries[2].path, Path::new("sub1"));
+    assert_eq!(entries[2].path, RemotePath::new("sub1"));
     assert_eq!(entries[2].depth, 1);
 
     assert_eq!(entries[3].file_type, FileType::File);
-    assert_eq!(entries[3].path, Path::new("sub1").join("file2"));
+    assert_eq!(entries[3].path, RemotePath::new("sub1/file2"));
     assert_eq!(entries[3].depth, 2);
 }
 
@@ -448,21 +448,21 @@ async fn dir_read_should_support_including_directory_in_returned_entries(
     // NOTE: Root entry is always absolute, resolved path
     assert_eq!(entries[0].file_type, FileType::Dir);
     assert_eq!(
-        normalize_path(&entries[0].path),
+        normalize_path(Path::new(entries[0].path.as_str())),
         dunce::canonicalize(root_dir.path()).unwrap()
     );
     assert_eq!(entries[0].depth, 0);
 
     assert_eq!(entries[1].file_type, FileType::File);
-    assert_eq!(entries[1].path, Path::new("file1"));
+    assert_eq!(entries[1].path, RemotePath::new("file1"));
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Symlink);
-    assert_eq!(entries[2].path, Path::new("link1"));
+    assert_eq!(entries[2].path, RemotePath::new("link1"));
     assert_eq!(entries[2].depth, 1);
 
     assert_eq!(entries[3].file_type, FileType::Dir);
-    assert_eq!(entries[3].path, Path::new("sub1"));
+    assert_eq!(entries[3].path, RemotePath::new("sub1"));
     assert_eq!(entries[3].depth, 1);
 }
 
@@ -489,15 +489,24 @@ async fn dir_read_should_support_returning_absolute_paths(#[future] client: Ctx<
     let root_path = dunce::canonicalize(root_dir.path()).unwrap();
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(normalize_path(&entries[0].path), root_path.join("file1"));
+    assert_eq!(
+        normalize_path(Path::new(entries[0].path.as_str())),
+        root_path.join("file1")
+    );
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Symlink);
-    assert_eq!(normalize_path(&entries[1].path), root_path.join("link1"));
+    assert_eq!(
+        normalize_path(Path::new(entries[1].path.as_str())),
+        root_path.join("link1")
+    );
     assert_eq!(entries[1].depth, 1);
 
     assert_eq!(entries[2].file_type, FileType::Dir);
-    assert_eq!(normalize_path(&entries[2].path), root_path.join("sub1"));
+    assert_eq!(
+        normalize_path(Path::new(entries[2].path.as_str())),
+        root_path.join("sub1")
+    );
     assert_eq!(entries[2].depth, 1);
 }
 
@@ -524,16 +533,16 @@ async fn dir_read_should_support_returning_canonicalized_paths(#[future] client:
     println!("{:?}", entries);
 
     assert_eq!(entries[0].file_type, FileType::File);
-    assert_eq!(entries[0].path, Path::new("file1"));
+    assert_eq!(entries[0].path, RemotePath::new("file1"));
     assert_eq!(entries[0].depth, 1);
 
     assert_eq!(entries[1].file_type, FileType::Dir);
-    assert_eq!(entries[1].path, Path::new("sub1"));
+    assert_eq!(entries[1].path, RemotePath::new("sub1"));
     assert_eq!(entries[1].depth, 1);
 
     // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
     assert_eq!(entries[2].file_type, FileType::Symlink);
-    assert_eq!(entries[2].path, Path::new("sub1").join("file2"));
+    assert_eq!(entries[2].path, RemotePath::new("sub1/file2"));
     assert_eq!(entries[2].depth, 1);
 }
 
@@ -1096,7 +1105,7 @@ async fn metadata_should_include_canonicalized_path_if_flag_specified(
             readonly: false,
             ..
         } => assert_eq!(
-            normalize_path(&path),
+            normalize_path(Path::new(path.as_str())),
             dunce::canonicalize(file.path()).unwrap(),
             "Symlink canonicalized path does not match referenced file"
         ),
@@ -1966,7 +1975,7 @@ async fn search_should_fail_as_unsupported(#[future] client: Ctx<Client>) {
             condition: SearchQueryCondition::Contains {
                 value: "test".to_string(),
             },
-            paths: vec![temp.path().to_path_buf()],
+            paths: vec![RemotePath::from(temp.path().to_path_buf())],
             options: Default::default(),
         })
         .await;
@@ -2096,7 +2105,7 @@ async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<C
         .spawn(
             "echo hello".to_string(),
             Environment::new(),
-            Some(std::path::PathBuf::from(current_dir)),
+            Some(RemotePath::new(current_dir)),
             None,
         )
         .await;
@@ -2130,29 +2139,29 @@ async fn dir_read_should_support_explicit_depth_greater_than_one(#[future] clien
     // depth=2 should include root-level + sub1 contents, but NOT sub2/file3
     let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
     assert!(
-        paths.iter().any(|p| p.ends_with("file1")),
+        paths.iter().any(|p| p.as_str().ends_with("file1")),
         "Missing file1: {:?}",
         paths
     );
     assert!(
-        paths.iter().any(|p| p.ends_with("sub1")),
+        paths.iter().any(|p| p.as_str().ends_with("sub1")),
         "Missing sub1: {:?}",
         paths
     );
     assert!(
-        paths.iter().any(|p| p.ends_with("file2")),
+        paths.iter().any(|p| p.as_str().ends_with("file2")),
         "Missing file2 at depth 2: {:?}",
         paths
     );
     // sub2 directory should appear at depth 2
     assert!(
-        paths.iter().any(|p| p.ends_with("sub2")),
+        paths.iter().any(|p| p.as_str().ends_with("sub2")),
         "Missing sub2 at depth 2: {:?}",
         paths
     );
     // But file3 inside sub2 should NOT appear (that would be depth 3)
     assert!(
-        !paths.iter().any(|p| p.ends_with("file3")),
+        !paths.iter().any(|p| p.as_str().ends_with("file3")),
         "file3 should NOT appear at depth 2: {:?}",
         paths
     );
@@ -2242,7 +2251,7 @@ async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(#[future] clie
         .spawn(
             "echo hello".to_string(),
             Environment::new(),
-            Some(std::path::PathBuf::from(current_dir)),
+            Some(RemotePath::new(current_dir)),
             Some(PtySize {
                 rows: 24,
                 cols: 80,

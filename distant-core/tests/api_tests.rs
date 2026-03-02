@@ -2,13 +2,12 @@
 //! API layer, including timing assertions for parallelism verification.
 
 use std::io;
-use std::path::PathBuf;
 
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::Client as NetClient;
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
-use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::protocol::{PROTOCOL_VERSION, RemotePath};
 use distant_core::{Api, ApiServerHandler, ChannelExt, Client, Ctx};
 
 /// Stands up an inmemory client and server using the given api.
@@ -51,14 +50,14 @@ mod single {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: Ctx, _path: RemotePath) -> io::Result<Vec<u8>> {
                 Err(io::Error::new(io::ErrorKind::NotFound, "test error"))
             }
         }
 
         let (mut client, _server) = setup(TestApi).await;
 
-        let error = client.read_file(PathBuf::from("file")).await.unwrap_err();
+        let error = client.read_file(RemotePath::new("file")).await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert_eq!(error.to_string(), "test error");
     }
@@ -68,14 +67,14 @@ mod single {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
+            async fn read_file(&self, _ctx: Ctx, _path: RemotePath) -> io::Result<Vec<u8>> {
                 Ok(b"hello world".to_vec())
             }
         }
 
         let (mut client, _server) = setup(TestApi).await;
 
-        let contents = client.read_file(PathBuf::from("file")).await.unwrap();
+        let contents = client.read_file(RemotePath::new("file")).await.unwrap();
         assert_eq!(contents, b"hello world");
     }
 }
@@ -94,8 +93,8 @@ mod batch_parallel {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "slow" {
+            async fn read_file(&self, _ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+                if path.as_str() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
 
@@ -108,13 +107,13 @@ mod batch_parallel {
 
         let request = Request::new(Msg::batch([
             RequestPayload::FileRead {
-                path: PathBuf::from("file1"),
+                path: RemotePath::new("file1"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("slow"),
+                path: RemotePath::new("slow"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("file2"),
+                path: RemotePath::new("file2"),
             },
         ]));
 
@@ -146,8 +145,8 @@ mod batch_parallel {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "fail" {
+            async fn read_file(&self, _ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+                if path.as_str() == "fail" {
                     return Err(io::Error::other("test error"));
                 }
 
@@ -159,13 +158,13 @@ mod batch_parallel {
 
         let request = Request::new(Msg::batch([
             RequestPayload::FileRead {
-                path: PathBuf::from("file1"),
+                path: RemotePath::new("file1"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("fail"),
+                path: RemotePath::new("fail"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("file2"),
+                path: RemotePath::new("file2"),
             },
         ]));
 
@@ -209,8 +208,8 @@ mod batch_sequence {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "slow" {
+            async fn read_file(&self, _ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+                if path.as_str() == "slow" {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
 
@@ -223,13 +222,13 @@ mod batch_sequence {
 
         let mut request = Request::new(Msg::batch([
             RequestPayload::FileRead {
-                path: PathBuf::from("file1"),
+                path: RemotePath::new("file1"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("slow"),
+                path: RemotePath::new("slow"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("file2"),
+                path: RemotePath::new("file2"),
             },
         ]));
 
@@ -264,8 +263,8 @@ mod batch_sequence {
         struct TestApi;
 
         impl Api for TestApi {
-            async fn read_file(&self, _ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
-                if path.to_str().unwrap() == "fail" {
+            async fn read_file(&self, _ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+                if path.as_str() == "fail" {
                     return Err(io::Error::other("test error"));
                 }
 
@@ -277,13 +276,13 @@ mod batch_sequence {
 
         let mut request = Request::new(Msg::batch([
             RequestPayload::FileRead {
-                path: PathBuf::from("file1"),
+                path: RemotePath::new("file1"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("fail"),
+                path: RemotePath::new("fail"),
             },
             RequestPayload::FileRead {
-                path: PathBuf::from("file2"),
+                path: RemotePath::new("file2"),
             },
         ]));
 

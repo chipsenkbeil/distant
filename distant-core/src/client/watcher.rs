@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
 use crate::net::common::Request;
@@ -8,12 +7,12 @@ use tokio::task::JoinHandle;
 
 use crate::client::{Channel, ChannelExt};
 use crate::constants::CLIENT_WATCHER_CAPACITY;
-use crate::protocol::{self, Change, ChangeKindSet};
+use crate::protocol::{self, Change, ChangeKindSet, RemotePath};
 
 /// Represents a watcher of some path on a remote machine
 pub struct Watcher {
     channel: Channel,
-    path: PathBuf,
+    path: RemotePath,
     task: JoinHandle<()>,
     rx: mpsc::Receiver<Change>,
     active: bool,
@@ -29,7 +28,7 @@ impl Watcher {
     /// Creates a watcher for some remote path
     pub async fn watch(
         mut channel: Channel,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
@@ -57,7 +56,7 @@ impl Watcher {
         let mut mailbox = channel
             .mail(Request::new(protocol::Msg::Single(
                 protocol::Request::Watch {
-                    path: path.to_path_buf(),
+                    path: path.clone(),
                     recursive,
                     only: only.into_sorted_vec(),
                     except: except.into_sorted_vec(),
@@ -145,8 +144,8 @@ impl Watcher {
     }
 
     /// Returns a reference to the path this watcher is monitoring
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
+    pub fn path(&self) -> &RemotePath {
+        &self.path
     }
 
     /// Returns true if the watcher is still actively watching for changes
@@ -162,7 +161,7 @@ impl Watcher {
     /// Unwatches the path being watched, closing out the watcher
     pub async fn unwatch(&mut self) -> io::Result<()> {
         trace!("Unwatching {:?}", self.path);
-        self.channel.unwatch(self.path.to_path_buf()).await?;
+        self.channel.unwatch(self.path.clone()).await?;
 
         // Kill our task that processes inbound changes if we have successfully unwatched the path
         self.task.abort();
@@ -192,7 +191,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watcher_should_have_path_reflect_watched_path() {
         let (mut transport, session) = make_session();
-        let test_path = Path::new("/some/test/path");
+        let test_path = "/some/test/path";
 
         // Create a task for watcher as we need to handle the request and a response
         // in a separate async block
@@ -218,13 +217,13 @@ mod tests {
 
         // Get the watcher and verify the path
         let watcher = watch_task.await.unwrap().unwrap();
-        assert_eq!(watcher.path(), test_path);
+        assert_eq!(watcher.path().as_str(), test_path);
     }
 
     #[test(tokio::test)]
     async fn watcher_should_support_getting_next_change() {
         let (mut transport, session) = make_session();
-        let test_path = Path::new("/some/test/path");
+        let test_path = "/some/test/path";
 
         // Create a task for watcher as we need to handle the request and a response
         // in a separate async block
@@ -259,13 +258,13 @@ mod tests {
                     protocol::Response::Changed(Change {
                         timestamp: 0,
                         kind: ChangeKind::Access,
-                        path: test_path.to_path_buf(),
+                        path: RemotePath::new(test_path),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 1,
                         kind: ChangeKind::Modify,
-                        path: test_path.to_path_buf(),
+                        path: RemotePath::new(test_path),
                         details: Default::default(),
                     }),
                 ],
@@ -280,7 +279,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             }
         );
@@ -291,7 +290,7 @@ mod tests {
             Change {
                 timestamp: 1,
                 kind: ChangeKind::Modify,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             }
         );
@@ -300,7 +299,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watcher_should_distinguish_change_events_and_only_receive_changes_for_itself() {
         let (mut transport, session) = make_session();
-        let test_path = Path::new("/some/test/path");
+        let test_path = "/some/test/path";
 
         // Create a task for watcher as we need to handle the request and a response
         // in a separate async block
@@ -334,7 +333,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 0,
                     kind: ChangeKind::Access,
-                    path: test_path.to_path_buf(),
+                    path: RemotePath::new(test_path),
                     details: Default::default(),
                 }),
             ))
@@ -348,7 +347,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 1,
                     kind: ChangeKind::Modify,
-                    path: test_path.to_path_buf(),
+                    path: RemotePath::new(test_path),
                     details: Default::default(),
                 }),
             ))
@@ -362,7 +361,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 2,
                     kind: ChangeKind::Delete,
-                    path: test_path.to_path_buf(),
+                    path: RemotePath::new(test_path),
                     details: Default::default(),
                 }),
             ))
@@ -376,7 +375,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             }
         );
@@ -387,7 +386,7 @@ mod tests {
             Change {
                 timestamp: 2,
                 kind: ChangeKind::Delete,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             }
         );
@@ -396,7 +395,7 @@ mod tests {
     #[test(tokio::test)]
     async fn watcher_should_stop_receiving_events_if_unwatched() {
         let (mut transport, session) = make_session();
-        let test_path = Path::new("/some/test/path");
+        let test_path = "/some/test/path";
 
         // Create a task for watcher as we need to handle the request and a response
         // in a separate async block
@@ -428,19 +427,19 @@ mod tests {
                     protocol::Response::Changed(Change {
                         timestamp: 0,
                         kind: ChangeKind::Access,
-                        path: test_path.to_path_buf(),
+                        path: RemotePath::new(test_path),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 1,
                         kind: ChangeKind::Modify,
-                        path: test_path.to_path_buf(),
+                        path: RemotePath::new(test_path),
                         details: Default::default(),
                     }),
                     protocol::Response::Changed(Change {
                         timestamp: 2,
                         kind: ChangeKind::Delete,
-                        path: test_path.to_path_buf(),
+                        path: RemotePath::new(test_path),
                         details: Default::default(),
                     }),
                 ],
@@ -467,7 +466,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind: ChangeKind::Access,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             }
         );
@@ -492,7 +491,7 @@ mod tests {
                 protocol::Response::Changed(Change {
                     timestamp: 3,
                     kind: ChangeKind::Unknown,
-                    path: test_path.to_path_buf(),
+                    path: RemotePath::new(test_path),
                     details: Default::default(),
                 }),
             ))
@@ -506,7 +505,7 @@ mod tests {
             Some(Change {
                 timestamp: 1,
                 kind: ChangeKind::Modify,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             })
         );
@@ -515,7 +514,7 @@ mod tests {
             Some(Change {
                 timestamp: 2,
                 kind: ChangeKind::Delete,
-                path: test_path.to_path_buf(),
+                path: RemotePath::new(test_path),
                 details: Default::default(),
             })
         );

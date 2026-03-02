@@ -1,10 +1,9 @@
 //! Search implementation for Docker containers using best-effort tool detection.
 
 use std::io;
-use std::path::PathBuf;
 
 use distant_core::protocol::{
-    SearchQuery, SearchQueryCondition, SearchQueryContentsMatch, SearchQueryMatch,
+    RemotePath, SearchQuery, SearchQueryCondition, SearchQueryContentsMatch, SearchQueryMatch,
     SearchQueryMatchData, SearchQueryPathMatch, SearchQuerySubmatch, SearchQueryTarget,
 };
 
@@ -30,7 +29,7 @@ pub fn build_search_command(query: &SearchQuery, tools: &SearchTools) -> io::Res
     let path = query
         .paths
         .first()
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| ".".to_string());
 
     let pattern = build_unix_pattern(&query.condition);
@@ -135,7 +134,7 @@ pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
         if let Ok(line_num) = line_num_str.parse::<u64>() {
             let content = content.to_string();
             matches.push(SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: PathBuf::from(&filepath),
+                path: RemotePath::new(&filepath),
                 lines: SearchQueryMatchData::Text(content.clone()),
                 line_number: line_num,
                 absolute_offset: 0,
@@ -158,7 +157,7 @@ pub fn parse_path_matches(output: &str) -> Vec<SearchQueryMatch> {
         .filter(|line| !line.is_empty())
         .map(|line| {
             SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: PathBuf::from(line.trim()),
+                path: RemotePath::new(line.trim()),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text(line.trim().to_string()),
                     start: 0,
