@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
-use bollard::Docker;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
     ProcessId, PtySize, SearchId, SearchQuery, SearchQueryTarget, SetPermissionsOptions,
@@ -15,10 +14,10 @@ use distant_core::protocol::{
 use distant_core::{Api, Ctx};
 use tokio::sync::RwLock;
 
-use crate::DockerOpts;
 use crate::process::{self, Process, SpawnResult};
 use crate::search;
 use crate::utils::{self, SearchTools};
+use crate::{DockerClient, DockerOpts};
 
 /// Docker implementation of the distant [`Api`] trait.
 ///
@@ -28,7 +27,7 @@ use crate::utils::{self, SearchTools};
 /// Only Unix containers are supported.
 pub struct DockerApi {
     /// Docker client handle.
-    client: Docker,
+    client: DockerClient,
 
     /// Container name or ID.
     container: String,
@@ -58,8 +57,8 @@ pub struct DockerApi {
 
 impl DockerApi {
     /// Creates a new `DockerApi`, probing the container for available tools.
-    pub async fn new(client: Docker, container: String, opts: DockerOpts) -> Self {
-        let search_tools = utils::probe_search_tools(&client, &container).await;
+    pub async fn new(client: DockerClient, container: String, opts: DockerOpts) -> Self {
+        let search_tools = utils::probe_search_tools(client.inner(), &container).await;
 
         Self {
             client,
@@ -81,7 +80,7 @@ impl DockerApi {
 
     /// Execute a command in the container and return its output.
     async fn run_cmd(&self, cmd: &[&str]) -> io::Result<utils::ExecOutput> {
-        utils::execute_output(&self.client, &self.container, cmd, self.user()).await
+        utils::execute_output(self.client.inner(), &self.container, cmd, self.user()).await
     }
 
     /// Execute a command and return its stdout as a string, or error if it fails.
@@ -179,7 +178,7 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async move {
             let path_str = path.to_string_lossy().to_string();
-            utils::tar_read_file(&self.client, &self.container, &path_str).await
+            utils::tar_read_file(self.client.inner(), &self.container, &path_str).await
         }
     }
 
@@ -207,7 +206,7 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
             let path_str = path.to_string_lossy().to_string();
-            utils::tar_write_file(&self.client, &self.container, &path_str, &data).await
+            utils::tar_write_file(self.client.inner(), &self.container, &path_str, &data).await
         }
     }
 
@@ -231,7 +230,7 @@ impl Api for DockerApi {
 
             // Primary: try exec-based append
             let result = utils::execute_with_stdin(
-                &self.client,
+                self.client.inner(),
                 &self.container,
                 &["sh", "-c", &format!("cat >> '{}'", path_str)],
                 &data,
@@ -246,12 +245,12 @@ impl Api for DockerApi {
             }
 
             // Fallback: tar-read, append in memory, tar-write back
-            let existing = utils::tar_read_file(&self.client, &self.container, &path_str)
+            let existing = utils::tar_read_file(self.client.inner(), &self.container, &path_str)
                 .await
                 .unwrap_or_default();
             let mut combined = existing;
             combined.extend_from_slice(&data);
-            utils::tar_write_file(&self.client, &self.container, &path_str, &combined).await
+            utils::tar_write_file(self.client.inner(), &self.container, &path_str, &combined).await
         }
     }
 
@@ -344,7 +343,8 @@ impl Api for DockerApi {
                 }
                 _ => {
                     // Fallback to tar-based listing
-                    match utils::tar_list_dir(&self.client, &self.container, &path_str).await {
+                    match utils::tar_list_dir(self.client.inner(), &self.container, &path_str).await
+                    {
                         Ok(tar_entries) => {
                             for (entry_type, entry_path, _size, _mtime) in tar_entries {
                                 let file_type = match entry_type {
@@ -403,9 +403,11 @@ impl Api for DockerApi {
                 _ => {
                     // Fallback to tar-based directory creation.
                     if all {
-                        utils::tar_create_dir_all(&self.client, &self.container, &path_str).await?;
+                        utils::tar_create_dir_all(self.client.inner(), &self.container, &path_str)
+                            .await?;
                     } else {
-                        utils::tar_create_dir(&self.client, &self.container, &path_str).await?;
+                        utils::tar_create_dir(self.client.inner(), &self.container, &path_str)
+                            .await?;
                     }
 
                     // Best-effort cleanup of the marker file
@@ -436,9 +438,10 @@ impl Api for DockerApi {
                 Ok(_) => Ok(()),
                 Err(_) => {
                     // Fallback: tar-read src, tar-write to dst
-                    let data =
-                        utils::tar_read_file(&self.client, &self.container, &src_str).await?;
-                    utils::tar_write_file(&self.client, &self.container, &dst_str, &data).await
+                    let data = utils::tar_read_file(self.client.inner(), &self.container, &src_str)
+                        .await?;
+                    utils::tar_write_file(self.client.inner(), &self.container, &dst_str, &data)
+                        .await
                 }
             }
         }
@@ -481,12 +484,15 @@ impl Api for DockerApi {
                     // Fallback: tar-read src → tar-write dst → exec-delete src.
                     // Only works for files; directory rename failures propagate.
                     let data =
-                        match utils::tar_read_file(&self.client, &self.container, &src_str).await {
+                        match utils::tar_read_file(self.client.inner(), &self.container, &src_str)
+                            .await
+                        {
                             Ok(data) => data,
                             Err(_) => return Err(exec_err),
                         };
 
-                    utils::tar_write_file(&self.client, &self.container, &dst_str, &data).await?;
+                    utils::tar_write_file(self.client.inner(), &self.container, &dst_str, &data)
+                        .await?;
 
                     // Best-effort delete of source
                     let del_cmd = format!("rm -f '{}'", src_str);
@@ -545,7 +551,10 @@ impl Api for DockerApi {
                 Ok(output) => Ok(output.success()),
                 Err(_) => {
                     // Fallback to tar-based existence check
-                    Ok(utils::tar_path_exists(&self.client, &self.container, &path_str).await)
+                    Ok(
+                        utils::tar_path_exists(self.client.inner(), &self.container, &path_str)
+                            .await,
+                    )
                 }
             }
         }
@@ -573,7 +582,8 @@ impl Api for DockerApi {
             }
 
             // Fallback to tar-based metadata
-            let entries = utils::tar_list_dir(&self.client, &self.container, &path_str).await?;
+            let entries =
+                utils::tar_list_dir(self.client.inner(), &self.container, &path_str).await?;
 
             if let Some((entry_type, _entry_path, size, mtime)) = entries.first() {
                 let file_type = match entry_type {
@@ -691,7 +701,7 @@ impl Api for DockerApi {
         current_dir: Option<PathBuf>,
         pty: Option<PtySize>,
     ) -> impl std::future::Future<Output = io::Result<ProcessId>> + Send {
-        let client = &self.client;
+        let client = self.client.inner();
         let container = &self.container;
         let user = self.user().map(|s| s.to_string());
         let processes = &self.processes;

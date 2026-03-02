@@ -38,6 +38,131 @@ use distant_core::{ApiServerHandler, Client};
 use futures::StreamExt;
 use log::*;
 
+/// Thin wrapper around the bollard Docker client.
+///
+/// Provides discovery-based connection to the Docker daemon with platform-specific socket
+/// detection. This type encapsulates the bollard dependency so that downstream code does not
+/// depend on it directly.
+#[derive(Debug, Clone)]
+pub struct DockerClient(BollardDocker);
+
+impl DockerClient {
+    /// Connect to the Docker daemon using automatic discovery.
+    ///
+    /// Tries the following locations in order:
+    ///
+    /// 1. `DOCKER_HOST` env var and the platform default socket (via bollard's built-in logic)
+    /// 2. Docker Desktop socket at `~/.docker/run/docker.sock` (macOS / Linux)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::NotFound`] if no reachable Docker socket is found.
+    pub fn connect_default() -> io::Result<Self> {
+        Docker::default_bollard_client().map(Self)
+    }
+
+    /// Connect to the Docker daemon at a specific socket URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection cannot be established.
+    pub fn connect_with_socket(uri: &str) -> io::Result<Self> {
+        BollardDocker::connect_with_socket(uri, 120, bollard::API_DEFAULT_VERSION)
+            .map(Self)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    format!("Failed to connect to Docker daemon at '{}': {}", uri, e),
+                )
+            })
+    }
+
+    /// Ping the Docker daemon to check connectivity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the daemon does not respond.
+    pub async fn ping(&self) -> io::Result<()> {
+        self.0
+            .ping()
+            .await
+            .map(|_| ())
+            .map_err(|e| io::Error::other(format!("Docker ping failed: {}", e)))
+    }
+
+    /// Check whether a Docker image is available locally.
+    pub async fn has_image(&self, image: &str) -> bool {
+        self.0.inspect_image(image).await.is_ok()
+    }
+
+    /// Pull a Docker image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pull fails.
+    pub async fn pull_image(&self, image: &str) -> io::Result<()> {
+        use bollard::query_parameters::CreateImageOptionsBuilder;
+
+        let options = CreateImageOptionsBuilder::default()
+            .from_image(image)
+            .build();
+        let mut stream = self.0.create_image(Some(options), None, None);
+        while let Some(result) = stream.next().await {
+            result.map_err(|e| {
+                io::Error::other(format!("Failed to pull image '{}': {}", image, e))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Create and start a container, returning its ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the container cannot be created or started.
+    pub async fn create_and_start_container(
+        &self,
+        name: &str,
+        image: &str,
+        cmd: Vec<String>,
+    ) -> io::Result<String> {
+        use bollard::models::ContainerCreateBody;
+        use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
+
+        let config = ContainerCreateBody {
+            image: Some(image.to_string()),
+            cmd: Some(cmd),
+            tty: Some(false),
+            open_stdin: Some(true),
+            ..Default::default()
+        };
+
+        let create_opts = CreateContainerOptionsBuilder::default().name(name).build();
+
+        let response = self
+            .0
+            .create_container(Some(create_opts), config)
+            .await
+            .map_err(|e| {
+                io::Error::other(format!("Failed to create container '{}': {}", name, e))
+            })?;
+
+        self.0
+            .start_container(&response.id, None::<StartContainerOptions>)
+            .await
+            .map_err(|e| {
+                io::Error::other(format!("Failed to start container '{}': {}", name, e))
+            })?;
+
+        Ok(response.id)
+    }
+
+    /// Returns a reference to the inner bollard client.
+    pub(crate) fn inner(&self) -> &BollardDocker {
+        &self.0
+    }
+}
+
 mod api;
 mod process;
 pub(crate) mod search;
@@ -85,8 +210,8 @@ impl Default for LaunchOpts {
 
 /// Represents a connection to a Docker container.
 pub struct Docker {
-    /// Bollard Docker client handle.
-    client: BollardDocker,
+    /// Docker client handle.
+    client: DockerClient,
 
     /// Name or ID of the connected container.
     container: String,
@@ -109,12 +234,13 @@ impl Docker {
     /// or the container is not running.
     pub async fn connect(container: impl Into<String>, opts: DockerOpts) -> io::Result<Self> {
         let container = container.into();
-        let client = Self::create_bollard_client(&opts)?;
+        let client = Self::create_client(&opts)?;
 
         info!("Connecting to Docker container: {}", container);
 
         // Verify the container exists and is running
         let inspect = client
+            .inner()
             .inspect_container(&container, None::<InspectContainerOptions>)
             .await
             .map_err(|e| {
@@ -157,7 +283,7 @@ impl Docker {
     /// Returns an error if the image cannot be pulled, the container cannot be created,
     /// or the container fails to start.
     pub async fn launch(launch_opts: LaunchOpts, docker_opts: DockerOpts) -> io::Result<Self> {
-        let client = Self::create_bollard_client(&docker_opts)?;
+        let client = Self::create_client(&docker_opts)?;
 
         info!("Launching container from image: {}", launch_opts.image);
 
@@ -179,6 +305,7 @@ impl Docker {
             .build();
 
         let container_id = client
+            .inner()
             .create_container(Some(create_opts), config)
             .await
             .map_err(|e| io::Error::other(format!("Failed to create container: {}", e)))?
@@ -188,6 +315,7 @@ impl Docker {
 
         // Start the container
         client
+            .inner()
             .start_container(&container_id, None::<StartContainerOptions>)
             .await
             .map_err(|e| io::Error::other(format!("Failed to start container: {}", e)))?;
@@ -209,13 +337,13 @@ impl Docker {
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let auto_remove = self.auto_remove;
         let cleanup_client = if auto_remove {
-            Some(Self::create_bollard_client(&self.opts)?)
+            Some(Self::create_client(&self.opts)?)
         } else {
             None
         };
         let container_name = self.container.clone();
 
-        let api = DockerApi::new(self.client, self.container, self.opts).await;
+        let api = DockerApi::new(self.client.clone(), self.container, self.opts).await;
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -258,7 +386,7 @@ impl Docker {
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let auto_remove = self.auto_remove;
         let cleanup_client = if auto_remove {
-            Some(Self::create_bollard_client(&self.opts)?)
+            Some(Self::create_client(&self.opts)?)
         } else {
             None
         };
@@ -310,20 +438,11 @@ impl Docker {
         &self.container
     }
 
-    /// Creates a bollard Docker client from the provided options.
-    fn create_bollard_client(opts: &DockerOpts) -> io::Result<BollardDocker> {
+    /// Creates a Docker client from the provided options.
+    fn create_client(opts: &DockerOpts) -> io::Result<DockerClient> {
         match &opts.docker_host {
-            Some(host) => {
-                BollardDocker::connect_with_socket(host, 120, bollard::API_DEFAULT_VERSION).map_err(
-                    |e| {
-                        io::Error::new(
-                            io::ErrorKind::ConnectionRefused,
-                            format!("Failed to connect to Docker daemon at '{}': {}", host, e),
-                        )
-                    },
-                )
-            }
-            None => Self::default_bollard_client(),
+            Some(host) => DockerClient::connect_with_socket(host),
+            None => DockerClient::connect_default(),
         }
     }
 
@@ -369,8 +488,8 @@ impl Docker {
     }
 
     /// Pulls an image if it doesn't exist locally.
-    async fn pull_image_if_needed(client: &BollardDocker, image: &str) -> io::Result<()> {
-        if client.inspect_image(image).await.is_ok() {
+    async fn pull_image_if_needed(client: &DockerClient, image: &str) -> io::Result<()> {
+        if client.inner().inspect_image(image).await.is_ok() {
             debug!("Image '{}' already exists locally", image);
             return Ok(());
         }
@@ -382,7 +501,7 @@ impl Docker {
             .from_image(image)
             .build();
 
-        let mut stream = client.create_image(Some(options), None, None);
+        let mut stream = client.inner().create_image(Some(options), None, None);
 
         while let Some(result) = stream.next().await {
             match result {
@@ -416,14 +535,18 @@ impl Docker {
     }
 
     /// Stops and removes the container. Used for auto-remove cleanup.
-    pub async fn stop_and_remove(client: &BollardDocker, container: &str) -> io::Result<()> {
+    pub async fn stop_and_remove(client: &DockerClient, container: &str) -> io::Result<()> {
         debug!("Stopping container '{}'", container);
         let stop_opts = StopContainerOptionsBuilder::default().t(5).build();
-        let _ = client.stop_container(container, Some(stop_opts)).await;
+        let _ = client
+            .inner()
+            .stop_container(container, Some(stop_opts))
+            .await;
 
         debug!("Removing container '{}'", container);
         let remove_opts = RemoveContainerOptionsBuilder::default().force(true).build();
         client
+            .inner()
             .remove_container(container, Some(remove_opts))
             .await
             .map_err(|e| {

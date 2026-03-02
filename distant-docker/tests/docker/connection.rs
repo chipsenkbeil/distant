@@ -1,6 +1,6 @@
 //! Tests for Docker connection and container lifecycle.
 
-use distant_docker::{Docker, DockerOpts, LaunchOpts};
+use distant_docker::{Docker, DockerClient, DockerOpts, LaunchOpts};
 use distant_test_harness::docker::{DockerContainer, docker_container};
 use distant_test_harness::skip_if_no_docker;
 use rstest::*;
@@ -57,7 +57,7 @@ async fn launch_should_create_and_connect_to_new_container() {
     assert!(container_name.starts_with("distant-"));
 
     // Clean up
-    let client = Docker::default_bollard_client().unwrap();
+    let client = DockerClient::connect_default().unwrap();
     let _ = Docker::stop_and_remove(&client, &container_name).await;
 }
 

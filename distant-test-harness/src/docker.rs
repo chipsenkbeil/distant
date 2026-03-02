@@ -5,13 +5,13 @@
 
 use derive_more::{Deref, DerefMut};
 use distant_core::Client;
-use distant_docker::{Docker, DockerOpts};
+use distant_docker::{Docker, DockerClient, DockerOpts};
 use log::*;
 use rstest::*;
 
 /// Checks whether the Docker daemon is available by pinging it.
 pub async fn docker_available() -> bool {
-    match Docker::default_bollard_client() {
+    match DockerClient::connect_default() {
         Ok(client) => client.ping().await.is_ok(),
         Err(_) => false,
     }
@@ -24,8 +24,8 @@ pub struct DockerContainer {
     /// The container name.
     pub name: String,
 
-    /// Bollard client handle (kept alive for cleanup).
-    client: bollard::Docker,
+    /// Docker client handle (kept alive for cleanup).
+    client: DockerClient,
 }
 
 impl DockerContainer {
@@ -38,61 +38,39 @@ impl DockerContainer {
             return None;
         }
 
-        let client = Docker::default_bollard_client().ok()?;
+        let client = DockerClient::connect_default().ok()?;
 
         let image = "ubuntu:22.04";
         info!("Creating test container from image: {}", image);
 
         // Pull image if needed
-        if client.inspect_image(image).await.is_err() {
-            use bollard::query_parameters::CreateImageOptionsBuilder;
-            use futures::StreamExt;
-
-            let options = CreateImageOptionsBuilder::default()
-                .from_image(image)
-                .build();
-            let mut stream = client.create_image(Some(options), None, None);
-            while let Some(result) = stream.next().await {
-                if let Err(e) = result {
-                    error!("Failed to pull image: {}", e);
-                    return None;
-                }
-            }
+        if !client.has_image(image).await
+            && let Err(e) = client.pull_image(image).await
+        {
+            error!("Failed to pull image: {}", e);
+            return None;
         }
 
         let name = format!("distant-test-{}", random_suffix());
 
-        use bollard::models::ContainerCreateBody;
-        use bollard::query_parameters::{CreateContainerOptionsBuilder, StartContainerOptions};
-
-        let config = ContainerCreateBody {
-            image: Some(image.to_string()),
-            cmd: Some(vec!["sleep".to_string(), "infinity".to_string()]),
-            tty: Some(false),
-            open_stdin: Some(true),
-            ..Default::default()
-        };
-
-        let create_opts = CreateContainerOptionsBuilder::default().name(&name).build();
-
-        if let Err(e) = client.create_container(Some(create_opts), config).await {
-            error!("Failed to create test container: {}", e);
-            return None;
-        }
-
-        if let Err(e) = client
-            .start_container(&name, None::<StartContainerOptions>)
+        match client
+            .create_and_start_container(
+                &name,
+                image,
+                vec!["sleep".to_string(), "infinity".to_string()],
+            )
             .await
         {
-            error!("Failed to start test container: {}", e);
-            // Try cleanup
-            let _ = Docker::stop_and_remove(&client, &name).await;
-            return None;
+            Ok(_) => {
+                info!("Test container started: {}", name);
+                Some(Self { name, client })
+            }
+            Err(e) => {
+                error!("Failed to create/start test container: {}", e);
+                let _ = Docker::stop_and_remove(&client, &name).await;
+                None
+            }
         }
-
-        info!("Test container started: {}", name);
-
-        Some(Self { name, client })
     }
 }
 
