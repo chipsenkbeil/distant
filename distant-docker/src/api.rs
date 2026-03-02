@@ -116,6 +116,26 @@ impl DockerApi {
             )))
         }
     }
+
+    /// Resolves relative or `.`/`..` paths to absolute using the container's working directory.
+    async fn resolve_path(&self, path: &Path) -> io::Result<PathBuf> {
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+
+        let cwd = self
+            .cached_current_dir
+            .get_or_try_init(async {
+                if let Some(wd) = &self.opts.working_dir {
+                    return Ok::<PathBuf, io::Error>(PathBuf::from(wd));
+                }
+                let output = self.run_cmd_stdout(&["pwd"]).await?;
+                Ok(PathBuf::from(output.trim()))
+            })
+            .await?;
+
+        Ok(cwd.join(path))
+    }
 }
 
 impl Api for DockerApi {
@@ -290,6 +310,9 @@ impl Api for DockerApi {
         include_root: bool,
     ) -> impl std::future::Future<Output = io::Result<(Vec<DirEntry>, Vec<io::Error>)>> + Send {
         async move {
+            // Resolve relative paths (like ".") to absolute to ensure find output
+            // and strip_prefix work correctly
+            let path = self.resolve_path(&path).await?;
             let path_str = path.to_string_lossy().to_string();
             let mut entries = Vec::new();
             let mut errors: Vec<io::Error> = Vec::new();
