@@ -266,6 +266,7 @@ pub fn parse_contents_matches(output: &str) -> Vec<SearchQueryMatch> {
 ///
 /// Used by the tar-based search fallback on Windows nanoserver, where exec-based
 /// search tools (`findstr`, `dir`) cannot access paths created via the Docker tar API.
+#[allow(dead_code)]
 pub fn condition_matches(condition: &SearchQueryCondition, text: &str) -> bool {
     match condition {
         SearchQueryCondition::Contains { value } => {

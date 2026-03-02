@@ -119,12 +119,20 @@ impl DockerContainer {
         info!("Test container started: {}", name);
 
         // On Windows nanoserver, ContainerUser cannot write to C:\Windows\Temp.
-        // Create a writable temp directory via the tar API (which bypasses
-        // container filesystem permissions).
-        if cfg!(windows)
-            && let Err(e) = distant_docker::utils::tar_create_dir(&client, &name, r"C:\temp").await
-        {
-            error!("Failed to create temp dir in container: {}", e);
+        // Create a writable temp directory via exec so ContainerUser gets
+        // FILE_DELETE_CHILD permission on it (tar-created dirs are SYSTEM-owned
+        // and ContainerUser can't delete children inside them).
+        if cfg!(windows) {
+            let result = distant_docker::utils::execute_output(
+                &client,
+                &name,
+                &["cmd", "/c", "mkdir", r"C:\temp"],
+                None,
+            )
+            .await;
+            if let Err(e) = result {
+                error!("Failed to create temp dir in container: {}", e);
+            }
         }
 
         Some(Self { name, client })
