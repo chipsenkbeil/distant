@@ -4,19 +4,19 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 use derive_more::IntoIterator;
 use serde::{Deserialize, Serialize};
 
-use crate::net::common::{ConnectionId, Destination};
+use crate::net::common::ConnectionId;
 
 /// Represents a list of information about active connections
 #[derive(Clone, Debug, PartialEq, Eq, IntoIterator, Serialize, Deserialize)]
-pub struct ConnectionList(pub(crate) HashMap<ConnectionId, Destination>);
+pub struct ConnectionList(pub(crate) HashMap<ConnectionId, String>);
 
 impl ConnectionList {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
 
-    /// Returns a reference to the destination associated with an active connection
-    pub fn connection_destination(&self, id: ConnectionId) -> Option<&Destination> {
+    /// Returns a reference to the destination string associated with an active connection
+    pub fn connection_destination(&self, id: ConnectionId) -> Option<&String> {
         self.0.get(&id)
     }
 }
@@ -28,7 +28,7 @@ impl Default for ConnectionList {
 }
 
 impl Deref for ConnectionList {
-    type Target = HashMap<ConnectionId, Destination>;
+    type Target = HashMap<ConnectionId, String>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -42,7 +42,7 @@ impl DerefMut for ConnectionList {
 }
 
 impl Index<ConnectionId> for ConnectionList {
-    type Output = Destination;
+    type Output = String;
 
     fn index(&self, connection_id: ConnectionId) -> &Self::Output {
         &self.0[&connection_id]
@@ -66,16 +66,9 @@ mod tests {
     use test_log::test;
 
     use super::*;
-    use crate::net::common::Host;
 
-    fn make_destination(name: &str) -> Destination {
-        Destination {
-            scheme: None,
-            username: None,
-            password: None,
-            host: Host::Name(name.to_string()),
-            port: Some(22),
-        }
+    fn make_destination(name: &str) -> String {
+        format!("ssh://{}:22", name)
     }
 
     #[test]
@@ -126,8 +119,8 @@ mod tests {
         let dest2 = make_destination("host2");
         let mut list = ConnectionList::new();
 
-        list.insert(1, dest1.clone());
-        list.insert(2, dest2.clone());
+        list.insert(1, dest1);
+        list.insert(2, dest2);
 
         assert_eq!(list.len(), 2);
 
@@ -159,10 +152,9 @@ mod tests {
         let mut list = ConnectionList::new();
         list.insert(1, dest);
 
-        let dest_mut = &mut list[1];
-        dest_mut.port = Some(8080);
+        list[1] = make_destination("host2");
 
-        assert_eq!(list[1].port, Some(8080));
+        assert_eq!(list[1], make_destination("host2"));
     }
 
     #[test]
@@ -180,7 +172,7 @@ mod tests {
         list.insert(1, dest1.clone());
         list.insert(2, dest2.clone());
 
-        let collected: HashMap<ConnectionId, Destination> = list.into_iter().collect();
+        let collected: HashMap<ConnectionId, String> = list.into_iter().collect();
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[&1], dest1);
         assert_eq!(collected[&2], dest2);

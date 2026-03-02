@@ -7,7 +7,7 @@ use distant_core::Plugin;
 use distant_core::auth::Authenticator;
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client, UntypedClient};
-use distant_core::net::common::{Destination, InmemoryTransport, Map, OneshotListener};
+use distant_core::net::common::{InmemoryTransport, Map, OneshotListener};
 use distant_core::net::manager::{Config, ManagerClient, ManagerServer};
 use distant_core::net::server::{RequestCtx, Server, ServerHandler};
 use log::*;
@@ -36,7 +36,7 @@ impl Plugin for TestPlugin {
 
     fn connect<'a>(
         &'a self,
-        _destination: &'a Destination,
+        _destination: &'a str,
         _options: &'a Map,
         _authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
@@ -87,7 +87,7 @@ async fn should_be_able_to_establish_a_single_connection_and_communicate_with_a_
     info!("Submitting server connection request to manager");
     let id = client
         .connect(
-            "scheme://host".parse::<Destination>().unwrap(),
+            "scheme://host",
             "key=value".parse::<Map>().unwrap(),
             DummyAuthHandler,
         )

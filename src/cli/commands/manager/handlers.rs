@@ -106,11 +106,12 @@ impl Plugin for DistantPlugin {
 
     fn connect<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
         Box::pin(async move {
+            let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling connect of {destination} with options '{options}'");
             let host = destination.host.to_string();
             let port = destination.port.ok_or_else(|| missing("port"))?;
@@ -158,11 +159,12 @@ impl Plugin for DistantPlugin {
 
     fn launch<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         _authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
         Box::pin(async move {
+            let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling launch of {destination} with options '{options}'");
             let config = ClientLaunchConfig::from(options.clone());
 
@@ -330,13 +332,14 @@ impl Plugin for SshPlugin {
 
     fn connect<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
         Box::pin(async move {
+            let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling connect of {destination} with options '{options}'");
-            let mut ssh = load_ssh(destination, options).await?;
+            let mut ssh = load_ssh(&destination, options).await?;
             let handler = AuthClientSshAuthHandler::new(authenticator);
             ssh.authenticate(handler).await?;
             Ok(ssh.into_distant_client().await?.into_untyped_client())
@@ -345,16 +348,17 @@ impl Plugin for SshPlugin {
 
     fn launch<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
         Box::pin(async move {
+            let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling launch of {destination} with options '{options}'");
             let config = ClientLaunchConfig::from(options.clone());
 
             use distant_ssh::LaunchOpts;
-            let mut ssh = load_ssh(destination, options).await?;
+            let mut ssh = load_ssh(&destination, options).await?;
             let handler = AuthClientSshAuthHandler::new(authenticator);
             ssh.authenticate(handler).await?;
             let opts = {
@@ -528,13 +532,17 @@ impl Plugin for DockerPlugin {
 
     fn connect<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         _authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
         Box::pin(async move {
-            debug!("Handling docker connect of {destination} with options '{options}'");
-            let container = destination.host.to_string();
+            debug!("Handling docker connect of {raw_destination} with options '{options}'");
+            let container = raw_destination
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(raw_destination)
+                .to_string();
             let docker_opts = parse_docker_opts(options);
             let docker = distant_docker::Docker::connect(&container, docker_opts).await?;
             Ok(docker.into_distant_client().await?.into_untyped_client())
@@ -543,13 +551,17 @@ impl Plugin for DockerPlugin {
 
     fn launch<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         _authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
         Box::pin(async move {
-            debug!("Handling docker launch of {destination} with options '{options}'");
-            let image = destination.host.to_string();
+            debug!("Handling docker launch of {raw_destination} with options '{options}'");
+            let image = raw_destination
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(raw_destination)
+                .to_string();
             let docker_opts = parse_docker_opts(options);
 
             let auto_remove = options

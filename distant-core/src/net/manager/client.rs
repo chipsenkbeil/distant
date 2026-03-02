@@ -10,6 +10,8 @@ use crate::net::manager::data::{
     ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse, SemVer,
 };
 
+// NOTE: Destination is still used for the Launched response, but launch/connect accept raw strings.
+
 mod channel;
 pub use channel::*;
 
@@ -21,15 +23,18 @@ impl ManagerClient {
     /// being passed for destination-specific details, returning the new `destination` of the
     /// spawned server.
     ///
-    ///  The provided `handler` will be used for any authentication requirements when connecting to
-    ///  the remote machine to spawn the server.
+    /// The `destination` is a raw URI string (e.g. `"docker://ubuntu:22.04"` or `"ssh://host:22"`).
+    /// Parsing is deferred to the plugin matched by scheme.
+    ///
+    /// The provided `handler` will be used for any authentication requirements when connecting to
+    /// the remote machine to spawn the server.
     pub async fn launch(
         &mut self,
-        destination: impl Into<Destination>,
+        destination: impl Into<String>,
         options: impl Into<Map>,
         mut handler: impl AuthHandler,
     ) -> io::Result<Destination> {
-        let destination = Box::new(destination.into());
+        let destination: String = destination.into();
         let options = options.into();
         trace!("launch({}, {})", destination, options);
 
@@ -120,15 +125,18 @@ impl ManagerClient {
     /// Request that the manager establishes a new connection at the given `destination`
     /// with `options` being passed for destination-specific details.
     ///
+    /// The `destination` is a raw URI string (e.g. `"docker://ubuntu:22.04"` or `"ssh://host:22"`).
+    /// Parsing is deferred to the plugin matched by scheme.
+    ///
     /// The provided `handler` will be used for any authentication requirements when connecting to
     /// the server.
     pub async fn connect(
         &mut self,
-        destination: impl Into<Destination>,
+        destination: impl Into<String>,
         options: impl Into<Map>,
         mut handler: impl AuthHandler,
     ) -> io::Result<ConnectionId> {
-        let destination = Box::new(destination.into());
+        let destination: String = destination.into();
         let options = options.into();
         trace!("connect({}, {})", destination, options);
 
@@ -334,7 +342,7 @@ mod tests {
 
         let err = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -363,7 +371,7 @@ mod tests {
 
         let err = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -395,7 +403,7 @@ mod tests {
 
         let id = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -460,7 +468,7 @@ mod tests {
 
             let info = ConnectionInfo {
                 id: 123,
-                destination: "scheme://host".parse::<Destination>().unwrap(),
+                destination: "scheme://host".to_string(),
                 options: "key=value".parse::<Map>().unwrap(),
             };
 
@@ -472,10 +480,7 @@ mod tests {
 
         let info = client.info(123).await.unwrap();
         assert_eq!(info.id, 123);
-        assert_eq!(
-            info.destination,
-            "scheme://host".parse::<Destination>().unwrap()
-        );
+        assert_eq!(info.destination, "scheme://host");
         assert_eq!(info.options, "key=value".parse::<Map>().unwrap());
     }
 
@@ -534,7 +539,7 @@ mod tests {
                 .unwrap();
 
             let mut list = ConnectionList::new();
-            list.insert(123, "scheme://host".parse::<Destination>().unwrap());
+            list.insert(123, "scheme://host".to_string());
 
             transport
                 .write_frame_for(&Response::new(request.id, ManagerResponse::List(list)))
@@ -546,7 +551,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(
             list.get(&123).expect("Connection list missing item"),
-            &"scheme://host".parse::<Destination>().unwrap()
+            "scheme://host"
         );
     }
 
@@ -714,7 +719,7 @@ mod tests {
 
         let dest = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -742,7 +747,7 @@ mod tests {
 
         let err = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -771,7 +776,7 @@ mod tests {
 
         let err = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -797,7 +802,7 @@ mod tests {
 
         let err = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -823,7 +828,7 @@ mod tests {
 
         let err = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -871,7 +876,7 @@ mod tests {
 
         let dest = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -916,7 +921,7 @@ mod tests {
 
         let id = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -950,7 +955,7 @@ mod tests {
 
         let err = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -984,7 +989,7 @@ mod tests {
 
         let err = client
             .connect(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -1032,7 +1037,7 @@ mod tests {
 
         let dest = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )
@@ -1082,7 +1087,7 @@ mod tests {
 
         let dest = client
             .launch(
-                "scheme://host".parse::<Destination>().unwrap(),
+                "scheme://host",
                 "key=value".parse::<Map>().unwrap(),
                 DummyAuthHandler,
             )

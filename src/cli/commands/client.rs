@@ -96,7 +96,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                         Format::Shell => {
                             client
                                 .connect(
-                                    *destination,
+                                    destination.to_string(),
                                     options,
                                     PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                                 )
@@ -104,7 +104,11 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                         }
                         Format::Json => {
                             client
-                                .connect(*destination, options, JsonAuthHandler::default())
+                                .connect(
+                                    destination.to_string(),
+                                    options,
+                                    JsonAuthHandler::default(),
+                                )
                                 .await
                         }
                     };
@@ -123,7 +127,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     Format::Shell => {
                         client
                             .connect(
-                                *destination,
+                                destination.to_string(),
                                 options,
                                 PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                             )
@@ -131,7 +135,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     }
                     Format::Json => {
                         client
-                            .connect(*destination, options, JsonAuthHandler::default())
+                            .connect(destination.to_string(), options, JsonAuthHandler::default())
                             .await
                     }
                 };
@@ -204,7 +208,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 Format::Shell => {
                     client
                         .launch(
-                            *destination,
+                            destination.to_string(),
                             options,
                             PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                         )
@@ -212,7 +216,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
                 Format::Json => {
                     client
-                        .launch(*destination, options, JsonAuthHandler::default())
+                        .launch(destination.to_string(), options, JsonAuthHandler::default())
                         .await
                 }
             };
@@ -245,7 +249,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 Format::Shell => {
                     client
                         .connect(
-                            new_destination,
+                            new_destination.to_string(),
                             Map::new(),
                             PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                         )
@@ -253,7 +257,11 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
                 Format::Json => {
                     client
-                        .connect(new_destination, Map::new(), JsonAuthHandler::default())
+                        .connect(
+                            new_destination.to_string(),
+                            Map::new(),
+                            JsonAuthHandler::default(),
+                        )
                         .await
                 }
             };
@@ -1128,7 +1136,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
                     let result = client
                         .connect(
-                            destination,
+                            destination.to_string(),
                             options,
                             PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                         )
@@ -1146,7 +1154,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 let sp = ui.spinner(&format!("Connecting to {}...", dest_display));
                 let result = client
                     .connect(
-                        destination,
+                        destination.to_string(),
                         options,
                         PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                     )
@@ -1257,27 +1265,18 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                                     } else {
                                         ui.header("\nConnections:");
                                         for (id, dest) in list {
-                                            let scheme = dest
-                                                .scheme
-                                                .as_ref()
-                                                .map(|s| format!("{s}://"))
-                                                .unwrap_or_default();
-                                            let port = dest
-                                                .port
-                                                .map(|p| format!(":{p}"))
-                                                .unwrap_or_default();
                                             if *selected == id {
                                                 ui.write_line(&format!(
-                                                    "  {} {} -> {scheme}{}{port}",
+                                                    "  {} {} -> {}",
                                                     style("*").green(),
                                                     style(id).bold(),
-                                                    dest.host
+                                                    dest
                                                 ));
                                             } else {
                                                 ui.write_line(&format!(
-                                                    "    {} -> {scheme}{}{port}",
+                                                    "    {} -> {}",
                                                     style(id).dim(),
-                                                    dest.host
+                                                    dest
                                                 ));
                                             }
                                         }
@@ -1569,20 +1568,11 @@ fn format_system_info(info: &SystemInfo) -> String {
 /// styling (e.g. bold labels via `console::style`).
 fn format_connection_detail(
     id: ConnectionId,
-    dest: &Destination,
+    dest: &str,
     options: &Map,
 ) -> (String, String, Option<String>) {
-    let scheme = dest.scheme.as_deref().unwrap_or_default();
-    let user = dest
-        .username
-        .as_deref()
-        .map(|u| format!("{u}@"))
-        .unwrap_or_default();
-    let host = &dest.host;
-    let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
-
     let header = format!("Connection {id}:");
-    let host_line = format!("{scheme}://{user}{host}{port}");
+    let host_line = dest.to_string();
     let opts = options.to_string();
     let options_line = if opts.is_empty() { None } else { Some(opts) };
 
@@ -1941,7 +1931,8 @@ fn format_version_shell(version: &Version) -> anyhow::Result<String> {
     Ok(output)
 }
 
-/// Checks for an existing connection matching the given destination's (scheme, host, port, username).
+/// Checks for an existing connection matching the given destination string.
+/// Comparison is done case-insensitively against stored destination strings.
 /// Returns the first matching connection ID, or None if no match found.
 async fn find_existing_connection_id(
     client: &mut ManagerClient,
@@ -1955,18 +1946,9 @@ async fn find_existing_connection_id(
         }
     };
 
+    let target = dest.to_string();
     list.iter()
-        .find(|(_, existing)| {
-            let scheme_matches = match (&existing.scheme, &dest.scheme) {
-                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-                (None, None) => true,
-                _ => false,
-            };
-            scheme_matches
-                && existing.host == dest.host
-                && existing.port == dest.port
-                && existing.username == dest.username
-        })
+        .find(|(_, existing)| existing.eq_ignore_ascii_case(&target))
         .map(|(id, _)| *id)
 }
 
@@ -2007,20 +1989,7 @@ async fn use_or_lookup_connection_id(
                 if console::Term::stderr().is_term() {
                     let items: Vec<String> = list
                         .iter()
-                        .map(|(id, dest)| {
-                            let scheme = dest
-                                .scheme
-                                .as_ref()
-                                .map(|s| format!("{s}://"))
-                                .unwrap_or_default();
-                            let user = dest
-                                .username
-                                .as_ref()
-                                .map(|u| format!("{u}@"))
-                                .unwrap_or_default();
-                            let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
-                            format!("{id} -> {scheme}{user}{}{port}", dest.host)
-                        })
+                        .map(|(id, dest)| format!("{id} -> {dest}"))
                         .collect();
                     let selection = dialoguer::Select::new()
                         .with_prompt("Multiple connections available")
@@ -2696,57 +2665,30 @@ mod tests {
 
         #[test]
         fn includes_connection_id_and_host() {
-            let dest = Destination {
-                scheme: Some("ssh".to_string()),
-                username: Some("user".to_string()),
-                password: None,
-                host: Host::Name("example.com".to_string()),
-                port: Some(22),
-            };
-            let (header, host, _) = format_connection_detail(42, &dest, &Map::new());
+            let (header, host, _) =
+                format_connection_detail(42, "ssh://user@example.com:22", &Map::new());
             assert_eq!(header, "Connection 42:");
             assert_eq!(host, "ssh://user@example.com:22");
         }
 
         #[test]
         fn includes_options_when_present() {
-            let dest = Destination {
-                scheme: Some("distant".to_string()),
-                username: None,
-                password: None,
-                host: Host::Name("server.local".to_string()),
-                port: None,
-            };
             let mut opts = Map::new();
             opts.insert("key".to_string(), "value".to_string());
-            let (_, _, options) = format_connection_detail(1, &dest, &opts);
+            let (_, _, options) = format_connection_detail(1, "distant://server.local", &opts);
             assert!(options.is_some(), "expected options to be present");
         }
 
         #[test]
         fn no_options_line_when_empty() {
-            let dest = Destination {
-                scheme: Some("ssh".to_string()),
-                username: None,
-                password: None,
-                host: Host::Name("host".to_string()),
-                port: None,
-            };
-            let (_, _, options) = format_connection_detail(1, &dest, &Map::new());
+            let (_, _, options) = format_connection_detail(1, "ssh://host", &Map::new());
             assert!(options.is_none(), "expected no options");
         }
 
         #[test]
-        fn handles_missing_optional_fields() {
-            let dest = Destination {
-                scheme: None,
-                username: None,
-                password: None,
-                host: Host::Name("localhost".to_string()),
-                port: None,
-            };
-            let (_, host, _) = format_connection_detail(1, &dest, &Map::new());
-            assert_eq!(host, "://localhost");
+        fn handles_plain_host() {
+            let (_, host, _) = format_connection_detail(1, "localhost", &Map::new());
+            assert_eq!(host, "localhost");
         }
     }
 
@@ -2794,8 +2736,8 @@ mod tests {
                 let req: Request<ManagerRequest> =
                     transport.read_frame_as().await.unwrap().unwrap();
                 let mut list = ConnectionList::new();
-                list.insert(42, "ssh://user@host".parse::<Destination>().unwrap());
-                list.insert(99, "ssh://other@elsewhere".parse::<Destination>().unwrap());
+                list.insert(42, "ssh://user@host".to_string());
+                list.insert(99, "ssh://other@elsewhere".to_string());
                 transport
                     .write_frame_for(&Response::new(req.id, ManagerResponse::List(list)))
                     .await
@@ -2815,7 +2757,7 @@ mod tests {
                 let req: Request<ManagerRequest> =
                     transport.read_frame_as().await.unwrap().unwrap();
                 let mut list = ConnectionList::new();
-                list.insert(99, "ssh://other@elsewhere".parse::<Destination>().unwrap());
+                list.insert(99, "ssh://other@elsewhere".to_string());
                 transport
                     .write_frame_for(&Response::new(req.id, ManagerResponse::List(list)))
                     .await
@@ -2828,14 +2770,14 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn scheme_matching_is_case_insensitive() {
+        async fn matching_is_case_insensitive() {
             let (mut client, mut transport) = setup();
 
             tokio::spawn(async move {
                 let req: Request<ManagerRequest> =
                     transport.read_frame_as().await.unwrap().unwrap();
                 let mut list = ConnectionList::new();
-                list.insert(42, "SSH://user@host".parse::<Destination>().unwrap());
+                list.insert(42, "SSH://user@host".to_string());
                 transport
                     .write_frame_for(&Response::new(req.id, ManagerResponse::List(list)))
                     .await

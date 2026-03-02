@@ -6,12 +6,13 @@ use crate::auth::msg::AuthenticationResponse;
 use log::*;
 use tokio::sync::{RwLock, oneshot};
 
-use crate::net::common::{ConnectionId, Destination, Map};
+use crate::net::common::{ConnectionId, Map};
 use crate::net::manager::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, ManagerRequest,
     ManagerResponse, SemVer,
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler};
+use crate::plugin::extract_scheme;
 
 mod authentication;
 pub use authentication::*;
@@ -58,24 +59,23 @@ impl ManagerServer {
     /// launched server
     async fn launch(
         &self,
-        destination: Destination,
+        raw_destination: &str,
         options: Map,
         mut authenticator: ManagerAuthenticator,
-    ) -> io::Result<Destination> {
-        let scheme = match destination.scheme.as_deref() {
+    ) -> io::Result<crate::net::common::Destination> {
+        let scheme = match extract_scheme(raw_destination) {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
-                scheme
+                scheme.to_lowercase()
             }
             None => {
                 trace!(
                     "Using fallback scheme of {}",
                     self.config.launch_fallback_scheme.as_str()
                 );
-                self.config.launch_fallback_scheme.as_str()
+                self.config.launch_fallback_scheme.to_lowercase()
             }
-        }
-        .to_lowercase();
+        };
 
         let plugin = self.config.plugins.get(&scheme).ok_or_else(|| {
             io::Error::new(
@@ -84,7 +84,7 @@ impl ManagerServer {
             )
         })?;
         let destination = plugin
-            .launch(&destination, &options, &mut authenticator)
+            .launch(raw_destination, &options, &mut authenticator)
             .await?;
 
         Ok(destination)
@@ -95,24 +95,23 @@ impl ManagerServer {
     /// establish the connection to the server
     async fn connect(
         &self,
-        destination: Destination,
+        raw_destination: &str,
         options: Map,
         mut authenticator: ManagerAuthenticator,
     ) -> io::Result<ConnectionId> {
-        let scheme = match destination.scheme.as_deref() {
+        let scheme = match extract_scheme(raw_destination) {
             Some(scheme) => {
                 trace!("Using scheme {}", scheme);
-                scheme
+                scheme.to_lowercase()
             }
             None => {
                 trace!(
                     "Using fallback scheme of {}",
                     self.config.connect_fallback_scheme.as_str()
                 );
-                self.config.connect_fallback_scheme.as_str()
+                self.config.connect_fallback_scheme.to_lowercase()
             }
-        }
-        .to_lowercase();
+        };
 
         let plugin = self.config.plugins.get(&scheme).ok_or_else(|| {
             io::Error::new(
@@ -121,10 +120,11 @@ impl ManagerServer {
             )
         })?;
         let client = plugin
-            .connect(&destination, &options, &mut authenticator)
+            .connect(raw_destination, &options, &mut authenticator)
             .await?;
 
-        let connection = ManagerConnection::spawn(destination, options, client).await?;
+        let connection =
+            ManagerConnection::spawn(raw_destination.to_string(), options, client).await?;
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -157,7 +157,7 @@ impl ManagerServer {
                 .read()
                 .await
                 .values()
-                .map(|conn| (conn.id, conn.destination.clone()))
+                .map(|conn| (conn.id, conn.destination.to_string()))
                 .collect(),
         ))
     }
@@ -219,7 +219,7 @@ impl ServerHandler for ManagerServer {
                 info!("Launching {destination} with {options}");
                 match self
                     .launch(
-                        *destination,
+                        &destination,
                         options,
                         ManagerAuthenticator {
                             reply: reply.clone(),
@@ -239,7 +239,7 @@ impl ServerHandler for ManagerServer {
                 info!("Connecting to {destination} with {options}");
                 match self
                     .connect(
-                        *destination,
+                        &destination,
                         options,
                         ManagerAuthenticator {
                             reply: reply.clone(),
@@ -377,7 +377,7 @@ mod tests {
     use super::*;
     use crate::auth::Authenticator;
     use crate::net::client::UntypedClient;
-    use crate::net::common::FramedTransport;
+    use crate::net::common::{Destination, FramedTransport};
     use crate::net::server::ServerReply;
     use crate::plugin::Plugin;
 
@@ -393,7 +393,7 @@ mod tests {
 
         fn connect<'a>(
             &'a self,
-            _destination: &'a Destination,
+            _destination: &'a str,
             _options: &'a Map,
             _authenticator: &'a mut dyn Authenticator,
         ) -> Pin<Box<dyn std::future::Future<Output = io::Result<UntypedClient>> + Send + 'a>>
@@ -403,7 +403,7 @@ mod tests {
 
         fn launch<'a>(
             &'a self,
-            _destination: &'a Destination,
+            _destination: &'a str,
             _options: &'a Map,
             _authenticator: &'a mut dyn Authenticator,
         ) -> Pin<Box<dyn std::future::Future<Output = io::Result<Destination>> + Send + 'a>>
@@ -424,7 +424,7 @@ mod tests {
 
         fn connect<'a>(
             &'a self,
-            _destination: &'a Destination,
+            _destination: &'a str,
             _options: &'a Map,
             _authenticator: &'a mut dyn Authenticator,
         ) -> Pin<Box<dyn std::future::Future<Output = io::Result<UntypedClient>> + Send + 'a>>
@@ -434,7 +434,7 @@ mod tests {
 
         fn launch<'a>(
             &'a self,
-            _destination: &'a Destination,
+            _destination: &'a str,
             _options: &'a Map,
             _authenticator: &'a mut dyn Authenticator,
         ) -> Pin<Box<dyn std::future::Future<Output = io::Result<Destination>> + Send + 'a>>
@@ -485,7 +485,7 @@ mod tests {
     async fn launch_should_fail_if_destination_scheme_is_unsupported() {
         let (server, authenticator) = setup(test_config());
 
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "".parse::<Map>().unwrap();
         let err = server
             .launch(destination, options, authenticator)
@@ -504,7 +504,7 @@ mod tests {
         config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "".parse::<Map>().unwrap();
         let err = server
             .launch(destination, options, authenticator)
@@ -524,7 +524,7 @@ mod tests {
         config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "key=value".parse::<Map>().unwrap();
         let destination = server
             .launch(destination, options, authenticator)
@@ -541,7 +541,7 @@ mod tests {
     async fn connect_should_fail_if_destination_scheme_is_unsupported() {
         let (server, authenticator) = setup(test_config());
 
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "".parse::<Map>().unwrap();
         let err = server
             .connect(destination, options, authenticator)
@@ -560,7 +560,7 @@ mod tests {
         config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "".parse::<Map>().unwrap();
         let err = server
             .connect(destination, options, authenticator)
@@ -580,7 +580,7 @@ mod tests {
         config.plugins.insert("scheme".to_string(), plugin);
 
         let (server, authenticator) = setup(config);
-        let destination = "scheme://host".parse::<Destination>().unwrap();
+        let destination = "scheme://host";
         let options = "key=value".parse::<Map>().unwrap();
         let id = server
             .connect(destination, options, authenticator)
@@ -607,7 +607,7 @@ mod tests {
         let (server, _) = setup(test_config());
 
         let connection = ManagerConnection::spawn(
-            "scheme://host".parse().unwrap(),
+            "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
         )
@@ -621,7 +621,7 @@ mod tests {
             info,
             ConnectionInfo {
                 id,
-                destination: "scheme://host".parse().unwrap(),
+                destination: "scheme://host".to_string(),
                 options: "key=value".parse().unwrap(),
             }
         );
@@ -640,7 +640,7 @@ mod tests {
         let (server, _) = setup(test_config());
 
         let connection = ManagerConnection::spawn(
-            "scheme://host".parse().unwrap(),
+            "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
         )
@@ -650,7 +650,7 @@ mod tests {
         server.connections.write().await.insert(id_1, connection);
 
         let connection = ManagerConnection::spawn(
-            "other://host2".parse().unwrap(),
+            "other://host2",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
         )
@@ -660,14 +660,8 @@ mod tests {
         server.connections.write().await.insert(id_2, connection);
 
         let list = server.list().await.unwrap();
-        assert_eq!(
-            list.get(&id_1).unwrap(),
-            &"scheme://host".parse::<Destination>().unwrap()
-        );
-        assert_eq!(
-            list.get(&id_2).unwrap(),
-            &"other://host2".parse::<Destination>().unwrap()
-        );
+        assert_eq!(list.get(&id_1).unwrap(), "scheme://host");
+        assert_eq!(list.get(&id_2).unwrap(), "other://host2");
     }
 
     #[tokio::test]
@@ -683,7 +677,7 @@ mod tests {
         let (server, _) = setup(test_config());
 
         let connection = ManagerConnection::spawn(
-            "scheme://host".parse().unwrap(),
+            "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
         )

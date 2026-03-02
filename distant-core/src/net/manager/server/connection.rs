@@ -6,14 +6,15 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::net::client::{Mailbox, UntypedClient};
-use crate::net::common::{ConnectionId, Destination, Map, UntypedRequest, UntypedResponse};
+use crate::net::common::{ConnectionId, Map, UntypedRequest, UntypedResponse};
 use crate::net::manager::data::{ManagerChannelId, ManagerResponse};
 use crate::net::server::ServerReply;
 
 /// Represents a connection a distant manager has with some distant-compatible server
 pub struct ManagerConnection {
     pub id: ConnectionId,
-    pub destination: Destination,
+    /// Raw destination string as provided by the user (e.g. `"docker://ubuntu:22.04"`).
+    pub destination: String,
     pub options: Map,
     tx: mpsc::UnboundedSender<Action>,
 
@@ -60,10 +61,11 @@ impl ManagerChannel {
 
 impl ManagerConnection {
     pub async fn spawn(
-        spawn: Destination,
+        destination: impl Into<String>,
         options: Map,
         mut client: UntypedClient,
     ) -> io::Result<Self> {
+        let destination = destination.into();
         let connection_id = rand::random();
         let (tx, rx) = mpsc::unbounded_channel();
 
@@ -84,7 +86,7 @@ impl ManagerConnection {
 
         Ok(Self {
             id: connection_id,
-            destination: spawn,
+            destination,
             options,
             tx,
             action_task,
@@ -366,7 +368,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_spawn_sets_id_and_destination() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = "key=value".parse().unwrap();
 
         let conn = ManagerConnection::spawn(dest.clone(), opts.clone(), client)
@@ -383,7 +385,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_open_channel_returns_channel_with_random_id() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -402,7 +404,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_open_channel_registers_and_shows_in_channel_ids() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -426,7 +428,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_channel_ids_empty_initially() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -438,7 +440,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_open_multiple_channels_all_registered() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -467,7 +469,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_channel_close_unregisters() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -498,7 +500,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_abort_stops_tasks() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
@@ -513,7 +515,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn manager_connection_open_channel_fails_after_abort() {
         let (client, _server) = make_untyped_client();
-        let dest: Destination = "scheme://host".parse().unwrap();
+        let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
         let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();

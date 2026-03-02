@@ -18,7 +18,7 @@ pub mod net;
 
 /// Plugin trait and adapters.
 pub mod plugin;
-pub use plugin::Plugin;
+pub use plugin::{Plugin, extract_scheme, parse_destination};
 
 /// Protocol structures.
 pub mod protocol;
