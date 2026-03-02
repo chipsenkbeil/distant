@@ -185,12 +185,11 @@ impl Api for DockerApi {
 
     fn read_file_text(
         &self,
-        _ctx: Ctx,
+        ctx: Ctx,
         path: PathBuf,
     ) -> impl std::future::Future<Output = io::Result<String>> + Send {
         async move {
-            let path_str = path.to_string_lossy().to_string();
-            let data = utils::tar_read_file(&self.client, &self.container, &path_str).await?;
+            let data = self.read_file(ctx, path).await?;
             String::from_utf8(data).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -214,14 +213,11 @@ impl Api for DockerApi {
 
     fn write_file_text(
         &self,
-        _ctx: Ctx,
+        ctx: Ctx,
         path: PathBuf,
         data: String,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
-        async move {
-            let path_str = path.to_string_lossy().to_string();
-            utils::tar_write_file(&self.client, &self.container, &path_str, data.as_bytes()).await
-        }
+        async move { self.write_file(ctx, path, data.into_bytes()).await }
     }
 
     fn append_file(
@@ -261,43 +257,11 @@ impl Api for DockerApi {
 
     fn append_file_text(
         &self,
-        _ctx: Ctx,
+        ctx: Ctx,
         path: PathBuf,
         data: String,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
-        async move {
-            let path_str = path.to_string_lossy().to_string();
-
-            // Primary: try exec-based append
-            let result = utils::execute_with_stdin(
-                &self.client,
-                &self.container,
-                &["sh", "-c", &format!("cat >> '{}'", path_str)],
-                data.as_bytes(),
-                self.user(),
-            )
-            .await;
-
-            if let Ok(output) = result
-                && output.success()
-            {
-                return Ok(());
-            }
-
-            // Fallback: tar-read, append in memory, tar-write back
-            let existing = utils::tar_read_file(&self.client, &self.container, &path_str)
-                .await
-                .unwrap_or_default();
-            let mut combined = String::from_utf8_lossy(&existing).to_string();
-            combined.push_str(&data);
-            utils::tar_write_file(
-                &self.client,
-                &self.container,
-                &path_str,
-                combined.as_bytes(),
-            )
-            .await
-        }
+        async move { self.append_file(ctx, path, data.into_bytes()).await }
     }
 
     fn read_dir(
