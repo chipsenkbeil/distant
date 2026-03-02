@@ -78,7 +78,7 @@ impl Default for LaunchOpts {
     fn default() -> Self {
         Self {
             image: String::from("ubuntu:22.04"),
-            auto_remove: false,
+            auto_remove: true,
         }
     }
 }
@@ -93,6 +93,9 @@ pub struct Docker {
 
     /// Connection options.
     opts: DockerOpts,
+
+    /// If true, stop and remove the container when the server shuts down.
+    auto_remove: bool,
 }
 
 impl Docker {
@@ -140,6 +143,7 @@ impl Docker {
             client,
             container,
             opts,
+            auto_remove: false,
         })
     }
 
@@ -194,13 +198,23 @@ impl Docker {
             client,
             container: container_name,
             opts: docker_opts,
+            auto_remove: launch_opts.auto_remove,
         })
     }
 
     /// Converts this Docker connection into a distant [`Client`].
     ///
     /// Creates an in-memory server/client pair where the server side is backed by [`DockerApi`].
+    /// If `auto_remove` is enabled, the container is stopped and removed when the server task ends.
     pub async fn into_distant_client(self) -> io::Result<Client> {
+        let auto_remove = self.auto_remove;
+        let cleanup_client = if auto_remove {
+            Some(Self::create_bollard_client(&self.opts)?)
+        } else {
+            None
+        };
+        let container_name = self.container.clone();
+
         let api = DockerApi::new(self.client, self.container, self.opts).await;
 
         let (t1, t2) = InmemoryTransport::pair(100);
@@ -211,6 +225,19 @@ impl Docker {
 
         tokio::spawn(async move {
             let _ = server.start(OneshotListener::from_value(t2));
+
+            if let Some(client) = cleanup_client {
+                info!(
+                    "Auto-removing container '{}' after server shutdown",
+                    container_name
+                );
+                if let Err(e) = Self::stop_and_remove(&client, &container_name).await {
+                    warn!(
+                        "Failed to auto-remove container '{}': {}",
+                        container_name, e
+                    );
+                }
+            }
         });
 
         let client = NetClient::build()
@@ -225,7 +252,18 @@ impl Docker {
     }
 
     /// Converts this Docker connection into a pair of distant client and server ref.
+    ///
+    /// If `auto_remove` is enabled, the container is stopped and removed when the server
+    /// shuts down.
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
+        let auto_remove = self.auto_remove;
+        let cleanup_client = if auto_remove {
+            Some(Self::create_bollard_client(&self.opts)?)
+        } else {
+            None
+        };
+        let container_name = self.container.clone();
+
         let api = DockerApi::new(self.client, self.container, self.opts).await;
 
         let (t1, t2) = InmemoryTransport::pair(100);
@@ -237,6 +275,24 @@ impl Docker {
         let server_ref = server
             .start(OneshotListener::from_value(t2))
             .map_err(io::Error::other)?;
+
+        // Spawn cleanup task that waits for server shutdown signal
+        if let Some(client) = cleanup_client {
+            let mut shutdown_rx = server_ref.subscribe_shutdown();
+            tokio::spawn(async move {
+                let _ = shutdown_rx.recv().await;
+                info!(
+                    "Auto-removing container '{}' after server shutdown",
+                    container_name
+                );
+                if let Err(e) = Self::stop_and_remove(&client, &container_name).await {
+                    warn!(
+                        "Failed to auto-remove container '{}': {}",
+                        container_name, e
+                    );
+                }
+            });
+        }
 
         let client = NetClient::build()
             .auth_handler(DummyAuthHandler)

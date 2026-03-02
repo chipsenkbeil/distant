@@ -123,11 +123,7 @@ Each item is tagged with a category:
    `tar_read_file` which skips directory entries — directory copies that
    fail via exec silently return `NotFound` from the fallback. Needs a
    `tar_copy_path` utility that handles both files and directories.
-7. **(Limitation)** `auto_remove` on `LaunchOpts` is stored but never
-   honored — launched containers are never cleaned up automatically.
-   Needs `auto_remove: bool` on the `Docker` struct and lifecycle cleanup
-   (e.g. on `ServerRef` drop or shutdown hook).
-8. **(Limitation)** `distant-docker` search error handling — `grep`
+7. **(Limitation)** `distant-docker` search error handling — `grep`
    exit code 1 (no matches) vs exit code 2 (error) are not distinguished.
    A non-existent search path produces a silent empty result instead of
    an error. Fix: check exit code > 1 as an error, or use `set -o
