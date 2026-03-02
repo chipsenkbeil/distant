@@ -9,8 +9,8 @@ use async_once_cell::OnceCell;
 use bollard::Docker;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
-    ProcessId, PtySize, SearchId, SearchQuery, SearchQueryMatch, SearchQueryTarget,
-    SetPermissionsOptions, SystemInfo, UnixMetadata, Version,
+    ProcessId, PtySize, SearchId, SearchQuery, SearchQueryTarget, SetPermissionsOptions,
+    SystemInfo, UnixMetadata, Version,
 };
 use distant_core::{Api, Ctx};
 use tokio::sync::RwLock;
@@ -127,137 +127,6 @@ impl DockerApi {
                 output.stderr_str()
             )))
         }
-    }
-
-    /// Execute a command in the container as a specific user.
-    async fn run_cmd_as(&self, user: &str, cmd: &[&str]) -> io::Result<utils::ExecOutput> {
-        utils::execute_output(&self.client, &self.container, cmd, Some(user)).await
-    }
-
-    /// Execute a shell command string as a specific user.
-    ///
-    /// Uses `sh -c` on Unix and `cmd /c` on Windows.
-    async fn run_shell_cmd_as(&self, user: &str, script: &str) -> io::Result<utils::ExecOutput> {
-        match self.family {
-            DockerFamily::Unix => self.run_cmd_as(user, &["sh", "-c", script]).await,
-            DockerFamily::Windows => self.run_cmd_as(user, &["cmd", "/c", script]).await,
-        }
-    }
-
-    /// Perform a search using the Docker tar API as a fallback.
-    ///
-    /// On Windows nanoserver, exec-based search tools (`findstr`, `dir /s /b`) cannot
-    /// access paths created via the Docker tar API due to `ContainerUser` permission
-    /// restrictions. This method reads directory listings and file contents through
-    /// the Docker archive API and performs matching in Rust.
-    async fn tar_based_search(&self, query: &SearchQuery) -> Vec<SearchQueryMatch> {
-        use distant_core::protocol::{
-            SearchQueryContentsMatch, SearchQueryMatchData, SearchQueryPathMatch,
-            SearchQuerySubmatch,
-        };
-
-        let mut matches = Vec::new();
-
-        let path = query
-            .paths
-            .first()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
-
-        // List all entries in the search directory via tar
-        let entries = match utils::tar_list_dir(&self.client, &self.container, &path).await {
-            Ok(e) => e,
-            Err(_) => return matches,
-        };
-
-        match query.target {
-            SearchQueryTarget::Path => {
-                for (_entry_type, entry_path, _size, _mtime) in &entries {
-                    let filename = std::path::Path::new(entry_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-
-                    if search::condition_matches(&query.condition, &filename) {
-                        // Reconstruct the full container path.
-                        // tar_list_dir returns paths like "dirname/file.txt" — strip
-                        // the first component and any leading separator so Path::join
-                        // treats the remainder as relative (not absolute).
-                        let relative = entry_path
-                            .strip_prefix(
-                                std::path::Path::new(entry_path)
-                                    .components()
-                                    .next()
-                                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                                    .unwrap_or_default()
-                                    .as_str(),
-                            )
-                            .unwrap_or(entry_path)
-                            .trim_start_matches(['/', '\\']);
-                        let full_path = std::path::Path::new(&path).join(relative);
-                        matches.push(SearchQueryMatch::Path(SearchQueryPathMatch {
-                            path: full_path,
-                            submatches: vec![SearchQuerySubmatch {
-                                r#match: SearchQueryMatchData::Text(filename),
-                                start: 0,
-                                end: 0,
-                            }],
-                        }));
-                    }
-                }
-            }
-            SearchQueryTarget::Contents => {
-                for (entry_type, entry_path, _size, _mtime) in &entries {
-                    // Skip directories — only search file contents
-                    if *entry_type == tar::EntryType::Directory {
-                        continue;
-                    }
-
-                    // Reconstruct the full container path for this file
-                    let relative = entry_path
-                        .strip_prefix(
-                            std::path::Path::new(entry_path)
-                                .components()
-                                .next()
-                                .map(|c| c.as_os_str().to_string_lossy().to_string())
-                                .unwrap_or_default()
-                                .as_str(),
-                        )
-                        .unwrap_or(entry_path)
-                        .trim_start_matches(['/', '\\']);
-                    let full_path = std::path::Path::new(&path).join(relative);
-                    let full_path_str = full_path.to_string_lossy().to_string();
-
-                    // Read file contents via tar API
-                    let data =
-                        match utils::tar_read_file(&self.client, &self.container, &full_path_str)
-                            .await
-                        {
-                            Ok(d) => d,
-                            Err(_) => continue,
-                        };
-
-                    let text = String::from_utf8_lossy(&data);
-                    for (line_num, line) in text.lines().enumerate() {
-                        if search::condition_matches(&query.condition, line) {
-                            matches.push(SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                                path: full_path.clone(),
-                                lines: SearchQueryMatchData::Text(line.to_string()),
-                                line_number: (line_num + 1) as u64,
-                                absolute_offset: 0,
-                                submatches: vec![SearchQuerySubmatch {
-                                    r#match: SearchQueryMatchData::Text(line.to_string()),
-                                    start: 0,
-                                    end: 0,
-                                }],
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-
-        matches
     }
 }
 
@@ -602,10 +471,7 @@ impl Api for DockerApi {
                         utils::tar_create_dir(&self.client, &self.container, &path_str).await?;
                     }
 
-                    // Best-effort cleanup of the marker file.
-                    // On Windows, use ContainerAdministrator because the marker is
-                    // owned by SYSTEM (created via tar API) and ContainerUser lacks
-                    // delete permissions.
+                    // Best-effort cleanup of the marker file
                     let marker = match self.family {
                         DockerFamily::Unix => format!("{}/.distant", path_str),
                         DockerFamily::Windows => format!("{}\\.distant", path_str),
@@ -614,13 +480,7 @@ impl Api for DockerApi {
                         DockerFamily::Unix => format!("rm -f '{}'", marker),
                         DockerFamily::Windows => format!("del /f \"{}\"", marker),
                     };
-                    let _ = match self.family {
-                        DockerFamily::Unix => self.run_shell_cmd(&del_cmd).await,
-                        DockerFamily::Windows => {
-                            self.run_shell_cmd_as("ContainerAdministrator", &del_cmd)
-                                .await
-                        }
-                    };
+                    let _ = self.run_shell_cmd(&del_cmd).await;
 
                     Ok(())
                 }
@@ -665,42 +525,24 @@ impl Api for DockerApi {
         async move {
             let path_str = path.to_string_lossy().to_string();
 
-            if self.family == DockerFamily::Unix {
-                let cmd = if force {
-                    format!("rm -rf '{}'", path_str)
-                } else {
-                    format!("rm -r '{}'", path_str)
-                };
-                return self.run_shell_cmd_stdout(&cmd).await.map(|_| ());
-            }
+            let cmd = match self.family {
+                DockerFamily::Unix => {
+                    if force {
+                        format!("rm -rf '{}'", path_str)
+                    } else {
+                        format!("rm -r '{}'", path_str)
+                    }
+                }
+                DockerFamily::Windows => {
+                    // Try rmdir first (for dirs), fall back to del (for files)
+                    format!(
+                        "rmdir /s /q \"{}\" 2>nul & if errorlevel 1 del /f \"{}\"",
+                        path_str, path_str
+                    )
+                }
+            };
 
-            // Windows: files/dirs created via Docker's tar API are owned by SYSTEM.
-            // `ContainerUser` (nanoserver default) lacks NTFS delete permissions on
-            // SYSTEM-owned entries. Use `ContainerAdministrator` for delete operations.
-            // Try `rmdir /s /q` first (handles directories), then `del /f` for files,
-            // as separate exec calls.
-            let rmdir_cmd = format!("rmdir /s /q \"{}\"", path_str);
-            if self
-                .run_shell_cmd_as("ContainerAdministrator", &rmdir_cmd)
-                .await
-                .is_ok_and(|o| o.success())
-            {
-                return Ok(());
-            }
-
-            let del_cmd = format!("del /f /q \"{}\"", path_str);
-            let output = self
-                .run_shell_cmd_as("ContainerAdministrator", &del_cmd)
-                .await?;
-            if output.success() {
-                Ok(())
-            } else {
-                Err(io::Error::other(format!(
-                    "Command failed (exit {}): {}",
-                    output.exit_code,
-                    output.stderr_str()
-                )))
-            }
+            self.run_shell_cmd_stdout(&cmd).await.map(|_| ())
         }
     }
 
@@ -732,28 +574,12 @@ impl Api for DockerApi {
 
                     utils::tar_write_file(&self.client, &self.container, &dst_str, &data).await?;
 
-                    // Delete the source file. On Windows, use ContainerAdministrator
-                    // because SYSTEM-owned files (created via tar API) cannot be deleted
-                    // by ContainerUser. Propagate errors — if the delete fails, the
-                    // rename is incomplete.
+                    // Best-effort delete of source
                     let del_cmd = match self.family {
                         DockerFamily::Unix => format!("rm -f '{}'", src_str),
                         DockerFamily::Windows => format!("del /f \"{}\"", src_str),
                     };
-                    let output = match self.family {
-                        DockerFamily::Unix => self.run_shell_cmd(&del_cmd).await?,
-                        DockerFamily::Windows => {
-                            self.run_shell_cmd_as("ContainerAdministrator", &del_cmd)
-                                .await?
-                        }
-                    };
-                    if !output.success() {
-                        return Err(io::Error::other(format!(
-                            "Failed to delete source after rename (exit {}): {}",
-                            output.exit_code,
-                            output.stderr_str()
-                        )));
-                    }
+                    let _ = self.run_shell_cmd(&del_cmd).await;
 
                     Ok(())
                 }
@@ -801,21 +627,18 @@ impl Api for DockerApi {
         async move {
             let path_str = path.to_string_lossy().to_string();
 
-            if self.family == DockerFamily::Windows {
-                // On Windows nanoserver, the exec-based `if exist` check is unreliable:
-                // it cannot see directories created via the Docker tar API (used as
-                // fallback when `mkdir` fails due to ContainerUser permissions).
-                // Use the tar-based check as the primary method — Docker's archive
-                // API correctly reports existence regardless of how the path was created,
-                // and returns 404 for truly deleted paths.
-                return Ok(utils::tar_path_exists(&self.client, &self.container, &path_str).await);
-            }
+            // Try exec-based check first
+            let cmd = match self.family {
+                DockerFamily::Unix => format!("test -e '{}'", path_str),
+                DockerFamily::Windows => {
+                    format!("if exist \"{}\" (exit 0) else (exit 1)", path_str)
+                }
+            };
 
-            // Unix: use exec-based check with tar fallback for infrastructure errors
-            let cmd = format!("test -e '{}'", path_str);
             match self.run_shell_cmd(&cmd).await {
                 Ok(output) => Ok(output.success()),
                 Err(_) => {
+                    // Fallback to tar-based existence check
                     Ok(utils::tar_path_exists(&self.client, &self.container, &path_str).await)
                 }
             }
@@ -914,28 +737,26 @@ impl Api for DockerApi {
         query: SearchQuery,
     ) -> impl std::future::Future<Output = io::Result<SearchId>> + Send {
         async move {
+            if !self.search_tools.has_any() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "No search tools available in this container. \
+                     Install ripgrep, grep, or find for search support.",
+                ));
+            }
+
+            let cmd = search::build_search_command(&query, &self.search_tools, self.family)?;
             let search_id: SearchId = rand::random();
 
-            // Try exec-based search first if tools are available
-            let mut matches = Vec::new();
-            if self.search_tools.has_any()
-                && let Ok(cmd) =
-                    search::build_search_command(&query, &self.search_tools, self.family)
-                && let Ok(output) = self.run_shell_cmd(&cmd).await
-            {
-                let stdout = output.stdout_str();
-                matches = match query.target {
-                    SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
-                    SearchQueryTarget::Path => search::parse_path_matches(&stdout),
-                };
-            }
+            // Run the search command
+            let output = self.run_shell_cmd(&cmd).await?;
+            let stdout = output.stdout_str();
 
-            // On Windows nanoserver, exec-based search tools (findstr, dir) cannot
-            // access paths created via the Docker tar API. Fall back to a tar-based
-            // search that reads files through the Docker archive API.
-            if matches.is_empty() && self.family == DockerFamily::Windows {
-                matches = self.tar_based_search(&query).await;
-            }
+            // Parse results based on search target
+            let matches = match query.target {
+                SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
+                SearchQueryTarget::Path => search::parse_path_matches(&stdout),
+            };
 
             // Send results via reply
             use distant_core::protocol::Response;
@@ -1049,20 +870,12 @@ impl Api for DockerApi {
             let mut processes = self.processes.write().await;
             match processes.get_mut(&id) {
                 Some(process) => {
-                    // Take the kill channel to send the signal. We do NOT remove the
-                    // map entry here — the reader task's cleanup closure is the sole
-                    // owner of removal. Removing here creates a race: if a new process
-                    // reuses the same ProcessId before the reader finishes, the stale
-                    // cleanup would delete the new entry.
+                    // Send kill signal via channel
                     if let Some(kill_tx) = process.kill_tx.take() {
                         let _ = kill_tx.send(()).await;
-                        Ok(())
-                    } else {
-                        Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("Process {} has already been killed", id),
-                        ))
                     }
+                    processes.remove(&id);
+                    Ok(())
                 }
                 None => Err(io::Error::new(
                     io::ErrorKind::NotFound,

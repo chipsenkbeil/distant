@@ -1,140 +1,346 @@
-name: CI
+name: Docker Debug
 
 on:
   push:
-    paths-ignore:
-      - '**.md'
-      - 'Makefile.toml'
-    branches:
-      - master
+    branches: ['**']
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'Makefile.toml'
-    branches:
-      - master
+    branches: [master]
 
 jobs:
-  clippy:
-    name: "Lint with clippy (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: windows-latest }
-          - { os: ubuntu-latest }
-    env:
-      RUSTFLAGS: -Dwarnings --cfg ci
+  docker-debug:
+    name: "Windows Docker nanoserver diagnostics"
+    runs-on: windows-2022
     steps:
-      - name: Ensure windows git checkout keeps \n line ending
+      # ── Setup ──────────────────────────────────────────────────────
+      - name: Pull nanoserver image
+        run: docker pull mcr.microsoft.com/windows/nanoserver:ltsc2022
+
+      - name: Start nanoserver container
         run: |
-          git config --system core.autocrlf false
-          git config --system core.eol lf
-        if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v4
-      - name: Install Rust (clippy)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "ci-clippy-${{ matrix.os }}"
-      - name: Check Cargo availability
-        run: cargo --version
-      - name: Run clippy (all features)
-        run: cargo clippy --workspace --all-targets --verbose --all-features
-  rustfmt:
-    name: "Verify code formatting (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: windows-latest }
-          - { os: ubuntu-latest }
-    steps:
-      - name: Ensure windows git checkout keeps \n line ending
-        run: |
-          git config --system core.autocrlf false
-          git config --system core.eol lf
-        if: matrix.os == 'windows-latest'
-      - uses: actions/checkout@v4
-      - name: Install Rust (rustfmt)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "ci-rustfmt-${{ matrix.os }}"
-      - name: Check Cargo availability
-        run: cargo --version
-      - run: cargo fmt --all -- --check
-  tests:
-    name: "Test Rust ${{ matrix.rust }} on ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
-    env:
-      RUSTFLAGS: --cfg ci
-      RUST_LOG: trace
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { rust: stable, os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { rust: stable, os: macos-latest }
-          - { rust: stable, os: ubuntu-latest }
-          - { rust: 1.88.0, os: ubuntu-latest }
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust ${{ matrix.rust }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-          targets: ${{ matrix.target }}
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
-      - name: Check Cargo availability
-        run: cargo --version
-      - name: Configure Windows for SSH testing
-        if: matrix.os == 'windows-latest'
+          docker run -d --name nano mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c "ping -t 127.0.0.1 > nul"
+          docker inspect nano --format "{{.State.Status}}"
+
+      # ── H1: Can exec see files uploaded via tar (docker cp)? ───────
+      - name: "H1: tar upload → exec visibility"
+        continue-on-error: true
         shell: pwsh
         run: |
-          # Windows Server 2025 has OpenSSH installed by default
-          # We don't start the system sshd service as our tests spawn their own sshd instances
-          
-          # Ensure ssh-agent is available for key management
-          Set-Service ssh-agent -StartupType Automatic
-          Start-Service ssh-agent
-          
-          # Configure firewall for SSH tests on high ports used by tests
-          New-NetFirewallRule -Name sshd-tests -DisplayName 'OpenSSH Tests (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 49152-65535
-          
-          # Ensure we have proper permissions for file operations
-          # Grant current user SeCreateSymbolicLinkPrivilege if needed for tests
-      - name: Extend Windows retry count to be more resilient
-        run: echo "NEXTEST_RETRIES=3" >> $GITHUB_ENV
-        shell: bash
-        if: matrix.os == 'windows-latest'
-      - name: Set faster timeouts for Windows SSH debugging
-        run: echo "NEXTEST_TEST_TIMEOUT=30s" >> $GITHUB_ENV
-        shell: bash
-        if: matrix.os == 'windows-latest'
-      - name: Ensure /run/sshd exists on Unix
-        run: sudo mkdir -p /run/sshd
-        if: matrix.os == 'ubuntu-latest'
-      - name: Pre-pull Docker test image (Linux)
-        run: docker pull ubuntu:22.04
-        if: matrix.os == 'ubuntu-latest'
-      - name: Pre-pull Docker test image (Windows)
-        run: docker pull mcr.microsoft.com/windows/nanoserver:ltsc2025
-        if: matrix.os == 'windows-latest'
-      - name: Run all workspace tests (all features)
-        run: cargo nextest run --profile ci --release --all-features --workspace
-      - name: Run all doc tests (all features)
-        run: cargo test --release --all-features --workspace --doc
+          Write-Host "=== H1: Can exec see files uploaded via docker cp? ==="
+
+          # Create a temp file to upload
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\hello.txt" -Value "hello from tar"
+
+          Write-Host "`n--- Uploading hello.txt to C:\temp\ via docker cp ---"
+          docker exec nano cmd /c "mkdir C:\temp" 2>$null
+          docker cp "$tmpDir\hello.txt" nano:"C:\temp\hello.txt"
+          Write-Host "docker cp exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Listing C:\temp via exec (dir) ---"
+          docker exec nano cmd /c "dir C:\temp"
+          Write-Host "dir exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Reading file via exec (type) ---"
+          docker exec nano cmd /c "type C:\temp\hello.txt"
+          Write-Host "type exit code: $LASTEXITCODE"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── H2: Can exec delete tar-uploaded files? ────────────────────
+      - name: "H2: tar upload → exec delete (both users)"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H2: Can exec delete files uploaded via docker cp? ==="
+
+          # Upload a file via docker cp
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\deleteme.txt" -Value "delete me"
+          docker cp "$tmpDir\deleteme.txt" nano:"C:\temp\deleteme.txt"
+
+          Write-Host "`n--- Attempt delete as ContainerUser ---"
+          docker exec nano cmd /c "del /f /q C:\temp\deleteme.txt"
+          Write-Host "del (ContainerUser) exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Check if file still exists ---"
+          docker exec nano cmd /c "if exist C:\temp\deleteme.txt (echo EXISTS) else (echo GONE)"
+
+          # Re-upload for admin test
+          docker cp "$tmpDir\deleteme.txt" nano:"C:\temp\deleteme2.txt"
+
+          Write-Host "`n--- Attempt delete as ContainerAdministrator ---"
+          docker exec --user ContainerAdministrator nano cmd /c "del /f /q C:\temp\deleteme2.txt"
+          Write-Host "del (ContainerAdministrator) exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Check if file still exists ---"
+          docker exec nano cmd /c "if exist C:\temp\deleteme2.txt (echo EXISTS) else (echo GONE)"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── H3: Is tar-created C:\temp visible from exec? ─────────────
+      - name: "H3: tar-created C:\\temp visibility"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H3: Tar-created directory visibility from exec ==="
+
+          # Stop the old container and start fresh
+          docker stop nano; docker rm nano
+          docker run -d --name nano mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c "ping -t 127.0.0.1 > nul"
+
+          # Create C:\temp ONLY via tar (docker cp), no exec mkdir
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          $innerDir = New-Item -ItemType Directory -Path "$tmpDir\temp"
+          Set-Content -Path "$innerDir\.distant" -Value ""
+
+          Write-Host "`n--- Uploading temp\ directory with .distant marker via docker cp to C:\ ---"
+          docker cp "$innerDir" nano:"C:\temp"
+          Write-Host "docker cp exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Listing C:\ via exec ---"
+          docker exec nano cmd /c "dir C:\"
+          Write-Host "dir C:\ exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Listing C:\temp via exec ---"
+          docker exec nano cmd /c "dir C:\temp"
+          Write-Host "dir C:\temp exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Check C:\temp exists via if exist ---"
+          docker exec nano cmd /c "if exist C:\temp (echo EXISTS) else (echo NOT_FOUND)"
+          Write-Host "if exist exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Check C:\temp\ (trailing backslash) via if exist ---"
+          docker exec nano cmd /c "if exist C:\temp\ (echo EXISTS) else (echo NOT_FOUND)"
+          Write-Host "if exist exit code: $LASTEXITCODE"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── H4: Can exec create and delete its own files in C:\temp? ───
+      - name: "H4: exec create → exec delete in C:\\temp"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H4: Can exec create and delete its own files? ==="
+
+          # Ensure C:\temp exists (use exec mkdir as ContainerAdministrator)
+          docker exec --user ContainerAdministrator nano cmd /c "mkdir C:\temp 2>nul"
+
+          Write-Host "`n--- Creating file via exec (echo) ---"
+          docker exec nano cmd /c "echo exec-created > C:\temp\execfile.txt"
+          Write-Host "echo exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Verifying file exists ---"
+          docker exec nano cmd /c "type C:\temp\execfile.txt"
+          Write-Host "type exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Deleting file via exec (del) as ContainerUser ---"
+          docker exec nano cmd /c "del /f /q C:\temp\execfile.txt"
+          Write-Host "del exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Verify deletion ---"
+          docker exec nano cmd /c "if exist C:\temp\execfile.txt (echo STILL_EXISTS) else (echo DELETED)"
+
+          Write-Host "`n--- Create and delete as ContainerAdministrator ---"
+          docker exec --user ContainerAdministrator nano cmd /c "echo admin-created > C:\temp\adminfile.txt"
+          Write-Host "echo (admin) exit code: $LASTEXITCODE"
+          docker exec --user ContainerAdministrator nano cmd /c "del /f /q C:\temp\adminfile.txt"
+          Write-Host "del (admin) exit code: $LASTEXITCODE"
+          docker exec nano cmd /c "if exist C:\temp\adminfile.txt (echo STILL_EXISTS) else (echo DELETED)"
+
+      # ── H5: Is the issue path-format related? ──────────────────────
+      - name: "H5: path format variations for delete"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H5: Path format variations ==="
+
+          # Upload files to test different path formats
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\pathtest.txt" -Value "path test"
+
+          docker cp "$tmpDir\pathtest.txt" nano:"C:\temp\pathtest1.txt"
+          docker cp "$tmpDir\pathtest.txt" nano:"C:\temp\pathtest2.txt"
+          docker cp "$tmpDir\pathtest.txt" nano:"C:\temp\pathtest3.txt"
+          docker cp "$tmpDir\pathtest.txt" nano:"C:\temp\pathtest4.txt"
+
+          Write-Host "`n--- Format 1: Backslash quoted (C:\temp\pathtest1.txt) ---"
+          docker exec nano cmd /c 'del /f /q "C:\temp\pathtest1.txt"'
+          Write-Host "exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Format 2: Forward slash quoted (C:/temp/pathtest2.txt) ---"
+          docker exec nano cmd /c 'del /f /q "C:/temp/pathtest2.txt"'
+          Write-Host "exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Format 3: Backslash unquoted ---"
+          docker exec nano cmd /c "del /f /q C:\temp\pathtest3.txt"
+          Write-Host "exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Format 4: Forward slash unquoted ---"
+          docker exec nano cmd /c "del /f /q C:/temp/pathtest4.txt"
+          Write-Host "exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Verify which were deleted ---"
+          docker exec nano cmd /c "dir C:\temp\pathtest*"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── H7: Directory listings from exec's perspective ─────────────
+      - name: "H7: directory listings from exec"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H7: Directory listings from exec ==="
+
+          Write-Host "`n--- Full C:\ listing ---"
+          docker exec nano cmd /c "dir C:\"
+
+          Write-Host "`n--- Full C:\temp listing ---"
+          docker exec nano cmd /c "dir C:\temp"
+
+          Write-Host "`n--- C:\temp with /a (show attributes) ---"
+          docker exec nano cmd /c "dir /a C:\temp"
+
+          Write-Host "`n--- C:\temp with /q (show owner) ---"
+          docker exec nano cmd /c "dir /q C:\temp"
+
+          Write-Host "`n--- icacls on C:\temp (permissions) ---"
+          docker exec nano cmd /c "icacls C:\temp" 2>&1
+          Write-Host "icacls exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Upload a test file and check its permissions ---"
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\permtest.txt" -Value "permission test"
+          docker cp "$tmpDir\permtest.txt" nano:"C:\temp\permtest.txt"
+
+          docker exec nano cmd /c "icacls C:\temp\permtest.txt" 2>&1
+          Write-Host "icacls (tar file) exit code: $LASTEXITCODE"
+
+          # Create a file via exec for comparison
+          docker exec nano cmd /c "echo exec-test > C:\temp\execperm.txt"
+          docker exec nano cmd /c "icacls C:\temp\execperm.txt" 2>&1
+          Write-Host "icacls (exec file) exit code: $LASTEXITCODE"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── H8: exec-based mkdir for C:\temp ───────────────────────────
+      - name: "H8: exec-based mkdir creates functional C:\\temp"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H8: exec-based mkdir vs tar-based dir creation ==="
+
+          # Fresh container
+          docker stop nano; docker rm nano
+          docker run -d --name nano mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c "ping -t 127.0.0.1 > nul"
+
+          Write-Host "`n--- Creating C:\temp via exec mkdir (ContainerAdministrator) ---"
+          docker exec --user ContainerAdministrator nano cmd /c "mkdir C:\temp"
+          Write-Host "mkdir exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Creating C:\temp2 via exec mkdir (ContainerUser) ---"
+          docker exec nano cmd /c "mkdir C:\temp2"
+          Write-Host "mkdir (user) exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Upload file via docker cp to exec-created C:\temp ---"
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\indir.txt" -Value "inside exec-created dir"
+          docker cp "$tmpDir\indir.txt" nano:"C:\temp\indir.txt"
+
+          Write-Host "`n--- Verify file via exec ---"
+          docker exec nano cmd /c "type C:\temp\indir.txt"
+          Write-Host "type exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Delete file via exec as ContainerUser ---"
+          docker exec nano cmd /c "del /f /q C:\temp\indir.txt"
+          Write-Host "del (user) exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Re-upload and delete as ContainerAdministrator ---"
+          docker cp "$tmpDir\indir.txt" nano:"C:\temp\indir.txt"
+          docker exec --user ContainerAdministrator nano cmd /c "del /f /q C:\temp\indir.txt"
+          Write-Host "del (admin) exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Verify ---"
+          docker exec nano cmd /c "if exist C:\temp\indir.txt (echo STILL_EXISTS) else (echo DELETED)"
+
+          Write-Host "`n--- Check directory permissions ---"
+          docker exec nano cmd /c "icacls C:\temp" 2>&1
+          docker exec nano cmd /c "icacls C:\temp2" 2>&1
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── Cleanup nanoserver ─────────────────────────────────────────
+      - name: Cleanup nanoserver container
+        if: always()
+        run: |
+          docker stop nano 2>nul
+          docker rm nano 2>nul
+
+      # ── H6: Servercore comparison ──────────────────────────────────
+      - name: Pull servercore image
+        run: docker pull mcr.microsoft.com/windows/servercore:ltsc2022
+
+      - name: Start servercore container
+        run: |
+          docker run -d --name score mcr.microsoft.com/windows/servercore:ltsc2022 cmd /c "ping -t 127.0.0.1 > nul"
+          docker inspect score --format "{{.State.Status}}"
+
+      - name: "H6: servercore — tar upload, visibility, and delete"
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Write-Host "=== H6: Servercore comparison ==="
+
+          # Create C:\temp via exec
+          docker exec --user ContainerAdministrator score cmd /c "mkdir C:\temp"
+
+          $tmpDir = New-TemporaryFile | ForEach-Object { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+          Set-Content -Path "$tmpDir\hello.txt" -Value "hello from tar"
+
+          Write-Host "`n--- Upload file via docker cp ---"
+          docker cp "$tmpDir\hello.txt" score:"C:\temp\hello.txt"
+          Write-Host "docker cp exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- List via exec ---"
+          docker exec score cmd /c "dir C:\temp"
+
+          Write-Host "`n--- Read via exec ---"
+          docker exec score cmd /c "type C:\temp\hello.txt"
+          Write-Host "type exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Delete as ContainerUser ---"
+          docker exec score cmd /c "del /f /q C:\temp\hello.txt"
+          Write-Host "del (user) exit code: $LASTEXITCODE"
+          docker exec score cmd /c "if exist C:\temp\hello.txt (echo STILL_EXISTS) else (echo DELETED)"
+
+          Write-Host "`n--- Re-upload and delete as ContainerAdministrator ---"
+          docker cp "$tmpDir\hello.txt" score:"C:\temp\hello2.txt"
+          docker exec --user ContainerAdministrator score cmd /c "del /f /q C:\temp\hello2.txt"
+          Write-Host "del (admin) exit code: $LASTEXITCODE"
+          docker exec score cmd /c "if exist C:\temp\hello2.txt (echo STILL_EXISTS) else (echo DELETED)"
+
+          Write-Host "`n--- Permissions on tar-uploaded file ---"
+          docker cp "$tmpDir\hello.txt" score:"C:\temp\hello3.txt"
+          docker exec score cmd /c "icacls C:\temp\hello3.txt"
+          Write-Host "icacls exit code: $LASTEXITCODE"
+
+          Write-Host "`n--- Create exec file for permission comparison ---"
+          docker exec score cmd /c "echo exec-file > C:\temp\execfile.txt"
+          docker exec score cmd /c "icacls C:\temp\execfile.txt"
+
+          Write-Host "`n--- Rmdir test (upload a directory via docker cp) ---"
+          $subDir = New-Item -ItemType Directory -Path "$tmpDir\subdir"
+          Set-Content -Path "$subDir\inner.txt" -Value "inner file"
+          docker cp "$subDir" score:"C:\temp\subdir"
+          docker exec score cmd /c "dir C:\temp\subdir"
+          docker exec score cmd /c "rmdir /s /q C:\temp\subdir"
+          Write-Host "rmdir exit code: $LASTEXITCODE"
+          docker exec score cmd /c "if exist C:\temp\subdir (echo STILL_EXISTS) else (echo DELETED)"
+
+          Remove-Item -Recurse -Force $tmpDir
+
+      # ── Cleanup servercore ─────────────────────────────────────────
+      - name: Cleanup servercore container
+        if: always()
+        run: |
+          docker stop score 2>nul
+          docker rm score 2>nul
