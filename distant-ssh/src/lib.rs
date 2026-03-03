@@ -35,6 +35,7 @@ mod process;
 mod utils;
 
 pub use plugin::SshPlugin;
+pub use utils::SftpPathBuf;
 
 use api::SshApi;
 

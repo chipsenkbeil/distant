@@ -13,73 +13,10 @@ use log::*;
 use russh::client::Handle;
 use russh_sftp::client::SftpSession;
 use tokio::sync::{Mutex, RwLock};
-use typed_path::Utf8TypedPath;
 
 use crate::process::Process;
+use crate::utils::SftpPathBuf;
 use crate::{ClientHandler, SshFamily};
-
-/// Convert a path string to SFTP path string using typed-path.
-/// SFTP protocol always uses Unix-style paths regardless of target OS.
-fn to_sftp_path(path: &str) -> io::Result<String> {
-    let typed_path = Utf8TypedPath::derive(path);
-    Ok(typed_path.with_unix_encoding().as_str().to_string())
-}
-
-/// Convert an SFTP path string to a native Windows path string.
-/// SFTP returns paths like `/C:/Users/...` which need the leading `/` stripped
-/// before the drive letter, then converted to Windows encoding via typed-path.
-/// This is the reverse of `to_sftp_path` which uses `with_unix_encoding()`.
-fn sftp_to_windows_path(sftp_path: &str) -> String {
-    // Strip the leading / that SFTP prepends before drive letters (e.g. /C:/...)
-    // so that derive() correctly detects the Windows drive prefix.
-    let stripped = sftp_path
-        .strip_prefix('/')
-        .filter(|s| s.starts_with(|c: char| c.is_ascii_alphabetic()) && s[1..].starts_with(':'))
-        .unwrap_or(sftp_path);
-    Utf8TypedPath::derive(stripped)
-        .with_windows_encoding()
-        .to_string()
-        .replace('/', "\\")
-}
-
-/// Join two path strings using the appropriate separator for the given family.
-fn join_path_strings(base: &str, child: &str, family: SshFamily) -> String {
-    let sep = if family == SshFamily::Windows {
-        '\\'
-    } else {
-        '/'
-    };
-
-    if base.is_empty() {
-        return child.to_string();
-    }
-    if base.ends_with(sep) || base.ends_with('/') || base.ends_with('\\') {
-        format!("{base}{child}")
-    } else {
-        format!("{base}{sep}{child}")
-    }
-}
-
-/// Strip a prefix from a path string, returning the relative remainder.
-fn strip_prefix_string(path: &str, prefix: &str) -> Option<String> {
-    let path_normalized = path.replace('\\', "/");
-    let prefix_normalized = prefix.replace('\\', "/");
-    let prefix_with_sep = if prefix_normalized.ends_with('/') {
-        prefix_normalized
-    } else {
-        format!("{prefix_normalized}/")
-    };
-    path_normalized
-        .strip_prefix(&prefix_with_sep)
-        .map(|s| s.to_string())
-}
-
-/// Extract the file name (last component) from a path string.
-fn file_name_from_path(path: &str) -> String {
-    // Handle both Unix and Windows separators
-    let last = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    last.to_string()
-}
 
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
@@ -148,21 +85,14 @@ impl SshApi {
         Ok(sftp)
     }
 
-    /// Convert a [`RemotePath`] to an SFTP path string using typed-path with validation.
-    /// SFTP protocol always uses Unix-style paths regardless of target OS.
-    fn to_sftp_path(&self, path: &RemotePath) -> io::Result<String> {
-        to_sftp_path(path.as_str())
+    /// Convert a [`RemotePath`] (native format) to an [`SftpPathBuf`].
+    fn sftp_path(&self, path: &RemotePath) -> SftpPathBuf {
+        SftpPathBuf::from_remote(path, self.family)
     }
 
-    /// Converts an SFTP canonical path string to a native path string.
-    /// On Windows SSH targets, SFTP returns Unix-style paths like `/C:/Users/...`
-    /// that need conversion to native Windows format.
-    fn sftp_path_to_native_string(&self, sftp_path: &str) -> String {
-        if self.family == SshFamily::Windows {
-            sftp_to_windows_path(sftp_path)
-        } else {
-            sftp_path.to_string()
-        }
+    /// Wrap an SFTP-returned string as an [`SftpPathBuf`].
+    fn sftp_from_wire(&self, s: impl Into<String>) -> SftpPathBuf {
+        SftpPathBuf::from_sftp(s, self.family)
     }
 
     /// Apply permissions to a single path via SFTP, reading current mode and merging.
@@ -258,15 +188,17 @@ impl Api for SshApi {
         ctx: Ctx,
         path: RemotePath,
     ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
-        let sftp_path = self.to_sftp_path(&path);
+        let sftp_path = self.sftp_path(&path);
         async move {
             debug!("[Conn {}] Reading file {}", ctx.connection_id, path);
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = sftp_path?;
 
             use tokio::io::AsyncReadExt;
-            let mut file = sftp.open(&sftp_path).await.map_err(io::Error::other)?;
+            let mut file = sftp
+                .open(sftp_path.as_str())
+                .await
+                .map_err(io::Error::other)?;
 
             let mut contents = Vec::new();
             file.read_to_end(&mut contents).await?;
@@ -292,15 +224,17 @@ impl Api for SshApi {
         path: RemotePath,
         data: Vec<u8>,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        let sftp_path = self.to_sftp_path(&path);
+        let sftp_path = self.sftp_path(&path);
         async move {
             debug!("[Conn {}] Writing file {}", ctx.connection_id, path);
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = sftp_path?;
 
             use tokio::io::AsyncWriteExt;
-            let mut file = sftp.create(&sftp_path).await.map_err(io::Error::other)?;
+            let mut file = sftp
+                .create(sftp_path.as_str())
+                .await
+                .map_err(io::Error::other)?;
 
             file.write_all(&data).await?;
             file.flush().await?;
@@ -324,19 +258,18 @@ impl Api for SshApi {
         path: RemotePath,
         data: Vec<u8>,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        let sftp_path = self.to_sftp_path(&path);
+        let sftp_path = self.sftp_path(&path);
         async move {
             debug!("[Conn {}] Appending to file {}", ctx.connection_id, path);
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = sftp_path?;
 
             use russh_sftp::protocol::OpenFlags;
             use tokio::io::AsyncWriteExt;
 
             let mut file = sftp
                 .open_with_flags(
-                    &sftp_path,
+                    sftp_path.as_str(),
                     OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::APPEND,
                 )
                 .await
@@ -371,16 +304,16 @@ impl Api for SshApi {
             debug!("[Conn {}] Reading directory {}", ctx.connection_id, path);
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
             // When absolute or canonicalize paths are requested, use the canonicalized base path
-            let base_path = if absolute || canonicalize {
-                match sftp.canonicalize(&sftp_path).await {
-                    Ok(canonical_str) => self.sftp_path_to_native_string(&canonical_str),
-                    Err(_) => path.to_string(),
+            let base_sftp = if absolute || canonicalize {
+                match sftp.canonicalize(sftp_path.as_str()).await {
+                    Ok(canonical_str) => self.sftp_from_wire(canonical_str),
+                    Err(_) => sftp_path.clone(),
                 }
             } else {
-                path.to_string()
+                sftp_path.clone()
             };
 
             let mut entries = Vec::new();
@@ -391,23 +324,18 @@ impl Api for SshApi {
             // Helper function to read a single directory
             async fn read_single_dir(
                 sftp: &Arc<russh_sftp::client::SftpSession>,
-                path: &str,
-                base_path: &str,
+                dir_path: &SftpPathBuf,
+                base_path: &SftpPathBuf,
                 absolute: bool,
                 canonicalize: bool,
                 family: SshFamily,
             ) -> io::Result<Vec<DirEntry>> {
                 use distant_core::protocol::FileType;
 
-                let convert = |s: &str| -> String {
-                    if family == SshFamily::Windows {
-                        sftp_to_windows_path(s)
-                    } else {
-                        s.to_string()
-                    }
-                };
-
-                let dir_entries = sftp.read_dir(path).await.map_err(io::Error::other)?;
+                let dir_entries = sftp
+                    .read_dir(dir_path.as_str())
+                    .await
+                    .map_err(io::Error::other)?;
 
                 let mut entries = Vec::new();
                 for entry in dir_entries {
@@ -417,35 +345,39 @@ impl Api for SshApi {
                     }
 
                     let entry_path_str = if absolute {
-                        join_path_strings(base_path, &filename, family)
+                        base_path.join(&filename).to_remote_path()
                     } else if canonicalize {
                         if entry.metadata().is_symlink() {
-                            let full_path = format!("{}/{}", path, filename);
+                            let full_sftp = dir_path.join(&filename);
                             // On Windows, SFTP realpath doesn't resolve symlinks.
                             // Use read_link to get the target, then canonicalize that.
                             let resolved = if family == SshFamily::Windows {
-                                match sftp.read_link(&full_path).await {
+                                match sftp.read_link(full_sftp.as_str()).await {
                                     Ok(target) => {
                                         sftp.canonicalize(&target).await.unwrap_or(target)
                                     }
                                     Err(_) => sftp
-                                        .canonicalize(&full_path)
+                                        .canonicalize(full_sftp.as_str())
                                         .await
-                                        .unwrap_or(full_path.clone()),
+                                        .unwrap_or_else(|_| full_sftp.as_str().to_string()),
                                 }
                             } else {
-                                sftp.canonicalize(&full_path)
+                                sftp.canonicalize(full_sftp.as_str())
                                     .await
-                                    .unwrap_or(full_path.clone())
+                                    .unwrap_or_else(|_| full_sftp.as_str().to_string())
                             };
-                            let canonical_path = convert(&resolved);
-                            strip_prefix_string(&canonical_path, base_path)
-                                .unwrap_or_else(|| filename.clone())
+                            let resolved_sftp = SftpPathBuf::from_sftp(resolved, family);
+                            match resolved_sftp.strip_prefix(base_path) {
+                                Some(relative) => {
+                                    SftpPathBuf::from_sftp(relative, family).to_remote_path()
+                                }
+                                None => RemotePath::new(filename.clone()),
+                            }
                         } else {
-                            filename.clone()
+                            RemotePath::new(filename.clone())
                         }
                     } else {
-                        filename.clone()
+                        RemotePath::new(filename.clone())
                     };
 
                     let file_type = if entry.metadata().is_dir() {
@@ -457,7 +389,7 @@ impl Api for SshApi {
                     };
 
                     entries.push(DirEntry {
-                        path: RemotePath::new(entry_path_str),
+                        path: entry_path_str,
                         file_type,
                         depth: 1,
                     });
@@ -470,7 +402,7 @@ impl Api for SshApi {
             let mut root_entries = read_single_dir(
                 &sftp,
                 &sftp_path,
-                &base_path,
+                &base_sftp,
                 absolute,
                 canonicalize,
                 family,
@@ -478,8 +410,8 @@ impl Api for SshApi {
             .await?;
 
             if include_root {
-                let root_path = match sftp.canonicalize(&sftp_path).await {
-                    Ok(p) => self.sftp_path_to_native_string(&p),
+                let root_path = match sftp.canonicalize(sftp_path.as_str()).await {
+                    Ok(p) => self.sftp_from_wire(p).to_remote_path().to_string(),
                     Err(_) => path.to_string(),
                 };
 
@@ -507,18 +439,25 @@ impl Api for SshApi {
                     if entry.file_type == distant_core::protocol::FileType::Dir
                         && entry.depth < max_depth
                     {
-                        let subdir_path_str = if absolute || canonicalize {
-                            entry.path.to_string()
+                        // Build SFTP path for the subdirectory
+                        let subdir_sftp = if absolute || canonicalize {
+                            SftpPathBuf::from_remote(&entry.path, family)
                         } else {
-                            join_path_strings(path.as_str(), entry.path.as_str(), family)
+                            let entry_sftp = SftpPathBuf::from_remote(&entry.path, family);
+                            sftp_path.join(entry_sftp.as_str())
                         };
 
-                        let subdir_sftp_path = to_sftp_path(&subdir_path_str)?;
+                        // For absolute/canonicalize, the base is the entry's own path
+                        let subdir_base = if absolute || canonicalize {
+                            SftpPathBuf::from_remote(&entry.path, family)
+                        } else {
+                            subdir_sftp.clone()
+                        };
 
                         match read_single_dir(
                             &sftp,
-                            &subdir_sftp_path,
-                            &subdir_path_str,
+                            &subdir_sftp,
+                            &subdir_base,
                             absolute,
                             canonicalize,
                             family,
@@ -530,13 +469,11 @@ impl Api for SshApi {
                                     sub_entry.depth = entry.depth + 1;
 
                                     if !absolute && !canonicalize {
-                                        // Extract just the filename from the sub_entry path
-                                        let filename = file_name_from_path(sub_entry.path.as_str());
-                                        sub_entry.path = RemotePath::new(join_path_strings(
-                                            entry.path.as_str(),
-                                            &filename,
-                                            family,
-                                        ));
+                                        // Build relative path: parent/filename in SFTP space,
+                                        // then convert to native
+                                        let filename = sub_entry.path.as_str().to_string();
+                                        let parent = SftpPathBuf::from_remote(&entry.path, family);
+                                        sub_entry.path = parent.join(&filename).to_remote_path();
                                     }
 
                                     to_process.push(sub_entry.clone());
@@ -570,12 +507,12 @@ impl Api for SshApi {
             );
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
             if all {
                 use typed_path::{Utf8UnixPath, Utf8UnixPathBuf};
 
-                let unix_path = Utf8UnixPath::new(&sftp_path);
+                let unix_path = Utf8UnixPath::new(sftp_path.as_str());
                 let mut current_path = Utf8UnixPathBuf::new();
 
                 for component in unix_path.components() {
@@ -598,7 +535,9 @@ impl Api for SshApi {
                 }
                 Ok(())
             } else {
-                sftp.create_dir(&sftp_path).await.map_err(io::Error::other)
+                sftp.create_dir(sftp_path.as_str())
+                    .await
+                    .map_err(io::Error::other)
             }
         }
     }
@@ -616,15 +555,18 @@ impl Api for SshApi {
             );
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
-            let metadata = sftp.metadata(&sftp_path).await.map_err(io::Error::other)?;
+            let metadata = sftp
+                .metadata(sftp_path.as_str())
+                .await
+                .map_err(io::Error::other)?;
 
             if metadata.is_dir() {
                 if force {
                     // Recursively remove directory contents using DFS
                     let mut dirs_to_remove = Vec::new();
-                    let mut stack = vec![sftp_path.clone()];
+                    let mut stack = vec![sftp_path.into_string()];
 
                     while let Some(dir) = stack.pop() {
                         let entries = sftp.read_dir(&dir).await.map_err(io::Error::other)?;
@@ -654,10 +596,14 @@ impl Api for SshApi {
 
                     Ok(())
                 } else {
-                    sftp.remove_dir(&sftp_path).await.map_err(io::Error::other)
+                    sftp.remove_dir(sftp_path.as_str())
+                        .await
+                        .map_err(io::Error::other)
                 }
             } else {
-                sftp.remove_file(&sftp_path).await.map_err(io::Error::other)
+                sftp.remove_file(sftp_path.as_str())
+                    .await
+                    .map_err(io::Error::other)
             }
         }
     }
@@ -710,10 +656,10 @@ impl Api for SshApi {
             debug!("[Conn {}] Renaming {} to {}", ctx.connection_id, src, dst);
 
             let sftp = self.get_sftp().await?;
-            let src_path = self.to_sftp_path(&src)?;
-            let dst_path = self.to_sftp_path(&dst)?;
+            let src_path = self.sftp_path(&src);
+            let dst_path = self.sftp_path(&dst);
 
-            sftp.rename(&src_path, &dst_path)
+            sftp.rename(src_path.as_str(), dst_path.as_str())
                 .await
                 .map_err(io::Error::other)
         }
@@ -754,9 +700,9 @@ impl Api for SshApi {
             );
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
-            match sftp.try_exists(&sftp_path).await {
+            match sftp.try_exists(sftp_path.as_str()).await {
                 Ok(exists) => Ok(exists),
                 Err(_) => Ok(false),
             }
@@ -774,12 +720,12 @@ impl Api for SshApi {
             debug!("[Conn {}] Getting metadata for {}", ctx.connection_id, path);
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
             let attrs = if resolve_file_type {
-                sftp.metadata(&sftp_path).await
+                sftp.metadata(sftp_path.as_str()).await
             } else {
-                sftp.symlink_metadata(&sftp_path).await
+                sftp.symlink_metadata(sftp_path.as_str()).await
             }
             .map_err(io::Error::other)?;
 
@@ -798,14 +744,14 @@ impl Api for SshApi {
             let canonical_path = if canonicalize {
                 // On Windows, SFTP realpath doesn't resolve symlinks
                 let resolved = if self.family == SshFamily::Windows && attrs.is_symlink() {
-                    match sftp.read_link(&sftp_path).await {
+                    match sftp.read_link(sftp_path.as_str()).await {
                         Ok(target) => sftp.canonicalize(&target).await.ok(),
-                        Err(_) => sftp.canonicalize(&sftp_path).await.ok(),
+                        Err(_) => sftp.canonicalize(sftp_path.as_str()).await.ok(),
                     }
                 } else {
-                    sftp.canonicalize(&sftp_path).await.ok()
+                    sftp.canonicalize(sftp_path.as_str()).await.ok()
                 };
-                resolved.map(|p| RemotePath::new(self.sftp_path_to_native_string(&p)))
+                resolved.map(|p| self.sftp_from_wire(p).to_remote_path())
             } else {
                 None
             };
@@ -861,12 +807,12 @@ impl Api for SshApi {
             );
 
             let sftp = self.get_sftp().await?;
-            let sftp_path = self.to_sftp_path(&path)?;
+            let sftp_path = self.sftp_path(&path);
 
             // Apply permissions to the root path
             let mut dirs = VecDeque::new();
             if let Some(dir_path) = self
-                .apply_permissions(&sftp, &sftp_path, &permissions, &options)
+                .apply_permissions(&sftp, sftp_path.as_str(), &permissions, &options)
                 .await?
             {
                 dirs.push_back(dir_path);
@@ -1106,11 +1052,7 @@ impl Api for SshApi {
                     let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
 
                     // Fix Windows paths: /C:/... -> C:\...
-                    let current_dir = if is_windows {
-                        sftp_to_windows_path(&path_str)
-                    } else {
-                        path_str
-                    };
+                    let current_dir = self.sftp_from_wire(path_str).to_remote_path().to_string();
 
                     Result::<_, io::Error>::Ok(current_dir)
                 })
@@ -1186,221 +1128,5 @@ impl Api for SshApi {
                 capabilities,
             })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Tests for `to_sftp_path` path conversion logic and string path helpers.
-
-    use super::{
-        SshFamily, file_name_from_path, join_path_strings, strip_prefix_string, to_sftp_path,
-    };
-
-    // --- to_sftp_path tests ---
-
-    #[test]
-    fn to_sftp_path_unix_absolute() {
-        let result = to_sftp_path("/home/user/file.txt").unwrap();
-        assert_eq!(result, "/home/user/file.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_unix_relative() {
-        let result = to_sftp_path("relative/path/file.txt").unwrap();
-        assert_eq!(result, "relative/path/file.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_root() {
-        let result = to_sftp_path("/").unwrap();
-        assert_eq!(result, "/");
-    }
-
-    #[test]
-    fn to_sftp_path_single_file() {
-        let result = to_sftp_path("file.txt").unwrap();
-        assert_eq!(result, "file.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_dot_path() {
-        let result = to_sftp_path(".").unwrap();
-        assert_eq!(result, ".");
-    }
-
-    #[test]
-    fn to_sftp_path_dot_dot_path() {
-        let result = to_sftp_path("..").unwrap();
-        assert_eq!(result, "..");
-    }
-
-    #[test]
-    fn to_sftp_path_deep_nested() {
-        let result = to_sftp_path("/a/b/c/d/e/f/g.txt").unwrap();
-        assert_eq!(result, "/a/b/c/d/e/f/g.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_with_spaces() {
-        let result = to_sftp_path("/path/with spaces/file name.txt").unwrap();
-        assert_eq!(result, "/path/with spaces/file name.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_with_special_characters() {
-        let result = to_sftp_path("/path/file-name_v2.0.txt").unwrap();
-        assert_eq!(result, "/path/file-name_v2.0.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_hidden_file() {
-        let result = to_sftp_path("/home/user/.hidden").unwrap();
-        assert_eq!(result, "/home/user/.hidden");
-    }
-
-    #[test]
-    fn to_sftp_path_empty_path() {
-        let result = to_sftp_path("").unwrap();
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn to_sftp_path_with_dots_in_name() {
-        let result = to_sftp_path("/path/to/archive.tar.gz").unwrap();
-        assert_eq!(result, "/path/to/archive.tar.gz");
-    }
-
-    #[test]
-    fn to_sftp_path_double_slash_normalized() {
-        let result = to_sftp_path("/home//user///file.txt").unwrap();
-        // typed_path may normalize these, so just check it's valid
-        assert!(result.contains("home"));
-        assert!(result.contains("file.txt"));
-    }
-
-    #[test]
-    fn to_sftp_path_trailing_slash() {
-        let result = to_sftp_path("/home/user/").unwrap();
-        assert!(result.starts_with("/home/user"));
-    }
-
-    #[test]
-    fn to_sftp_path_with_unicode() {
-        let result = to_sftp_path("/home/user/documents").unwrap();
-        assert_eq!(result, "/home/user/documents");
-    }
-
-    #[test]
-    fn to_sftp_path_relative_with_parent_ref() {
-        let result = to_sftp_path("../parent/file.txt").unwrap();
-        assert_eq!(result, "../parent/file.txt");
-    }
-
-    #[test]
-    fn to_sftp_path_relative_with_dot() {
-        let result = to_sftp_path("./current/file.txt").unwrap();
-        // Result depends on typed_path behavior with leading dot
-        assert!(result.contains("current/file.txt"));
-    }
-
-    #[test]
-    fn sftp_to_windows_path_strips_leading_slash_before_drive() {
-        // SFTP returns /C:/... — strip leading / so derive detects Windows prefix,
-        // then forward slashes are normalized to backslashes.
-        let result = super::sftp_to_windows_path("/C:/Users/foo/bar");
-        assert_eq!(result, "C:\\Users\\foo\\bar");
-    }
-
-    #[test]
-    fn sftp_to_windows_path_preserves_already_windows_path() {
-        assert_eq!(
-            super::sftp_to_windows_path("C:\\Users\\foo\\bar"),
-            "C:\\Users\\foo\\bar"
-        );
-    }
-
-    #[test]
-    fn sftp_to_windows_path_converts_forward_slashes_to_backslashes() {
-        // derive detects C:/ as Windows; with_windows_encoding is identity.
-        // Forward slashes are then normalized to backslashes.
-        assert_eq!(
-            super::sftp_to_windows_path("C:/Users/foo/bar"),
-            "C:\\Users\\foo\\bar"
-        );
-    }
-
-    // --- join_path_strings tests ---
-
-    #[test]
-    fn join_path_strings_unix() {
-        assert_eq!(
-            join_path_strings("/home/user", "file.txt", SshFamily::Unix),
-            "/home/user/file.txt"
-        );
-    }
-
-    #[test]
-    fn join_path_strings_unix_trailing_sep() {
-        assert_eq!(
-            join_path_strings("/home/user/", "file.txt", SshFamily::Unix),
-            "/home/user/file.txt"
-        );
-    }
-
-    #[test]
-    fn join_path_strings_windows() {
-        assert_eq!(
-            join_path_strings("C:\\Users\\foo", "bar", SshFamily::Windows),
-            "C:\\Users\\foo\\bar"
-        );
-    }
-
-    #[test]
-    fn join_path_strings_empty_base() {
-        assert_eq!(
-            join_path_strings("", "file.txt", SshFamily::Unix),
-            "file.txt"
-        );
-    }
-
-    // --- strip_prefix_string tests ---
-
-    #[test]
-    fn strip_prefix_string_basic() {
-        assert_eq!(
-            strip_prefix_string("/home/user/file.txt", "/home/user"),
-            Some("file.txt".to_string())
-        );
-    }
-
-    #[test]
-    fn strip_prefix_string_no_match() {
-        assert_eq!(strip_prefix_string("/other/path", "/home/user"), None);
-    }
-
-    #[test]
-    fn strip_prefix_string_with_trailing_sep() {
-        assert_eq!(
-            strip_prefix_string("/home/user/file.txt", "/home/user/"),
-            Some("file.txt".to_string())
-        );
-    }
-
-    // --- file_name_from_path tests ---
-
-    #[test]
-    fn file_name_from_path_unix() {
-        assert_eq!(file_name_from_path("/home/user/file.txt"), "file.txt");
-    }
-
-    #[test]
-    fn file_name_from_path_windows() {
-        assert_eq!(file_name_from_path("C:\\Users\\foo\\bar.txt"), "bar.txt");
-    }
-
-    #[test]
-    fn file_name_from_path_no_separator() {
-        assert_eq!(file_name_from_path("file.txt"), "file.txt");
     }
 }

@@ -1,14 +1,13 @@
+use std::fmt;
 use std::io;
 use std::time::Duration;
 
 use russh::client::Handle;
 
 use crate::ClientHandler;
+use crate::SshFamily;
 
 const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
-
-#[allow(dead_code)]
-const READER_PAUSE_MILLIS: u64 = 100;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
@@ -58,10 +57,10 @@ pub async fn execute_output(
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(to_other_error)?;
+        .map_err(io::Error::other)?;
 
     // Execute command
-    channel.exec(true, cmd).await.map_err(to_other_error)?;
+    channel.exec(true, cmd).await.map_err(io::Error::other)?;
 
     let read_future = async {
         // Read output via channel messages
@@ -158,13 +157,6 @@ pub async fn query_shell(handle: &Handle<ClientHandler>, is_windows: bool) -> io
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn to_other_error<E>(err: E) -> io::Error
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    io::Error::other(err)
-}
-
 /// Determines if using windows by checking the OS environment variable
 pub async fn is_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
     let output = powershell_output(
@@ -195,10 +187,186 @@ pub async fn is_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
         || contains_subslice(&output.stderr, b"Windows_NT"))
 }
 
+/// An owned path in SFTP wire format, aware of the remote platform.
+///
+/// SFTP always uses Unix-style (`/`) separators. On Windows targets,
+/// native paths like `C:\Users\foo` are stored as `/C:/Users/foo`
+/// (matching the OpenSSH SFTP wire format).
+/// Unix paths pass through unchanged.
+///
+/// # Examples
+///
+/// ```
+/// use distant_ssh::{SshFamily, SftpPathBuf};
+/// use distant_core::protocol::RemotePath;
+///
+/// // Unix: passthrough
+/// let sftp = SftpPathBuf::from_remote(&RemotePath::new("/home/user"), SshFamily::Unix);
+/// assert_eq!(sftp.as_str(), "/home/user");
+///
+/// // Windows: native → SFTP format (drive prefix preserved)
+/// let sftp = SftpPathBuf::from_remote(&RemotePath::new("C:\\Users\\foo"), SshFamily::Windows);
+/// assert_eq!(sftp.as_str(), "/C:/Users/foo");
+///
+/// // SFTP response → native RemotePath
+/// let sftp = SftpPathBuf::from_sftp("/C:/Users/foo", SshFamily::Windows);
+/// assert_eq!(sftp.to_remote_path(), RemotePath::new("C:\\Users\\foo"));
+///
+/// // Relative paths use native separators
+/// let sftp = SftpPathBuf::from_sftp("sub1", SshFamily::Windows);
+/// let joined = sftp.join("file2");
+/// assert_eq!(joined.to_remote_path(), RemotePath::new("sub1\\file2"));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SftpPathBuf {
+    /// Path in SFTP wire format (Unix-style separators).
+    inner: String,
+    /// Remote platform family.
+    family: SshFamily,
+}
+
+impl SftpPathBuf {
+    /// Create from a [`RemotePath`] (native format) and remote platform family.
+    ///
+    /// Converts native path separators to SFTP wire format:
+    /// - **Unix:** passthrough (already uses `/`).
+    /// - **Windows:** converts `C:\Users\foo` to `/C:/Users/foo`.
+    pub fn from_remote(path: &distant_core::protocol::RemotePath, family: SshFamily) -> Self {
+        let s = path.as_str();
+
+        let inner = match family {
+            SshFamily::Unix => {
+                // Unix paths pass through unchanged — already use `/`.
+                s.to_string()
+            }
+            SshFamily::Windows => {
+                use typed_path::{Utf8WindowsComponent, Utf8WindowsPath};
+
+                // Explicitly parse as a Windows path so `\` is recognized as
+                // a separator even when this code runs on Unix.
+                let p = Utf8WindowsPath::new(s);
+
+                if let Some(Utf8WindowsComponent::Prefix(prefix)) = p.components().next() {
+                    // `with_unix_encoding()` produces `/Users/foo` (root + normals).
+                    // Prepend the drive letter: `/C:/Users/foo`.
+                    let unix = p.with_unix_encoding();
+                    format!("/{}{}", prefix.as_str(), unix)
+                } else {
+                    // Relative path: just convert `\` → `/`.
+                    p.with_unix_encoding().to_string()
+                }
+            }
+        };
+
+        Self { inner, family }
+    }
+
+    /// Wrap an SFTP-returned string as an [`SftpPathBuf`].
+    ///
+    /// The string is assumed to already be in SFTP wire format (e.g. `/C:/Users/foo`).
+    pub fn from_sftp(s: impl Into<String>, family: SshFamily) -> Self {
+        Self {
+            inner: s.into(),
+            family,
+        }
+    }
+
+    /// Returns the path in SFTP wire format for passing to SFTP API methods.
+    pub fn as_str(&self) -> &str {
+        &self.inner
+    }
+
+    /// Convert to a native-format [`RemotePath`].
+    ///
+    /// - **Unix:** returns the inner string as-is.
+    /// - **Windows:** strips leading `/` before a drive letter (e.g. `/C:/...` → `C:/...`),
+    ///   then replaces all `/` with `\`.
+    pub fn to_remote_path(&self) -> distant_core::protocol::RemotePath {
+        distant_core::protocol::RemotePath::new(self.to_native_string())
+    }
+
+    /// Convert the SFTP path to a native path string.
+    fn to_native_string(&self) -> String {
+        if self.family == SshFamily::Windows {
+            // Strip leading `/` before a drive letter: `/C:/...` → `C:/...`
+            let stripped = self
+                .inner
+                .strip_prefix('/')
+                .filter(|s| {
+                    s.starts_with(|c: char| c.is_ascii_alphabetic()) && s.get(1..2) == Some(":")
+                })
+                .unwrap_or(&self.inner);
+            stripped.replace('/', "\\")
+        } else {
+            self.inner.clone()
+        }
+    }
+
+    /// Consume and return the inner SFTP-format string.
+    pub fn into_string(self) -> String {
+        self.inner
+    }
+
+    /// Join a child component onto this path.
+    ///
+    /// Always joins with `/` (SFTP format). The result remains in SFTP wire format.
+    pub fn join(&self, child: &str) -> SftpPathBuf {
+        let inner = if self.inner.is_empty() {
+            child.to_string()
+        } else if self.inner.ends_with('/') {
+            format!("{}{}", self.inner, child)
+        } else {
+            format!("{}/{}", self.inner, child)
+        };
+        SftpPathBuf {
+            inner,
+            family: self.family,
+        }
+    }
+
+    /// Extract the file name (last component) from the path.
+    ///
+    /// Splits on both `/` and `\` to handle mixed separators.
+    /// Trailing separators are ignored (e.g. `/home/user/` yields `user`).
+    pub fn file_name(&self) -> Option<&str> {
+        self.inner.rsplit(['/', '\\']).find(|s| !s.is_empty())
+    }
+
+    /// Strip a prefix from this path, returning the relative remainder.
+    ///
+    /// Both paths are normalized to `/` before comparison. A trailing `/` is
+    /// added to the prefix if needed so that stripping `/home` from `/home/user`
+    /// yields `user` (not `/user`).
+    pub fn strip_prefix(&self, prefix: &SftpPathBuf) -> Option<String> {
+        let path_normalized = self.inner.replace('\\', "/");
+        let prefix_normalized = prefix.inner.replace('\\', "/");
+        let prefix_with_sep = if prefix_normalized.ends_with('/') {
+            prefix_normalized
+        } else {
+            format!("{prefix_normalized}/")
+        };
+        path_normalized
+            .strip_prefix(&prefix_with_sep)
+            .map(|s| s.to_string())
+    }
+}
+
+impl fmt::Display for SftpPathBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.inner)
+    }
+}
+
+impl From<SftpPathBuf> for String {
+    fn from(p: SftpPathBuf) -> String {
+        p.into_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    //! Tests for utility functions: `ExecOutput` Debug/equality behavior,
-    //! `to_other_error`, constants, and `contains_subslice`.
+    //! Tests for utility functions: `ExecOutput` Debug/equality behavior, constants, and
+    //! `contains_subslice`.
     //!
     //! The `contains_subslice` function is replicated from the private function
     //! defined inside `is_windows()`, since it is not directly accessible from test
@@ -317,71 +485,6 @@ mod tests {
             debug.contains("success: true"),
             "Expected success: true in '{debug}'"
         );
-    }
-
-    // --- to_other_error tests ---
-
-    #[test]
-    fn to_other_error_converts_string_to_io_error() {
-        let err = to_other_error("something went wrong");
-        assert_eq!(err.kind(), io::ErrorKind::Other);
-    }
-
-    #[test]
-    fn to_other_error_preserves_error_message() {
-        let err = to_other_error("specific error message");
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("specific error message"),
-            "Expected error message in '{msg}'"
-        );
-    }
-
-    #[test]
-    fn to_other_error_converts_io_error() {
-        let original = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let converted = to_other_error(original);
-        assert_eq!(converted.kind(), io::ErrorKind::Other);
-    }
-
-    #[test]
-    fn to_other_error_converts_custom_error() {
-        #[derive(Debug)]
-        struct CustomError;
-        impl std::fmt::Display for CustomError {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "custom error")
-            }
-        }
-        impl std::error::Error for CustomError {}
-
-        let err = to_other_error(CustomError);
-        assert_eq!(err.kind(), io::ErrorKind::Other);
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("custom error"),
-            "Expected 'custom error' in '{msg}'"
-        );
-    }
-
-    #[test]
-    fn to_other_error_with_empty_string() {
-        let err = to_other_error("");
-        assert_eq!(err.kind(), io::ErrorKind::Other);
-    }
-
-    #[test]
-    fn to_other_error_error_message_is_display_output() {
-        let err = to_other_error("display this message");
-        assert_eq!(format!("{}", err), "display this message");
-    }
-
-    #[test]
-    fn to_other_error_with_multiline_message() {
-        let err = to_other_error("line1\nline2\nline3");
-        let msg = format!("{}", err);
-        assert!(msg.contains("line1"), "Expected 'line1' in '{msg}'");
-        assert!(msg.contains("line2"), "Expected 'line2' in '{msg}'");
     }
 
     // --- ExecOutput equality, clone, and construction tests ---
@@ -577,11 +680,6 @@ mod tests {
         assert_eq!(SSH_EXEC_TIMEOUT, Some(Duration::from_secs(30)));
     }
 
-    #[test]
-    fn reader_pause_millis_is_100() {
-        assert_eq!(READER_PAUSE_MILLIS, 100);
-    }
-
     // --- contains_subslice logic tests ---
     // Replicate the contains_subslice function from is_windows for testing
 
@@ -746,5 +844,195 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(b, c);
         assert_eq!(a, c); // transitive
+    }
+
+    // --- SftpPathBuf tests ---
+
+    use distant_core::protocol::RemotePath;
+
+    use super::SftpPathBuf;
+    use crate::SshFamily;
+
+    // -- from_remote tests --
+
+    #[test]
+    fn from_remote_unix_absolute() {
+        let p = SftpPathBuf::from_remote(&RemotePath::new("/home/user"), SshFamily::Unix);
+        assert_eq!(p.as_str(), "/home/user");
+    }
+
+    #[test]
+    fn from_remote_unix_relative() {
+        let p = SftpPathBuf::from_remote(&RemotePath::new("relative/path"), SshFamily::Unix);
+        assert_eq!(p.as_str(), "relative/path");
+    }
+
+    #[test]
+    fn from_remote_windows_drive_letter() {
+        let p = SftpPathBuf::from_remote(&RemotePath::new("C:\\Users\\foo"), SshFamily::Windows);
+        assert_eq!(p.as_str(), "/C:/Users/foo");
+    }
+
+    #[test]
+    fn from_remote_windows_relative() {
+        let p = SftpPathBuf::from_remote(&RemotePath::new("sub1\\file2"), SshFamily::Windows);
+        assert_eq!(p.as_str(), "sub1/file2");
+    }
+
+    #[test]
+    fn from_remote_windows_forward_slash_drive() {
+        let p = SftpPathBuf::from_remote(&RemotePath::new("C:/Users/foo"), SshFamily::Windows);
+        assert_eq!(p.as_str(), "/C:/Users/foo");
+    }
+
+    // -- from_sftp + to_remote_path round-trip tests --
+
+    #[test]
+    fn to_remote_path_unix_passthrough() {
+        let p = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
+        assert_eq!(p.to_remote_path(), RemotePath::new("/home/user"));
+    }
+
+    #[test]
+    fn to_remote_path_windows_absolute_with_leading_slash() {
+        let p = SftpPathBuf::from_sftp("/C:/Users/foo", SshFamily::Windows);
+        assert_eq!(p.to_remote_path(), RemotePath::new("C:\\Users\\foo"));
+    }
+
+    #[test]
+    fn to_remote_path_windows_absolute_without_leading_slash() {
+        let p = SftpPathBuf::from_sftp("C:/Users/foo", SshFamily::Windows);
+        assert_eq!(p.to_remote_path(), RemotePath::new("C:\\Users\\foo"));
+    }
+
+    #[test]
+    fn to_remote_path_windows_relative() {
+        let p = SftpPathBuf::from_sftp("sub1/file2", SshFamily::Windows);
+        assert_eq!(p.to_remote_path(), RemotePath::new("sub1\\file2"));
+    }
+
+    #[test]
+    fn from_remote_round_trip_unix() {
+        let orig = RemotePath::new("/home/user/file.txt");
+        let sftp = SftpPathBuf::from_remote(&orig, SshFamily::Unix);
+        assert_eq!(sftp.to_remote_path(), orig);
+    }
+
+    #[test]
+    fn from_remote_round_trip_windows() {
+        let orig = RemotePath::new("C:\\Users\\foo\\bar.txt");
+        let sftp = SftpPathBuf::from_remote(&orig, SshFamily::Windows);
+        assert_eq!(sftp.to_remote_path(), orig);
+    }
+
+    // -- join tests --
+
+    #[test]
+    fn join_uses_forward_slash() {
+        let base = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
+        let joined = base.join("file.txt");
+        assert_eq!(joined.as_str(), "/home/user/file.txt");
+    }
+
+    #[test]
+    fn join_empty_base() {
+        let base = SftpPathBuf::from_sftp("", SshFamily::Unix);
+        let joined = base.join("file.txt");
+        assert_eq!(joined.as_str(), "file.txt");
+    }
+
+    #[test]
+    fn join_trailing_separator() {
+        let base = SftpPathBuf::from_sftp("/home/user/", SshFamily::Unix);
+        let joined = base.join("file.txt");
+        assert_eq!(joined.as_str(), "/home/user/file.txt");
+    }
+
+    #[test]
+    fn join_windows_then_to_remote() {
+        let base = SftpPathBuf::from_sftp("/C:/Users", SshFamily::Windows);
+        let joined = base.join("foo");
+        assert_eq!(joined.as_str(), "/C:/Users/foo");
+        assert_eq!(joined.to_remote_path(), RemotePath::new("C:\\Users\\foo"));
+    }
+
+    #[test]
+    fn join_relative_windows_then_to_remote() {
+        let base = SftpPathBuf::from_sftp("sub1", SshFamily::Windows);
+        let joined = base.join("file2");
+        assert_eq!(joined.as_str(), "sub1/file2");
+        assert_eq!(joined.to_remote_path(), RemotePath::new("sub1\\file2"));
+    }
+
+    #[test]
+    fn join_relative_unix_then_to_remote() {
+        let base = SftpPathBuf::from_sftp("sub1", SshFamily::Unix);
+        let joined = base.join("file2");
+        assert_eq!(joined.as_str(), "sub1/file2");
+        assert_eq!(joined.to_remote_path(), RemotePath::new("sub1/file2"));
+    }
+
+    // -- file_name tests --
+
+    #[test]
+    fn file_name_unix_separator() {
+        let p = SftpPathBuf::from_sftp("/home/user/file.txt", SshFamily::Unix);
+        assert_eq!(p.file_name(), Some("file.txt"));
+    }
+
+    #[test]
+    fn file_name_windows_separator() {
+        let p = SftpPathBuf::from_sftp("C:\\Users\\foo\\bar.txt", SshFamily::Windows);
+        assert_eq!(p.file_name(), Some("bar.txt"));
+    }
+
+    #[test]
+    fn file_name_no_separator() {
+        let p = SftpPathBuf::from_sftp("file.txt", SshFamily::Unix);
+        assert_eq!(p.file_name(), Some("file.txt"));
+    }
+
+    #[test]
+    fn file_name_trailing_slash() {
+        let p = SftpPathBuf::from_sftp("/home/user/", SshFamily::Unix);
+        assert_eq!(p.file_name(), Some("user"));
+    }
+
+    // -- strip_prefix tests --
+
+    #[test]
+    fn strip_prefix_basic() {
+        let path = SftpPathBuf::from_sftp("/home/user/file.txt", SshFamily::Unix);
+        let prefix = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
+        assert_eq!(path.strip_prefix(&prefix), Some("file.txt".to_string()));
+    }
+
+    #[test]
+    fn strip_prefix_no_match() {
+        let path = SftpPathBuf::from_sftp("/other/path", SshFamily::Unix);
+        let prefix = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
+        assert_eq!(path.strip_prefix(&prefix), None);
+    }
+
+    #[test]
+    fn strip_prefix_trailing_separator() {
+        let path = SftpPathBuf::from_sftp("/home/user/file.txt", SshFamily::Unix);
+        let prefix = SftpPathBuf::from_sftp("/home/user/", SshFamily::Unix);
+        assert_eq!(path.strip_prefix(&prefix), Some("file.txt".to_string()));
+    }
+
+    // -- Display and From tests --
+
+    #[test]
+    fn display_shows_sftp_format() {
+        let p = SftpPathBuf::from_sftp("/C:/Users/foo", SshFamily::Windows);
+        assert_eq!(format!("{p}"), "/C:/Users/foo");
+    }
+
+    #[test]
+    fn into_string_returns_inner() {
+        let p = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
+        let s: String = p.into();
+        assert_eq!(s, "/home/user");
     }
 }

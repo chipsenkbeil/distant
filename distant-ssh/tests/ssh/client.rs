@@ -418,7 +418,10 @@ async fn dir_read_should_support_unlimited_depth_using_zero(#[future] client: Ct
     assert_eq!(entries[2].depth, 1);
 
     assert_eq!(entries[3].file_type, FileType::File);
+    #[cfg(unix)]
     assert_eq!(entries[3].path, RemotePath::new("sub1/file2"));
+    #[cfg(windows)]
+    assert_eq!(entries[3].path, RemotePath::new("sub1\\file2"));
     assert_eq!(entries[3].depth, 2);
 }
 
@@ -542,7 +545,10 @@ async fn dir_read_should_support_returning_canonicalized_paths(#[future] client:
 
     // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
     assert_eq!(entries[2].file_type, FileType::Symlink);
+    #[cfg(unix)]
     assert_eq!(entries[2].path, RemotePath::new("sub1/file2"));
+    #[cfg(windows)]
+    assert_eq!(entries[2].path, RemotePath::new("sub1\\file2"));
     assert_eq!(entries[2].depth, 1);
 }
 
