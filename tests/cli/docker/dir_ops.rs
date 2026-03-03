@@ -82,8 +82,33 @@ fn should_read_dir_with_dot_path(docker_ctx: Option<DockerManagerCtx>) {
     let ctx = skip_if_no_docker!(docker_ctx);
 
     // Reading `.` should succeed and return entries (the container's cwd)
-    ctx.new_assert_cmd(["fs", "read"])
+    let output = ctx
+        .new_std_cmd(["fs", "read"])
         .args(["."])
+        .output()
+        .expect("Failed to run fs read .");
+
+    assert!(
+        output.status.success(),
+        "fs read . should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.trim().is_empty(),
+        "Expected directory listing output for '.', got empty",
+    );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_fail_to_create_dir_when_parent_missing(docker_ctx: Option<DockerManagerCtx>) {
+    let ctx = skip_if_no_docker!(docker_ctx);
+    // Without --all, creating a dir under a nonexistent parent should fail
+    ctx.new_assert_cmd(["fs", "make-dir"])
+        .args(["/tmp/distant-nonexistent-parent/child"])
         .assert()
-        .success();
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::contains("Failed to make directory"));
 }

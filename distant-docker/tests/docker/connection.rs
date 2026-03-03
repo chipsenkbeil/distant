@@ -24,7 +24,14 @@ async fn connect_should_fail_for_nonexistent_container() {
     }
 
     let result = Docker::connect("distant-nonexistent-container-xyz", DockerOpts::default()).await;
-    assert!(result.is_err());
+    let err = result
+        .err()
+        .expect("Expected error connecting to nonexistent container");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("not found") || err_msg.contains("No such container"),
+        "Expected container-not-found error, got: {err_msg}",
+    );
 }
 
 #[rstest]

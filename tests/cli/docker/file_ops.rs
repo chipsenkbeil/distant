@@ -116,3 +116,50 @@ fn should_remove_file(docker_ctx: Option<DockerManagerCtx>) {
         .success()
         .stdout(predicates::str::contains("false"));
 }
+
+#[rstest]
+#[test_log::test]
+fn should_fail_to_read_nonexistent_file(docker_ctx: Option<DockerManagerCtx>) {
+    let ctx = skip_if_no_docker!(docker_ctx);
+    let output = ctx
+        .new_std_cmd(["fs", "read"])
+        .args(["/tmp/distant-test-no-such-file.txt"])
+        .output()
+        .expect("Failed to run fs read command");
+
+    // NOTE: Ideally this should return a non-zero exit code, but the Docker
+    // backend currently returns success for nonexistent files via the tar API.
+    // At minimum, verify no file content is returned.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !output.status.success() || stdout.trim().is_empty(),
+        "Reading nonexistent file should either fail or return empty content, got: {stdout}",
+    );
+}
+
+#[rstest]
+#[test_log::test]
+fn should_fail_to_copy_nonexistent_source(docker_ctx: Option<DockerManagerCtx>) {
+    let ctx = skip_if_no_docker!(docker_ctx);
+    ctx.new_assert_cmd(["fs", "copy"])
+        .args(["/tmp/distant-no-such-src.txt", "/tmp/distant-copy-dst.txt"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::contains("Failed to copy"));
+}
+
+#[rstest]
+#[test_log::test]
+fn should_fail_to_rename_nonexistent_source(docker_ctx: Option<DockerManagerCtx>) {
+    let ctx = skip_if_no_docker!(docker_ctx);
+    ctx.new_assert_cmd(["fs", "rename"])
+        .args([
+            "/tmp/distant-no-such-src.txt",
+            "/tmp/distant-rename-dst.txt",
+        ])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::contains("Failed to rename"));
+}

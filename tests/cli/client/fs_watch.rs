@@ -172,7 +172,11 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
     // Verify we get information printed out about the change
     assert!(!output.status.success(), "Child unexpectedly succeeded");
     assert!(output.stdout.is_empty(), "Unexpectedly got stdout");
-    assert!(!output.stderr.is_empty(), "Missing stderr output");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to watch"),
+        "Expected 'Failed to watch' in stderr, got: {stderr}"
+    );
 }
 
 #[rstest]

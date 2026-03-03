@@ -51,3 +51,24 @@ fn should_capture_stdout_from_process(docker_ctx: Option<DockerManagerCtx>) {
         "expected root directory listing to contain 'etc', got: {stdout}"
     );
 }
+
+#[rstest]
+#[test_log::test]
+fn should_fail_for_nonexistent_binary(docker_ctx: Option<DockerManagerCtx>) {
+    let ctx = skip_if_no_docker!(docker_ctx);
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--", "/usr/bin/distant-no-such-binary"])
+        .output()
+        .expect("Failed to run spawn command");
+
+    assert!(
+        !output.status.success(),
+        "spawn of nonexistent binary should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("No such file"),
+        "Expected error about missing binary, got stderr: {stderr}",
+    );
+}

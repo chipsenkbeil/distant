@@ -75,7 +75,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(predicates::str::is_empty().not());
+        .stderr(predicates::str::contains("Failed to copy"));
 
     src.assert(predicate::path::missing());
     dst.assert(predicate::path::missing());

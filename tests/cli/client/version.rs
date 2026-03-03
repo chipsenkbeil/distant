@@ -76,9 +76,17 @@ fn should_support_json_format_flag(ctx: ManagerCtx) {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
         .expect("version --format json should produce valid JSON");
 
-    // Verify the JSON contains version/capability information
+    // Verify the JSON contains the Version struct fields
+    assert!(parsed.is_object(), "Expected JSON object, got: {parsed}");
+    let obj = parsed.as_object().unwrap();
     assert!(
-        parsed.is_object(),
-        "Expected JSON object from version, got: {parsed}"
+        obj.contains_key("server_version"),
+        "Expected 'server_version' field in JSON, got keys: {:?}",
+        obj.keys().collect::<Vec<_>>(),
+    );
+    assert!(
+        obj.contains_key("protocol_version"),
+        "Expected 'protocol_version' field in JSON, got keys: {:?}",
+        obj.keys().collect::<Vec<_>>(),
     );
 }

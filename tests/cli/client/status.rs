@@ -57,6 +57,6 @@ fn should_output_detail_for_specific_connection(ctx: ManagerCtx) {
     assert!(
         detail_output.status.success(),
         "status <id> should succeed, stderr: {}",
-        String::from_utf8_lossy(&detail_output.stderr)
+        String::from_utf8_lossy(&detail_output.stderr),
     );
 }

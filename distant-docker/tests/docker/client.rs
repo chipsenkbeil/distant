@@ -42,8 +42,17 @@ async fn write_file_and_read_file_should_roundtrip(#[future] client: Option<Ctx<
 async fn read_file_should_fail_if_missing(#[future] client: Option<Ctx<Client>>) {
     let mut client = skip_if_no_docker!(client.await);
     let path = test_temp_dir().join("distant-test-nonexistent-file.txt");
-    let result = client.read_file(path).await;
-    assert!(result.is_err());
+    let err = client
+        .read_file(path)
+        .await
+        .expect_err("Expected error reading nonexistent file");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected not-found error, got: {err_msg}",
+    );
 }
 
 #[rstest]
@@ -233,7 +242,11 @@ async fn metadata_should_return_file_info(#[future] client: Option<Ctx<Client>>)
 
     let metadata = client.metadata(path.clone(), false, false).await.unwrap();
     assert_eq!(metadata.file_type, FileType::File);
-    assert!(metadata.len > 0);
+    assert_eq!(
+        metadata.len, 13,
+        "Expected file length 13 for 'metadata test', got: {}",
+        metadata.len,
+    );
 
     let _ = client.remove(path, false).await;
 }
@@ -307,11 +320,12 @@ async fn proc_spawn_should_execute_command(#[future] client: Option<Ctx<Client>>
         .await
         .unwrap();
 
-    // Wait briefly for the process to produce output
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-    // The process should have an ID
-    assert!(proc.id() > 0);
+    let output = proc.output().await.unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("hello"),
+        "Expected process stdout to contain 'hello', got: {stdout}",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -324,11 +338,23 @@ async fn system_info_should_return_valid_data(#[future] client: Option<Ctx<Clien
     let mut client = skip_if_no_docker!(client.await);
     let info = client.system_info().await.unwrap();
 
-    assert!(!info.family.is_empty());
-    assert!(!info.os.is_empty());
-    assert!(!info.arch.is_empty());
-    assert!(!info.username.is_empty());
-    assert!(!info.shell.is_empty());
+    assert_eq!(
+        info.family, "unix",
+        "Expected unix family, got: {}",
+        info.family
+    );
+    assert_eq!(info.os, "linux", "Expected linux os, got: {}", info.os);
+    assert!(
+        ["x86_64", "aarch64"].contains(&info.arch.as_str()),
+        "Unexpected arch: {}",
+        info.arch,
+    );
+    assert!(!info.username.is_empty(), "Expected non-empty username");
+    assert!(
+        info.shell.contains("sh"),
+        "Expected shell path containing 'sh', got: {}",
+        info.shell,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +367,29 @@ async fn version_should_include_capabilities(#[future] client: Option<Ctx<Client
     let mut client = skip_if_no_docker!(client.await);
     let version = client.version().await.unwrap();
 
-    assert!(version.server_version.major > 0 || version.server_version.minor > 0);
-    assert!(!version.capabilities.is_empty());
+    let expected_version: distant_core::protocol::semver::Version =
+        env!("CARGO_PKG_VERSION").parse().unwrap();
+    assert_eq!(
+        version.server_version.major, expected_version.major,
+        "Server major version mismatch",
+    );
+    assert_eq!(
+        version.server_version.minor, expected_version.minor,
+        "Server minor version mismatch",
+    );
+    assert_eq!(
+        version.protocol_version,
+        distant_core::protocol::PROTOCOL_VERSION,
+        "Protocol version mismatch",
+    );
+    // Docker backend always supports these capabilities
+    for expected_cap in ["exec", "fs_io", "sys_info", "fs_perm"] {
+        assert!(
+            version.capabilities.contains(&expected_cap.to_string()),
+            "Missing expected capability '{expected_cap}', got: {:?}",
+            version.capabilities,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -425,4 +472,100 @@ async fn search_path_should_find_file_by_name(#[future] client: Option<Ctx<Clien
     ));
 
     let _ = client.remove(dir, true).await;
+}
+
+// ---------------------------------------------------------------------------
+// Error cases
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[test(tokio::test)]
+async fn append_file_should_fail_for_invalid_path(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = PathBuf::from("/nonexistent-dir/distant-test-append.txt");
+    let err = client
+        .append_file(path, b"data".to_vec())
+        .await
+        .expect_err("Expected error appending to invalid path");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected path-not-found error, got: {err_msg}",
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn copy_should_fail_for_missing_source(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let src = test_temp_dir().join("distant-test-copy-missing-src.txt");
+    let dst = test_temp_dir().join("distant-test-copy-missing-dst.txt");
+    let err = client
+        .copy(src, dst)
+        .await
+        .expect_err("Expected error copying from missing source");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected source-not-found error, got: {err_msg}",
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn rename_should_fail_for_missing_source(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let src = test_temp_dir().join("distant-test-rename-missing-src.txt");
+    let dst = test_temp_dir().join("distant-test-rename-missing-dst.txt");
+    let err = client
+        .rename(src, dst)
+        .await
+        .expect_err("Expected error renaming missing source");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected source-not-found error, got: {err_msg}",
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn create_dir_should_fail_when_parent_missing(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = PathBuf::from("/nonexistent-parent/distant-test-dir");
+    let err = client
+        .create_dir(path, false)
+        .await
+        .expect_err("Expected error creating dir with missing parent");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected not-found error, got: {err_msg}",
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn metadata_should_fail_for_missing_path(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = test_temp_dir().join("distant-test-no-such-file-metadata");
+    let err = client
+        .metadata(path, false, false)
+        .await
+        .expect_err("Expected error getting metadata for missing path");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("not found")
+            || err_msg.contains("no such file")
+            || err_msg.contains("404"),
+        "Expected not-found error, got: {err_msg}",
+    );
 }
