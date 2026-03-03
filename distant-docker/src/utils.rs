@@ -12,6 +12,16 @@ use bytes::Bytes;
 use futures::StreamExt;
 use log::*;
 
+/// Shell-quote a string for safe embedding in `sh -c` commands.
+///
+/// Uses POSIX-compatible quoting via the `shlex` crate. Falls back to
+/// the original string if it contains NUL bytes (which shells can't handle).
+pub fn shell_quote(s: &str) -> String {
+    shlex::try_quote(s)
+        .unwrap_or(std::borrow::Cow::Borrowed(s))
+        .into_owned()
+}
+
 /// Output from executing a command in a container.
 #[derive(Debug, Clone)]
 pub struct ExecOutput {
@@ -241,15 +251,22 @@ pub async fn tar_read_file(client: &Docker, container: &str, path: &str) -> io::
 
     // Unpack the tar archive to get the file contents
     let mut archive = tar::Archive::new(&tar_data[..]);
-    for entry in archive
+    for (i, entry) in archive
         .entries()
         .map_err(|e| io::Error::other(format!("Failed to read tar: {}", e)))?
+        .enumerate()
     {
         let mut entry =
             entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
 
-        // Skip directory entries
         if entry.header().entry_type() == tar::EntryType::Directory {
+            // If the first entry is a directory, the requested path is a directory
+            if i == 0 {
+                return Err(io::Error::other(format!(
+                    "Path is a directory, not a file: {}",
+                    path
+                )));
+            }
             continue;
         }
 
@@ -607,4 +624,109 @@ pub async fn tar_create_dir_all(client: &Docker, container: &str, path: &str) ->
                 e
             ))
         })
+}
+
+/// Copy a path (file or directory) within a container using the tar API.
+///
+/// Downloads the source as a tar archive, rewrites entry paths to replace the source
+/// basename with the destination basename, then uploads to the destination's parent
+/// directory. Works for both files and directories.
+pub async fn tar_copy_path(
+    client: &Docker,
+    container: &str,
+    src: &str,
+    dst: &str,
+) -> io::Result<()> {
+    let src_path = Path::new(src);
+    let dst_path = Path::new(dst);
+
+    let src_name = src_path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Source has no filename"))?
+        .to_string_lossy();
+    let dst_name = dst_path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Destination has no filename"))?
+        .to_string_lossy();
+    let dst_parent = dst_path
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_string_lossy()
+        .to_string();
+
+    // Download source as tar
+    let options = DownloadFromContainerOptionsBuilder::default()
+        .path(src)
+        .build();
+
+    let mut stream = client.download_from_container(container, Some(options));
+    let mut tar_data = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk
+            .map_err(|e| io::Error::other(format!("Failed to download from container: {}", e)))?;
+        tar_data.extend_from_slice(&chunk);
+    }
+
+    // Rewrite entry paths: replace source basename prefix with destination basename
+    let mut out_buf = Vec::new();
+    {
+        let mut archive = tar::Archive::new(&tar_data[..]);
+        let mut builder = tar::Builder::new(&mut out_buf);
+
+        for entry in archive
+            .entries()
+            .map_err(|e| io::Error::other(format!("Failed to read tar: {}", e)))?
+        {
+            let mut entry =
+                entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
+
+            let original_path = entry
+                .path()
+                .map_err(|e| io::Error::other(format!("Failed to read entry path: {}", e)))?
+                .to_string_lossy()
+                .to_string();
+
+            // Replace leading source basename with destination basename
+            let new_path =
+                if original_path == *src_name || original_path == format!("{}/", src_name) {
+                    original_path.replacen(&*src_name, &dst_name, 1)
+                } else if let Some(rest) = original_path.strip_prefix(&format!("{}/", src_name)) {
+                    format!("{}/{}", dst_name, rest)
+                } else {
+                    // Entry doesn't start with source name (shouldn't happen), keep as-is
+                    original_path
+                };
+
+            let mut header = entry.header().clone();
+            header.set_path(&new_path)?;
+            header.set_cksum();
+
+            let size = entry.header().size().unwrap_or(0);
+            if size > 0 {
+                let mut data = Vec::new();
+                entry
+                    .read_to_end(&mut data)
+                    .map_err(|e| io::Error::other(format!("Failed to read entry data: {}", e)))?;
+                builder.append(&header, &data[..])?;
+            } else {
+                builder.append(&header, &[] as &[u8])?;
+            }
+        }
+
+        builder.finish()?;
+    }
+
+    // Upload rewritten tar to destination's parent
+    let upload_options = UploadToContainerOptionsBuilder::default()
+        .path(&dst_parent)
+        .build();
+
+    client
+        .upload_to_container(
+            container,
+            Some(upload_options),
+            bollard::body_full(Bytes::from(out_buf)),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to upload to container: {}", e)))
 }

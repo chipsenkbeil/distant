@@ -220,7 +220,7 @@ pub struct LaunchOpts {
 impl Default for LaunchOpts {
     fn default() -> Self {
         Self {
-            image: String::from("ubuntu:22.04"),
+            image: String::new(),
             auto_remove: true,
         }
     }
@@ -301,6 +301,13 @@ impl Docker {
     /// Returns an error if the image cannot be pulled, the container cannot be created,
     /// or the container fails to start.
     pub async fn launch(launch_opts: LaunchOpts, docker_opts: DockerOpts) -> io::Result<Self> {
+        if launch_opts.image.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Docker image must be specified (e.g. 'ubuntu:22.04')",
+            ));
+        }
+
         let client = Self::create_client(&docker_opts)?;
 
         info!("Launching container from image: {}", launch_opts.image);

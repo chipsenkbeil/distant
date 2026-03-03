@@ -792,5 +792,13 @@ mod tests {
             assert_eq!(destination.host, "localhost");
             assert_eq!(destination.port, Some(59699));
         }
+
+        #[test]
+        fn parse_should_fail_for_docker_image_tag_as_port() {
+            // docker://ubuntu:22.04 has a non-integer port ("22.04"), which the
+            // Destination parser cannot handle. Docker URIs bypass this parser
+            // entirely by using raw strings at the CLI layer.
+            let _ = parse("docker://ubuntu:22.04").unwrap_err();
+        }
     }
 }

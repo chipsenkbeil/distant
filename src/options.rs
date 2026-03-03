@@ -7,7 +7,7 @@ use clap::builder::TypedValueParser as _;
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
 use derive_more::{Display, Error, From, IsVariant};
-use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
+use distant_core::net::common::{ConnectionId, Map, PortRange};
 use distant_core::net::server::Shutdown;
 use distant_core::protocol::ChangeKind;
 use service_manager::ServiceManagerKind;
@@ -358,7 +358,8 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
     },
 
     /// Subcommands for file system operations
@@ -414,7 +415,8 @@ pub enum ClientSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -585,8 +587,8 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
-        /// Destination in the form [user@]host[:port]
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
 
         /// Optional command to run instead of opening an interactive shell
         #[clap(name = "CMD", last = true)]
@@ -1648,7 +1650,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1687,7 +1689,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1710,7 +1712,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1749,7 +1751,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1774,7 +1776,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 format: Format::Json,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1824,7 +1826,7 @@ mod tests {
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
                     format: Format::Json,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1849,7 +1851,7 @@ mod tests {
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
                 format: Format::Json,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1899,7 +1901,7 @@ mod tests {
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
                     format: Format::Json,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -4549,7 +4551,7 @@ mod tests {
             current_dir: None,
             environment: Default::default(),
             new: false,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
             cmd: None,
         };
         assert_eq!(cmd.format(), Format::Shell);
@@ -4573,7 +4575,7 @@ mod tests {
             network: NetworkSettings::default(),
             format: Format::Json,
             new: false,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
         };
         assert!(cmd.format().is_json());
     }
@@ -4588,7 +4590,7 @@ mod tests {
             options: Default::default(),
             network: NetworkSettings::default(),
             format: Format::Shell,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
         };
         assert_eq!(cmd.format(), Format::Shell);
     }
@@ -4726,7 +4728,7 @@ mod tests {
                 network: net.clone(),
                 format: Format::Shell,
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
             },
             ClientSubcommand::Launch {
                 cache: cache.clone(),
@@ -4736,7 +4738,7 @@ mod tests {
                 options: Default::default(),
                 network: net.clone(),
                 format: Format::Shell,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
             },
             ClientSubcommand::Shell {
                 cache: cache.clone(),
@@ -4776,7 +4778,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             },
             ClientSubcommand::Status {
@@ -4949,7 +4951,7 @@ mod tests {
             current_dir: None,
             environment: Default::default(),
             new: false,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
             cmd: None,
         };
         assert_eq!(cmd.network_settings(), &net);
@@ -5242,7 +5244,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             }),
         };
@@ -5283,7 +5285,7 @@ mod tests {
                     current_dir: None,
                     environment: Default::default(),
                     new: false,
-                    destination: Box::new("test://host".parse().unwrap()),
+                    destination: "test://host".to_string(),
                     cmd: None,
                 }),
             }
@@ -5308,7 +5310,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             }),
         };
@@ -5349,7 +5351,7 @@ mod tests {
                     current_dir: None,
                     environment: Default::default(),
                     new: false,
-                    destination: Box::new("test://host".parse().unwrap()),
+                    destination: "test://host".to_string(),
                     cmd: None,
                 }),
             }
@@ -5369,7 +5371,7 @@ mod tests {
                 new,
                 ..
             }) => {
-                assert_eq!(destination.host.to_string(), "host");
+                assert_eq!(destination, "user@host");
                 assert!(cmd.is_none());
                 assert!(!new);
             }

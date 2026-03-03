@@ -108,26 +108,10 @@ Each item is tagged with a category:
    `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
    directory, which causes "Cannot perform a cyclic copy" when src and dst are
    sibling files in the same directory.
-4. **(Bug)** Shell injection via unescaped paths — all `run_shell_cmd`
-   calls in `distant-docker/src/api.rs` embed paths in single quotes
-   without escaping `'`. A path containing a single-quote character
-   (e.g. `/home/user/it's_a_file.txt`) causes a shell parse error and
-   falls through to tar fallback silently. Fix: switch to direct argv via
-   `run_cmd` where no shell features are needed, or add a
-   `shell_quote()` helper.
-5. **(Bug)** `distant-docker` search shell injection — `path` is
-   completely unquoted in search commands (`rg`, `grep`, `find`),
-   and `shell_escape_pattern` doesn't escape single quotes.
-   Fix: quote paths and escape `'` → `'\''` in patterns.
-6. **(Limitation)** `distant-docker` `copy` tar fallback uses
-   `tar_read_file` which skips directory entries — directory copies that
-   fail via exec silently return `NotFound` from the fallback. Needs a
-   `tar_copy_path` utility that handles both files and directories.
-7. **(Limitation)** `distant-docker` search error handling — `grep`
-   exit code 1 (no matches) vs exit code 2 (error) are not distinguished.
-   A non-existent search path produces a silent empty result instead of
-   an error. Fix: check exit code > 1 as an error, or use `set -o
-   pipefail` in the shell command.
+4. **(Limitation)** Docker image pull has no CLI-visible progress — `info!`
+   logs require `--log-level info` and go to the log file. Need a progress
+   callback mechanism (e.g. `ManagerResponse::Progress`) for real-time spinner
+   updates during long plugin operations like image pulls.
 
 ## Tooling & Command Reference
 

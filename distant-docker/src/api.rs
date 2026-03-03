@@ -232,7 +232,11 @@ impl Api for DockerApi {
             let result = utils::execute_with_stdin(
                 self.client.inner(),
                 &self.container,
-                &["sh", "-c", &format!("cat >> '{}'", path_str)],
+                &[
+                    "sh",
+                    "-c",
+                    &format!("cat >> {}", utils::shell_quote(&path_str)),
+                ],
                 &data,
                 self.user(),
             )
@@ -281,10 +285,11 @@ impl Api for DockerApi {
             let mut errors: Vec<io::Error> = Vec::new();
 
             // Try exec-based listing first for richer output
+            let quoted_path = utils::shell_quote(&path_str);
             let cmd = if depth == 0 || depth > 1 {
-                format!("find '{}' -printf '%y %p\\n'", path_str)
+                format!("find {} -printf '%y %p\\n'", quoted_path)
             } else {
-                format!("find '{}' -maxdepth 1 -printf '%y %p\\n'", path_str)
+                format!("find {} -maxdepth 1 -printf '%y %p\\n'", quoted_path)
             };
 
             match self.run_shell_cmd(&cmd).await {
@@ -395,13 +400,13 @@ impl Api for DockerApi {
             let path_str = path.as_str().to_string();
 
             // Try exec-based mkdir first (faster, simpler)
-            let cmd = if all {
-                format!("mkdir -p '{}'", path_str)
+            let cmd: Vec<&str> = if all {
+                vec!["mkdir", "-p", &path_str]
             } else {
-                format!("mkdir '{}'", path_str)
+                vec!["mkdir", &path_str]
             };
 
-            match self.run_shell_cmd(&cmd).await {
+            match self.run_cmd(&cmd).await {
                 Ok(output) if output.success() => Ok(()),
                 _ => {
                     // Fallback to tar-based directory creation.
@@ -415,8 +420,7 @@ impl Api for DockerApi {
 
                     // Best-effort cleanup of the marker file
                     let marker = format!("{}/.distant", path_str);
-                    let del_cmd = format!("rm -f '{}'", marker);
-                    let _ = self.run_shell_cmd(&del_cmd).await;
+                    let _ = self.run_cmd(&["rm", "-f", &marker]).await;
 
                     Ok(())
                 }
@@ -434,16 +438,12 @@ impl Api for DockerApi {
             let src_str = src.as_str().to_string();
             let dst_str = dst.as_str().to_string();
 
-            let cmd = format!("cp -r '{}' '{}'", src_str, dst_str);
-
-            let output = self.run_shell_cmd_stdout(&cmd).await;
+            let output = self.run_cmd_stdout(&["cp", "-r", &src_str, &dst_str]).await;
             match output {
                 Ok(_) => Ok(()),
                 Err(_) => {
-                    // Fallback: tar-read src, tar-write to dst
-                    let data = utils::tar_read_file(self.client.inner(), &self.container, &src_str)
-                        .await?;
-                    utils::tar_write_file(self.client.inner(), &self.container, &dst_str, &data)
+                    // Fallback: tar-based copy (handles both files and directories)
+                    utils::tar_copy_path(self.client.inner(), &self.container, &src_str, &dst_str)
                         .await
                 }
             }
@@ -459,13 +459,13 @@ impl Api for DockerApi {
         async move {
             let path_str = path.as_str();
 
-            let cmd = if force {
-                format!("rm -rf '{}'", path_str)
+            let cmd: Vec<&str> = if force {
+                vec!["rm", "-rf", path_str]
             } else {
-                format!("rm -r '{}'", path_str)
+                vec!["rm", "-r", path_str]
             };
 
-            self.run_shell_cmd_stdout(&cmd).await.map(|_| ())
+            self.run_cmd_stdout(&cmd).await.map(|_| ())
         }
     }
 
@@ -479,9 +479,7 @@ impl Api for DockerApi {
             let src_str = src.as_str().to_string();
             let dst_str = dst.as_str().to_string();
 
-            let cmd = format!("mv '{}' '{}'", src_str, dst_str);
-
-            match self.run_shell_cmd_stdout(&cmd).await {
+            match self.run_cmd_stdout(&["mv", &src_str, &dst_str]).await {
                 Ok(_) => Ok(()),
                 Err(exec_err) => {
                     // Fallback: tar-read src → tar-write dst → exec-delete src.
@@ -498,8 +496,7 @@ impl Api for DockerApi {
                         .await?;
 
                     // Best-effort delete of source
-                    let del_cmd = format!("rm -f '{}'", src_str);
-                    let _ = self.run_shell_cmd(&del_cmd).await;
+                    let _ = self.run_cmd(&["rm", "-f", &src_str]).await;
 
                     Ok(())
                 }
@@ -548,9 +545,7 @@ impl Api for DockerApi {
             let path_str = path.as_str();
 
             // Try exec-based check first
-            let cmd = format!("test -e '{}'", path_str);
-
-            match self.run_shell_cmd(&cmd).await {
+            match self.run_cmd(&["test", "-e", path_str]).await {
                 Ok(output) => Ok(output.success()),
                 Err(_) => {
                     // Fallback to tar-based existence check
@@ -574,8 +569,9 @@ impl Api for DockerApi {
             let path_str = path.as_str();
 
             // Try exec-based stat first
-            let cmd = format!("stat -c '%F %s %Y %X %W %a %u %g %h %i' '{}'", path_str);
-            if let Ok(output) = self.run_shell_cmd(&cmd).await
+            if let Ok(output) = self
+                .run_cmd(&["stat", "-c", "%F %s %Y %X %W %a %u %g %h %i", path_str])
+                .await
                 && output.success()
             {
                 let stdout = output.stdout_str();
@@ -631,13 +627,13 @@ impl Api for DockerApi {
             let mode = permissions.to_unix_mode();
             let mode_str = format!("{:o}", mode);
 
-            let cmd = if options.recursive {
-                format!("chmod -R {} '{}'", mode_str, path_str)
+            let cmd: Vec<&str> = if options.recursive {
+                vec!["chmod", "-R", &mode_str, path_str]
             } else {
-                format!("chmod {} '{}'", mode_str, path_str)
+                vec!["chmod", &mode_str, path_str]
             };
 
-            self.run_shell_cmd_stdout(&cmd).await.map(|_| ())
+            self.run_cmd_stdout(&cmd).await.map(|_| ())
         }
     }
 
@@ -655,11 +651,21 @@ impl Api for DockerApi {
                 ));
             }
 
-            let cmd = search::build_search_command(&query, &self.search_tools)?;
+            let search_cmd = search::build_search_command(&query, &self.search_tools)?;
             let search_id: SearchId = rand::random();
 
             // Run the search command
-            let output = self.run_shell_cmd(&cmd).await?;
+            let output = self.run_shell_cmd(&search_cmd.command).await?;
+
+            // Check for real errors (exit code >= 2 for grep/rg, >= 1 for find)
+            if search_cmd.is_error_exit(output.exit_code) {
+                return Err(io::Error::other(format!(
+                    "Search command failed (exit {}): {}",
+                    output.exit_code,
+                    output.stderr_str()
+                )));
+            }
+
             let stdout = output.stdout_str();
 
             // Parse results based on search target

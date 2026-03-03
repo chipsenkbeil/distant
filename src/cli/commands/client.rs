@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
 use console::style;
-use distant_core::net::common::{ConnectionId, Destination, Host, Map, Request, Response};
+use distant_core::net::common::{
+    ConnectionId, Destination, Host, Map, Request, Response, ensure_scheme, extract_scheme,
+};
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
     self, ChangeKind, ChangeKindSet, FileType, Permissions, RemotePath, SearchQuery,
@@ -168,7 +171,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
         }
         ClientSubcommand::Launch {
             cache,
-            mut destination,
+            destination,
             distant_args,
             distant_bin,
             distant_bind_server,
@@ -179,17 +182,23 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
-            // Grab the host we are connecting to for later use
-            let host = destination.host.to_string();
+            // Best-effort host extraction for display and post-launch host replacement.
+            // For parseable destinations (ssh://user@host:22), use the parsed host.
+            // For opaque destinations (docker://ubuntu:22.04), use raw string after "://".
+            let host = Destination::from_str(&destination)
+                .ok()
+                .map(|d| d.host.to_string())
+                .unwrap_or_else(|| {
+                    destination
+                        .split_once("://")
+                        .map(|(_, rest)| rest.to_string())
+                        .unwrap_or_else(|| destination.clone())
+                });
 
-            // If we have no scheme on launch, we need to fill it in with something
-            //
-            // TODO: Can we have the server support this instead of the client? Right now, the
-            //       server is failing because it cannot parse //localhost/ as it fails with
-            //       an invalid IPv4 or registered name character error on host
-            if destination.scheme.is_none() {
-                destination.scheme = Some("ssh".to_string());
-            }
+            let scheme = extract_scheme(&destination);
+
+            // If we have no scheme on launch, default to ssh
+            let destination = ensure_scheme(&destination, "ssh");
 
             // TODO: Handle this more cleanly
             if let Some(x) = distant_args {
@@ -209,7 +218,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 Format::Shell => {
                     client
                         .launch(
-                            destination.to_string(),
+                            destination.clone(),
                             options,
                             PromptAuthHandler::with_progress_bar(sp.progress_bar()),
                         )
@@ -217,7 +226,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                 }
                 Format::Json => {
                     client
-                        .launch(destination.to_string(), options, JsonAuthHandler::default())
+                        .launch(destination.clone(), options, JsonAuthHandler::default())
                         .await
                 }
             };
@@ -227,9 +236,13 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             }
             let mut new_destination = launch_result.context("Failed to launch server")?;
 
-            // Update the new destination with our previously-used host if the
-            // new host is not globally-accessible
-            if !new_destination.host.is_global() {
+            // For SSH-like schemes, update the new destination with our previously-used
+            // host if the new host is not globally-accessible. Skip for Docker and other
+            // schemes where the plugin returns an opaque destination (e.g. container ID).
+            let is_ssh_like = scheme
+                .map(|s| s.eq_ignore_ascii_case("ssh") || s.eq_ignore_ascii_case("distant"))
+                .unwrap_or(true); // no scheme defaults to ssh
+            if is_ssh_like && !new_destination.host.is_global() {
                 trace!(
                     "Updating host to {:?} from non-global {:?}",
                     host,
@@ -1111,17 +1124,14 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
             // Ensure destination has ssh:// scheme
-            let mut destination = *destination;
-            if destination.scheme.is_none() {
-                destination.scheme = Some("ssh".to_string());
-            }
+            let destination = ensure_scheme(&destination, "ssh");
 
             // Check for an existing connection or create a new one
             let id = if !new {
                 if let Some(existing_id) =
                     find_existing_connection_id(&mut client, &destination).await
                 {
-                    let dest_display = destination.to_string();
+                    let dest_display = destination.clone();
                     ui.success(&format!(
                         "Reusing existing connection to {dest_display} (id: {existing_id})"
                     ));
@@ -1933,7 +1943,7 @@ fn format_version_shell(version: &Version) -> anyhow::Result<String> {
 /// Returns the first matching connection ID, or None if no match found.
 async fn find_existing_connection_id(
     client: &mut ManagerClient,
-    dest: &Destination,
+    dest: &str,
 ) -> Option<ConnectionId> {
     let list = match client.list().await {
         Ok(list) => list,
@@ -1943,9 +1953,8 @@ async fn find_existing_connection_id(
         }
     };
 
-    let target = dest.to_string();
     list.iter()
-        .find(|(_, existing)| existing.eq_ignore_ascii_case(&target))
+        .find(|(_, existing)| existing.eq_ignore_ascii_case(dest))
         .map(|(id, _)| *id)
 }
 
@@ -2719,8 +2728,7 @@ mod tests {
                     .unwrap();
             });
 
-            let dest: Destination = "ssh://user@host".parse().unwrap();
-            let result = find_existing_connection_id(&mut client, &dest).await;
+            let result = find_existing_connection_id(&mut client, "ssh://user@host").await;
             assert_eq!(result, None);
         }
 
@@ -2740,8 +2748,7 @@ mod tests {
                     .unwrap();
             });
 
-            let dest: Destination = "ssh://user@host".parse().unwrap();
-            let result = find_existing_connection_id(&mut client, &dest).await;
+            let result = find_existing_connection_id(&mut client, "ssh://user@host").await;
             assert_eq!(result, Some(42));
         }
 
@@ -2760,8 +2767,7 @@ mod tests {
                     .unwrap();
             });
 
-            let dest: Destination = "ssh://user@host".parse().unwrap();
-            let result = find_existing_connection_id(&mut client, &dest).await;
+            let result = find_existing_connection_id(&mut client, "ssh://user@host").await;
             assert_eq!(result, None);
         }
 
@@ -2780,8 +2786,7 @@ mod tests {
                     .unwrap();
             });
 
-            let dest: Destination = "ssh://user@host".parse().unwrap();
-            let result = find_existing_connection_id(&mut client, &dest).await;
+            let result = find_existing_connection_id(&mut client, "ssh://user@host").await;
             assert_eq!(result, Some(42));
         }
 
@@ -2803,8 +2808,7 @@ mod tests {
                     .unwrap();
             });
 
-            let dest: Destination = "ssh://user@host".parse().unwrap();
-            let result = find_existing_connection_id(&mut client, &dest).await;
+            let result = find_existing_connection_id(&mut client, "ssh://user@host").await;
             assert_eq!(result, None);
         }
     }

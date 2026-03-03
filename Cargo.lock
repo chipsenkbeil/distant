@@ -1251,6 +1251,7 @@ dependencies = [
  "rstest",
  "semver 1.0.17",
  "serde",
+ "shlex",
  "tar",
  "test-log",
  "tokio",

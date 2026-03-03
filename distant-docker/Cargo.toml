@@ -23,6 +23,7 @@ futures = "0.3.28"
 log = "0.4.18"
 rand = { version = "0.8.5", features = ["getrandom"] }
 semver = "1"
+shlex = "1.3"
 tar = "0.4"
 tokio = { version = "1.28.2", features = ["full"] }
 
