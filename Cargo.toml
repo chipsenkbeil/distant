@@ -32,7 +32,7 @@ strip = true
 
 [features]
 default = []
-docker = ["dep:distant-docker", "distant-test-harness/docker"]
+docker = ["dep:distant-docker"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -83,7 +83,7 @@ windows-service = "0.6.0"
 [dev-dependencies]
 assert_cmd = "2.1"
 assert_fs = "1.0.13"
-distant-test-harness = { path = "distant-test-harness" }
+distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
 env_logger = "0.10.0"
 expectrl = "0.8"
 indoc = "2.0.1"
