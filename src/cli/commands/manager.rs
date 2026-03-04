@@ -71,18 +71,18 @@ fn build_plugin_map(
     Ok(map)
 }
 
-pub fn run(cmd: ManagerSubcommand) -> CliResult {
+pub fn run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
     match &cmd {
-        ManagerSubcommand::Listen { daemon, .. } if *daemon => run_daemon(cmd),
+        ManagerSubcommand::Listen { daemon, .. } if *daemon => run_daemon(cmd, quiet),
         _ => {
             let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-            rt.block_on(async_run(cmd))
+            rt.block_on(async_run(cmd, quiet))
         }
     }
 }
 
 #[cfg(windows)]
-fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
+fn run_daemon(_cmd: ManagerSubcommand, _quiet: bool) -> CliResult {
     use crate::cli::Spawner;
     let pid = Spawner::spawn_running_background(Vec::new())
         .context("Failed to spawn background process")?;
@@ -91,14 +91,14 @@ fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
 }
 
 #[cfg(unix)]
-fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
+fn run_daemon(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
     use fork::{Fork, daemon};
 
     debug!("Forking process");
     match daemon(true, true) {
         Ok(Fork::Child) => {
             let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-            rt.block_on(async { async_run(cmd).await })?;
+            rt.block_on(async { async_run(cmd, quiet).await })?;
             Ok(())
         }
         Ok(Fork::Parent(pid)) => {
@@ -113,8 +113,8 @@ fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
     }
 }
 
-async fn async_run(cmd: ManagerSubcommand) -> CliResult {
-    let ui = Ui::new();
+async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
+    let ui = Ui::new(quiet);
 
     match cmd {
         ManagerSubcommand::Service(ManagerServiceSubcommand::Start { kind, user }) => {

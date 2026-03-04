@@ -85,10 +85,11 @@ impl Cli {
 
     /// Runs the CLI
     pub fn run(self) -> CliResult {
+        let quiet = self.options.quiet;
         match self.options.command {
-            DistantSubcommand::Client(cmd) => commands::client::run(cmd),
+            DistantSubcommand::Client(cmd) => commands::client::run(cmd, quiet),
             DistantSubcommand::Generate(cmd) => commands::generate::run(cmd),
-            DistantSubcommand::Manager(cmd) => commands::manager::run(cmd),
+            DistantSubcommand::Manager(cmd) => commands::manager::run(cmd, quiet),
             #[cfg(feature = "host")]
             DistantSubcommand::Server(cmd) => commands::server::run(cmd),
         }

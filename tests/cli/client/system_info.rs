@@ -19,7 +19,7 @@ fn should_output_system_info(ctx: ManagerCtx) {
             "Cwd: {:?}\n",
             "Path Sep: {:?}\n",
             "Username: {:?}\n",
-            "Shell: {:?}",
+            "Shell: {:?}\n",
         ),
         env::consts::FAMILY.to_string(),
         env::consts::OS.to_string(),

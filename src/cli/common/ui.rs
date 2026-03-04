@@ -13,21 +13,37 @@ use indicatif::{ProgressBar, ProgressStyle};
 pub struct Ui {
     term: Term,
     interactive: bool,
+    quiet: bool,
 }
 
 impl Ui {
     /// Create a new UI that writes to stderr.
-    pub fn new() -> Self {
+    ///
+    /// When `quiet` is true, all informational output (spinners, success/error messages,
+    /// headers, etc.) is suppressed. This is useful for scripting and pipeline use.
+    pub fn new(quiet: bool) -> Self {
         let term = Term::stderr();
         let interactive = term.is_term();
-        Self { term, interactive }
+        Self {
+            term,
+            interactive,
+            quiet,
+        }
     }
 
     /// Start a spinner with the given message.
     ///
     /// In interactive mode, shows an animated spinner. In non-interactive mode,
-    /// prints the message once and returns a no-op spinner.
+    /// prints the message once and returns a no-op spinner. In quiet mode,
+    /// returns an inert spinner with no output.
     pub fn spinner(&self, msg: &str) -> Spinner {
+        if self.quiet {
+            return Spinner {
+                pb: None,
+                interactive: false,
+                term: self.term.clone(),
+            };
+        }
         if self.interactive {
             let pb = ProgressBar::new_spinner();
             pb.set_style(
@@ -55,6 +71,9 @@ impl Ui {
 
     /// Print a success message: "✓ msg" (green) or "msg" (plain).
     pub fn success(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self
                 .term
@@ -66,6 +85,9 @@ impl Ui {
 
     /// Print a warning message: "⚠ msg" (yellow) or "warning: msg" (plain).
     pub fn warning(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self
                 .term
@@ -77,6 +99,9 @@ impl Ui {
 
     /// Print an error message: "✗ msg" (red) or "error: msg" (plain).
     pub fn error(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self
                 .term
@@ -88,6 +113,9 @@ impl Ui {
 
     /// Print an error message with a suggestion underneath.
     pub fn error_with_suggestion(&self, msg: &str, suggestion: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self
                 .term
@@ -103,6 +131,9 @@ impl Ui {
 
     /// Print a header/title: bold or plain.
     pub fn header(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self.term.write_line(&format!("{}", style(msg).bold()));
         } else {
@@ -112,6 +143,9 @@ impl Ui {
 
     /// Print dim/secondary text.
     pub fn dim(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let _ = self.term.write_line(&format!("{}", style(msg).dim()));
         } else {
@@ -121,6 +155,9 @@ impl Ui {
 
     /// Print a "Label: value" status line with colored value.
     pub fn status(&self, label: &str, value: &str, color: StatusColor) {
+        if self.quiet {
+            return;
+        }
         if self.interactive {
             let styled_value = match color {
                 StatusColor::Green => style(value).green(),
@@ -137,6 +174,9 @@ impl Ui {
 
     /// Write a raw line to the terminal (stderr).
     pub fn write_line(&self, msg: &str) {
+        if self.quiet {
+            return;
+        }
         let _ = self.term.write_line(msg);
     }
 
@@ -226,7 +266,7 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn ui_new_does_not_panic() {
-        let _ui = Ui::new();
+        let _ui = Ui::new(false);
     }
 
     // -------------------------------------------------------
@@ -234,7 +274,7 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn ui_is_interactive_returns_bool() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         // In CI / test runner, stderr is typically NOT a TTY
         // We just verify it doesn't panic and returns a bool
         let _result = ui.is_interactive();
@@ -245,7 +285,7 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn ui_term_returns_term_reference() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         let _term = ui.term();
     }
 
@@ -254,43 +294,43 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn ui_success_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.success("test success message");
     }
 
     #[test]
     fn ui_warning_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.warning("test warning message");
     }
 
     #[test]
     fn ui_error_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.error("test error message");
     }
 
     #[test]
     fn ui_error_with_suggestion_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.error_with_suggestion("error msg", "try this instead");
     }
 
     #[test]
     fn ui_header_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.header("test header");
     }
 
     #[test]
     fn ui_dim_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.dim("dimmed text");
     }
 
     #[test]
     fn ui_status_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.status("Status", "connected", StatusColor::Green);
         ui.status("Status", "disconnected", StatusColor::Red);
         ui.status("Status", "pending", StatusColor::Yellow);
@@ -298,7 +338,7 @@ mod tests {
 
     #[test]
     fn ui_write_line_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         ui.write_line("raw output");
     }
 
@@ -307,7 +347,7 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn spinner_in_non_interactive_mode() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         // When not interactive, spinner methods are no-ops
         let spinner = ui.spinner("loading...");
         spinner.set_message("still loading...");
@@ -317,21 +357,21 @@ mod tests {
 
     #[test]
     fn spinner_done_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         let spinner = ui.spinner("loading...");
         spinner.done("done!");
     }
 
     #[test]
     fn spinner_fail_does_not_panic() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         let spinner = ui.spinner("loading...");
         spinner.fail("failed!");
     }
 
     #[test]
     fn spinner_progress_bar_reflects_interactivity() {
-        let ui = Ui::new();
+        let ui = Ui::new(false);
         let spinner = ui.spinner("loading...");
         // In non-interactive mode (typical for tests), pb should be None
         if !ui.is_interactive() {

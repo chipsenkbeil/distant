@@ -49,9 +49,9 @@ use super::common::RemoteProcessLink;
 
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
-pub fn run(cmd: ClientSubcommand) -> CliResult {
+pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-    rt.block_on(async_run(cmd))
+    rt.block_on(async_run(cmd, quiet))
 }
 
 async fn read_cache(path: &Path) -> Cache {
@@ -61,8 +61,8 @@ async fn read_cache(path: &Path) -> Cache {
         .unwrap_or_else(|_| Cache::new(path.to_path_buf()))
 }
 
-async fn async_run(cmd: ClientSubcommand) -> CliResult {
-    let ui = Ui::new();
+async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
+    let ui = Ui::new(quiet);
 
     match cmd {
         ClientSubcommand::Connect {
@@ -1557,7 +1557,7 @@ fn format_system_info(info: &SystemInfo) -> String {
             "Cwd: {:?}\n",
             "Path Sep: {:?}\n",
             "Username: {:?}\n",
-            "Shell: {:?}"
+            "Shell: {:?}\n"
         ),
         info.family,
         info.os,
@@ -1696,7 +1696,7 @@ fn format_metadata(metadata: &protocol::Metadata) -> String {
                     "Group Exec: {}\n",
                     "Other Read: {}\n",
                     "Other Write: {}\n",
-                    "Other Exec: {}",
+                    "Other Exec: {}\n",
                 ),
                 u.owner_read,
                 u.owner_write,
@@ -1728,7 +1728,7 @@ fn format_metadata(metadata: &protocol::Metadata) -> String {
                     "Reparse Point: {}\n",
                     "Sparse File: {}\n",
                     "System: {}\n",
-                    "Temporary: {}",
+                    "Temporary: {}\n",
                 ),
                 w.archive,
                 w.compressed,
@@ -1773,7 +1773,7 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
                     path: String,
                 }
 
-                let data = Table::new(entries.into_iter().map(|entry| EntryRow {
+                let mut data = Table::new(entries.into_iter().map(|entry| EntryRow {
                     ty: String::from(match entry.file_type {
                         FileType::Dir => "<DIR>",
                         FileType::File => "",
@@ -1786,6 +1786,7 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
                 .with(Modify::new(Rows::new(..)).with(Alignment::left()))
                 .to_string()
                 .into_bytes();
+                data.push(b'\n');
 
                 return Ok(data);
             }
