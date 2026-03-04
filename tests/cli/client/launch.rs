@@ -66,7 +66,7 @@ fn should_launch_in_json_format(manager_only_ctx: ManagerOnlyCtx) {
             .expect("Failed to read launch output")
             .expect("Missing launch output");
 
-        assert_eq!(json["type"], "launched");
+        assert_eq!(json["type"], "launched", "unexpected response: {json}");
         assert!(json["id"].is_number(), "Expected numeric id, got: {json}");
     });
 }

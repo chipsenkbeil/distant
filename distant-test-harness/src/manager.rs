@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::OnceLock;
 use std::thread;
@@ -80,10 +80,7 @@ impl ManagerCtx {
 
         eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(Some(status)) = manager.try_wait() {
-            panic!("Manager exited ({}): {:?}", status.success(), status.code());
-        }
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
 
         let mut server = None;
         'outer: for i in 1..=MAX_RETRY_ATTEMPTS {
@@ -400,6 +397,39 @@ fn resolve_bin_path() -> PathBuf {
     )
 }
 
+/// Waits for the manager to be ready by polling for the socket/pipe.
+fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(2);
+    let poll_interval = Duration::from_millis(25);
+
+    loop {
+        // Check if manager crashed
+        if let Ok(Some(status)) = manager.try_wait() {
+            panic!("Manager exited ({}): {:?}", status.success(), status.code());
+        }
+
+        // On Unix, check if the socket file exists
+        if !cfg!(windows) && Path::new(socket_or_pipe).exists() {
+            return;
+        }
+
+        // On Windows, just wait a reasonable time for the named pipe
+        if cfg!(windows) && start.elapsed() > Duration::from_millis(200) {
+            return;
+        }
+
+        if start.elapsed() > timeout {
+            panic!(
+                "Manager did not create socket {:?} within {:?}",
+                socket_or_pipe, timeout
+            );
+        }
+
+        thread::sleep(poll_interval);
+    }
+}
+
 fn random_log_file(prefix: &str) -> PathBuf {
     ROOT_LOG_DIR.join(format!(
         "{}.{}.{}.log",
@@ -469,10 +499,7 @@ impl ManagerOnlyCtx {
 
         eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(Some(status)) = manager.try_wait() {
-            panic!("Manager exited ({}): {:?}", status.success(), status.code());
-        }
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
 
         // Spawn a server and capture the credentials
         let mut server_cmd = StdCommand::new(bin_path());
