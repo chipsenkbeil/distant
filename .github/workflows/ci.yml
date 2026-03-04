@@ -101,6 +101,20 @@ jobs:
           key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
       - name: Check Cargo availability
         run: cargo --version
+      - name: Windows SSH diagnostics
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Write-Host "=== OpenSSH version ==="
+          & sshd -V 2>&1 | Out-Host
+          Write-Host "=== SSH-related processes ==="
+          Get-Process | Where-Object { $_.Name -like '*ssh*' } | Format-Table -AutoSize
+          Write-Host "=== Listening ports (count) ==="
+          netstat -an | Select-String "LISTEN" | Measure-Object | Select-Object -ExpandProperty Count
+          Write-Host "=== Windows version ==="
+          [System.Environment]::OSVersion | Format-List
+          Write-Host "=== System memory ==="
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List
       - name: Configure Windows for SSH testing
         if: matrix.os == 'windows-latest'
         shell: pwsh

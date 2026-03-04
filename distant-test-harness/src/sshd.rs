@@ -792,11 +792,19 @@ impl Sshd {
 
 impl Drop for Sshd {
     /// Kills server and all descendant processes upon drop.
+    ///
+    /// Captures the sshd log file before cleanup so CI can inspect what
+    /// the sshd saw when channels went silent or tests timed out.
     fn drop(&mut self) {
-        debug!("Dropping sshd");
+        debug!("Dropping sshd on port {}", self.port);
+
+        // Capture sshd log before killing — the log file lives inside `self.tmp`
+        // which will be deleted when the `TempDir` drops.
+        self.print_log_file();
+
         if let Some(mut child) = self.child.lock().unwrap().take() {
             kill_process_tree(&mut child);
-            debug!("Sshd finished");
+            debug!("Sshd on port {} finished", self.port);
         }
     }
 }

@@ -68,12 +68,21 @@ pub async fn execute_output(
         let mut stderr = Vec::new();
         let mut exit_status: Option<u32> = None;
 
+        log::debug!("execute_output: waiting for channel messages for cmd={cmd}");
         while let Some(msg) = channel.wait().await {
             match msg {
                 ChannelMsg::Data { ref data } => {
+                    log::debug!(
+                        "execute_output: received Data ({} bytes) for cmd={cmd}",
+                        data.len()
+                    );
                     stdout.extend_from_slice(data);
                 }
                 ChannelMsg::ExtendedData { ref data, ext } => {
+                    log::debug!(
+                        "execute_output: received ExtendedData (ext={ext}, {} bytes) for cmd={cmd}",
+                        data.len()
+                    );
                     if ext == 1 {
                         stderr.extend_from_slice(data);
                     }
@@ -81,6 +90,7 @@ pub async fn execute_output(
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
+                    log::debug!("execute_output: received ExitStatus({status}) for cmd={cmd}");
                     exit_status = Some(status);
                     // On Windows, sshd may not send Eof after ExitStatus.
                     // Break immediately — ExitStatus is sent after all data
@@ -88,15 +98,24 @@ pub async fn execute_output(
                     break;
                 }
                 ChannelMsg::Eof => {
+                    log::debug!("execute_output: received Eof for cmd={cmd}");
                     // If we already have exit status, we're done.
                     // Otherwise keep waiting — ExitStatus usually follows.
                     if exit_status.is_some() {
                         break;
                     }
                 }
-                _ => {}
+                _ => {
+                    log::debug!("execute_output: received other ChannelMsg for cmd={cmd}");
+                }
             }
         }
+        log::debug!(
+            "execute_output: channel closed for cmd={cmd}, exit_status={exit_status:?}, \
+             stdout={} bytes, stderr={} bytes",
+            stdout.len(),
+            stderr.len()
+        );
 
         Ok(ExecOutput {
             success: exit_status.map(|s| s == 0).unwrap_or(false),
