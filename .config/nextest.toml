@@ -4,17 +4,20 @@ max-threads = 4
 [test-groups.docker-integration]
 max-threads = 2
 
-[profile.ci]
+[profile.default]
 fail-fast = false
-retries = 4
-slow-timeout = { period = "60s", terminate-after = 3 }
+leak-timeout = { period = "100ms", result = "fail" }
 status-level = "fail"
-final-status-level = "fail"
+final-status-level = "leak"
 
-[[profile.ci.overrides]]
+[[profile.default.overrides]]
 filter = 'binary_id(distant-ssh::lib)'
 test-group = 'ssh-integration'
 
-[[profile.ci.overrides]]
+[[profile.default.overrides]]
 filter = 'binary_id(distant-docker::lib)'
 test-group = 'docker-integration'
+
+[profile.ci]
+retries = 4
+slow-timeout = { period = "60s", terminate-after = 3 }
