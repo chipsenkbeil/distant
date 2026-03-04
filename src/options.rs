@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use clap::builder::TypedValueParser as _;
 use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
@@ -22,9 +23,31 @@ pub use common::*;
 
 pub use self::config::*;
 
+/// Build version string with optional git metadata.
+///
+/// When built from a git checkout, produces `0.20.0 (abc1234def 2026-03-03)`.
+/// A dirty working tree appends `+` to the hash: `0.20.0 (abc1234def+ 2026-03-03)`.
+/// When git is unavailable (tarball builds), falls back to plain `0.20.0`.
+static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
+    match (
+        option_env!("DISTANT_BUILD_GIT_HASH"),
+        option_env!("DISTANT_BUILD_DATE"),
+    ) {
+        (Some(hash), Some(date)) => {
+            let dirty = if option_env!("DISTANT_BUILD_GIT_DIRTY") == Some("true") {
+                "+"
+            } else {
+                ""
+            };
+            format!("{} ({hash}{dirty} {date})", env!("CARGO_PKG_VERSION"))
+        }
+        _ => env!("CARGO_PKG_VERSION").to_string(),
+    }
+});
+
 /// Primary entrypoint into options & subcommands for the CLI.
 #[derive(Debug, PartialEq, Parser)]
-#[clap(author, version, about)]
+#[clap(author, version = LONG_VERSION.as_str(), about)]
 #[clap(name = "distant")]
 pub struct Options {
     #[clap(flatten)]
