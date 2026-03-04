@@ -6,6 +6,8 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::process::{kill_process_tree, set_process_group};
+
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
 use distant_core::Credentials;
@@ -78,6 +80,7 @@ impl ManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        set_process_group(&mut manager_cmd);
         eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -101,6 +104,7 @@ impl ManagerCtx {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            set_process_group(&mut server_cmd);
             eprintln!("Spawning server cmd: {server_cmd:?}");
             server = match server_cmd.spawn() {
                 Ok(server) => Some(server),
@@ -440,12 +444,10 @@ fn random_log_file(prefix: &str) -> PathBuf {
 }
 
 impl Drop for ManagerCtx {
-    /// Kills manager upon drop
+    /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        let _ = self.manager.kill();
-        let _ = self.server.kill();
-        let _ = self.manager.wait();
-        let _ = self.server.wait();
+        kill_process_tree(&mut self.manager);
+        kill_process_tree(&mut self.server);
     }
 }
 
@@ -497,6 +499,7 @@ impl ManagerOnlyCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        set_process_group(&mut manager_cmd);
         eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -515,6 +518,7 @@ impl ManagerOnlyCtx {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        set_process_group(&mut server_cmd);
         eprintln!("ManagerOnlyCtx: Spawning server cmd: {server_cmd:?}");
         let mut server = server_cmd.spawn().expect("Failed to spawn server");
 
@@ -611,11 +615,10 @@ impl ManagerOnlyCtx {
 }
 
 impl Drop for ManagerOnlyCtx {
+    /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        let _ = self.manager.kill();
-        let _ = self.server.kill();
-        let _ = self.manager.wait();
-        let _ = self.server.wait();
+        kill_process_tree(&mut self.manager);
+        kill_process_tree(&mut self.server);
     }
 }
 

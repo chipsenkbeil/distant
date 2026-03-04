@@ -30,5 +30,8 @@ whoami = "1"
 which = "4"
 rand = "0.8"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{fmt, io, thread};
 
 use anyhow::Context;
@@ -17,6 +17,7 @@ use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
 
+use crate::process::{kill_process_tree, set_process_group};
 use crate::utils::ci_path_to_string;
 
 #[derive(Deref, DerefMut)]
@@ -46,8 +47,6 @@ const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
 
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
-
-const MAX_DROP_WAIT_TIME: Duration = Duration::from_millis(500);
 
 /// Sets restrictive Windows ACLs on a file so that Windows OpenSSH accepts it.
 /// In admin contexts, removes inherited permissions and sets exact ACLs.
@@ -569,20 +568,20 @@ impl Sshd {
             }
         }
 
-        let mut child = Command::new(BIN_PATH.as_path())
-            .arg("-D")
+        let mut cmd = Command::new(BIN_PATH.as_path());
+        cmd.arg("-D")
             .arg("-p")
             .arg(port.to_string())
             .arg("-f")
             .arg(config_path.as_ref())
             .arg("-E")
-            .arg(log_path.as_ref())
-            .spawn()
-            .with_context(|| {
-                #[cfg(windows)]
-                {
-                    format!(
-                        "Failed to spawn {:?}. On Windows Server 2025, sshd requires:\n\
+            .arg(log_path.as_ref());
+        set_process_group(&mut cmd);
+        let mut child = cmd.spawn().with_context(|| {
+            #[cfg(windows)]
+            {
+                format!(
+                    "Failed to spawn {:?}. On Windows Server 2025, sshd requires:\n\
                          1. Host key files owned by SYSTEM account\n\
                          2. Proper ACL permissions (SYSTEM:F, Administrators:F)\n\
                          3. No conflicting SSH services on the same port\n\
@@ -591,14 +590,14 @@ impl Sshd {
                          - Check if system SSH service is running on port 22\n\
                          - Verify host key file permissions with 'icacls'\n\
                          - Ensure OpenSSH is properly installed",
-                        BIN_PATH.as_path()
-                    )
-                }
-                #[cfg(not(windows))]
-                {
-                    format!("Failed to spawn {:?}", BIN_PATH.as_path())
-                }
-            })?;
+                    BIN_PATH.as_path()
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                format!("Failed to spawn {:?}", BIN_PATH.as_path())
+            }
+        })?;
 
         // Check immediately for instant failures (like permission/config errors)
         if let Some(exit_status) = child
@@ -792,29 +791,12 @@ impl Sshd {
 }
 
 impl Drop for Sshd {
-    /// Kills server upon drop
+    /// Kills server and all descendant processes upon drop.
     fn drop(&mut self) {
         debug!("Dropping sshd");
         if let Some(mut child) = self.child.lock().unwrap().take() {
-            let _ = child.kill();
-
-            // Wait for a maximum period of time
-            let start = Instant::now();
-            while start.elapsed() < MAX_DROP_WAIT_TIME {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        debug!("Sshd finished");
-                        return;
-                    }
-                    Err(x) => {
-                        error!("Failed to wait for sshd to quit: {x}");
-                        return;
-                    }
-                    _ => thread::sleep(MAX_DROP_WAIT_TIME / 10),
-                }
-            }
-
-            error!("Timed out waiting for sshd to quit");
+            kill_process_tree(&mut child);
+            debug!("Sshd finished");
         }
     }
 }
