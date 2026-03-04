@@ -67,7 +67,6 @@ pub async fn execute_output(
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_status: Option<u32> = None;
-        let mut got_eof = false;
 
         while let Some(msg) = channel.wait().await {
             match msg {
@@ -83,12 +82,14 @@ pub async fn execute_output(
                     exit_status: status,
                 } => {
                     exit_status = Some(status);
-                    if got_eof {
-                        break;
-                    }
+                    // On Windows, sshd may not send Eof after ExitStatus.
+                    // Break immediately — ExitStatus is sent after all data
+                    // has been flushed, so no output will be lost.
+                    break;
                 }
                 ChannelMsg::Eof => {
-                    got_eof = true;
+                    // If we already have exit status, we're done.
+                    // Otherwise keep waiting — ExitStatus usually follows.
                     if exit_status.is_some() {
                         break;
                     }

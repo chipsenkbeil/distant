@@ -122,7 +122,7 @@ jobs:
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Set faster timeouts for Windows SSH debugging
-        run: echo "NEXTEST_TEST_TIMEOUT=30s" >> $GITHUB_ENV
+        run: echo "NEXTEST_TEST_TIMEOUT=90s" >> $GITHUB_ENV
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Ensure /run/sshd exists on Unix

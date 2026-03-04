@@ -81,7 +81,6 @@ where
     let msg_id = id;
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut _got_eof = false;
 
         while let Some(msg) = read_half.wait().await {
             match msg {
@@ -99,13 +98,15 @@ where
                         });
                     }
                 }
-                ChannelMsg::Eof => {
-                    _got_eof = true;
-                }
+                ChannelMsg::Eof => {}
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
                     exit_status = Some(status);
+                    // On Windows, sshd may not send Eof after ExitStatus.
+                    // Break immediately — ExitStatus arrives after all data
+                    // has been flushed, so no output will be lost.
+                    break;
                 }
                 _ => {}
             }
@@ -237,7 +238,6 @@ where
     let msg_id = id;
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut _got_eof = false;
 
         while let Some(msg) = read_half.wait().await {
             match msg {
@@ -247,13 +247,15 @@ where
                         data: data.to_vec(),
                     });
                 }
-                ChannelMsg::Eof => {
-                    _got_eof = true;
-                }
+                ChannelMsg::Eof => {}
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
                     exit_status = Some(status);
+                    // On Windows, sshd may not send Eof after ExitStatus.
+                    // Break immediately — ExitStatus arrives after all data
+                    // has been flushed, so no output will be lost.
+                    break;
                 }
                 _ => {}
             }
