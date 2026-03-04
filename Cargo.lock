@@ -1282,6 +1282,7 @@ dependencies = [
  "test-log",
  "tokio",
  "walkdir",
+ "which",
  "whoami",
  "winsplit",
 ]

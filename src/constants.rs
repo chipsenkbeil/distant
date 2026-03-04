@@ -43,6 +43,7 @@ pub mod user {
         Lazy::new(|| PROJECT_DIR.cache_dir().join("manager.log"));
 
     /// Path to log file for distant server
+    #[cfg(feature = "host")]
     pub static SERVER_LOG_FILE_PATH: Lazy<PathBuf> =
         Lazy::new(|| PROJECT_DIR.cache_dir().join("server.log"));
 
@@ -195,6 +196,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "host")]
     #[test]
     fn user_server_log_file_path_ends_with_server_log() {
         let path = user::SERVER_LOG_FILE_PATH.as_path();

@@ -13,4 +13,5 @@ pub use network::*;
 pub use search::*;
 pub use shell::*;
 pub use time::*;
+#[cfg(feature = "host")]
 pub use value::*;

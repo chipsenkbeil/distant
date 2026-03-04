@@ -1110,6 +1110,7 @@ async fn async_run(cmd: ClientSubcommand) -> CliResult {
                     })?;
             }
         }
+        #[cfg(feature = "ssh")]
         ClientSubcommand::Ssh {
             cache,
             destination,

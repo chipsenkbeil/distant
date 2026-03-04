@@ -36,7 +36,15 @@ impl Cli {
     /// Initializes a logger for the CLI, returning a handle to the logger
     pub fn init_logger(&self) -> flexi_logger::LoggerHandle {
         use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
-        let modules = &["distant", "distant_core", "distant_ssh", "distant_docker"];
+        #[allow(unused_mut)]
+        let mut modules = vec!["distant", "distant_core"];
+        #[cfg(feature = "ssh")]
+        modules.push("distant_ssh");
+        #[cfg(feature = "docker")]
+        modules.push("distant_docker");
+        #[cfg(feature = "host")]
+        modules.push("distant_host");
+        let modules = modules;
 
         // Disable logging for everything but our binary, which is based on verbosity
         let mut builder = LogSpecification::builder();
@@ -81,6 +89,7 @@ impl Cli {
             DistantSubcommand::Client(cmd) => commands::client::run(cmd),
             DistantSubcommand::Generate(cmd) => commands::generate::run(cmd),
             DistantSubcommand::Manager(cmd) => commands::manager::run(cmd),
+            #[cfg(feature = "host")]
             DistantSubcommand::Server(cmd) => commands::server::run(cmd),
         }
     }
@@ -98,6 +107,7 @@ mod tests {
     // -------------------------------------------------------
     // Cli::initialize_from — valid args
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn initialize_from_server_listen() {
         let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
@@ -110,6 +120,7 @@ mod tests {
         assert!(cli.options.command.is_manager());
     }
 
+    #[cfg(feature = "ssh")]
     #[test]
     fn initialize_from_ssh_basic() {
         let cli = Cli::initialize_from(["distant", "ssh", "user@host"]).unwrap();
@@ -140,6 +151,7 @@ mod tests {
     // -------------------------------------------------------
     // Cli — log file defaults are set
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn log_file_is_set_for_server_listen() {
         let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
@@ -170,6 +182,7 @@ mod tests {
     // -------------------------------------------------------
     // Cli — Debug impl
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn cli_debug_impl() {
         let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
@@ -181,6 +194,7 @@ mod tests {
     // -------------------------------------------------------
     // Cli — options field is accessible
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn cli_options_field_accessible() {
         let cli = Cli::initialize_from(["distant", "server", "listen"]).unwrap();
@@ -192,6 +206,7 @@ mod tests {
     // -------------------------------------------------------
     // Cli — with log level flag
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn initialize_from_with_log_level() {
         let cli =

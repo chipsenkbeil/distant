@@ -19,8 +19,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::watch;
 
-use crate::options::{BindAddress, ClientLaunchConfig};
-
 #[inline]
 fn missing(label: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, format!("Missing {label}"))
@@ -36,11 +34,12 @@ fn invalid(label: &str) -> io::Error {
 /// Handles the `"distant"` scheme. Launch spawns a local `distant server listen` process
 /// and reads the resulting destination from its stdout. Connect establishes a TCP connection
 /// to an already-running distant server, supporting both static key and challenge-based auth.
-pub struct DistantPlugin {
+pub struct HostPlugin {
     shutdown: watch::Sender<bool>,
 }
 
-impl DistantPlugin {
+impl HostPlugin {
+    /// Creates a new [`HostPlugin`].
     pub fn new() -> Self {
         Self {
             shutdown: watch::channel(false).0,
@@ -92,13 +91,19 @@ impl DistantPlugin {
     }
 }
 
-impl Drop for DistantPlugin {
+impl Default for HostPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for HostPlugin {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-impl Plugin for DistantPlugin {
+impl Plugin for HostPlugin {
     fn name(&self) -> &str {
         "distant"
     }
@@ -165,10 +170,18 @@ impl Plugin for DistantPlugin {
         Box::pin(async move {
             let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling launch of {destination} with options '{options}'");
-            let config = ClientLaunchConfig::from(options.clone());
+
+            // Extract distant.* options directly from the Map
+            let bin = options.get("distant.bin").cloned();
+            let bind_server = options
+                .get("distant.bind_server")
+                .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+                .cloned()
+                .unwrap_or_else(|| "any".to_string());
+            let args = options.get("distant.args").cloned();
 
             // Get the path to the distant binary, ensuring it exists and is executable
-            let program = which::which(match config.distant.bin {
+            let program = which::which(match bin {
                 Some(bin) => PathBuf::from(bin),
                 None => std::env::current_exe().unwrap_or_else(|_| {
                     PathBuf::from(if cfg!(windows) {
@@ -181,48 +194,41 @@ impl Plugin for DistantPlugin {
             .map_err(|x| io::Error::new(io::ErrorKind::NotFound, x))?;
 
             // Build our command to run
-            let mut args = vec![
+            let mut cmd_args = vec![
                 String::from("server"),
                 String::from("listen"),
                 String::from("--host"),
-                // Disallow `ssh` from being used as the host
-                config
-                    .distant
-                    .bind_server
-                    .as_ref()
-                    .filter(|x| !x.is_ssh())
-                    .unwrap_or(&BindAddress::Any)
-                    .to_string(),
+                bind_server,
             ];
 
             if let Some(port) = destination.port {
-                args.push("--port".to_string());
-                args.push(port.to_string());
+                cmd_args.push("--port".to_string());
+                cmd_args.push(port.to_string());
             }
 
             // Add any options arguments to the command
-            if let Some(options_args) = config.distant.args {
+            if let Some(options_args) = args {
                 let mut distant_args = options_args.as_str();
 
                 // Detect if our args are wrapped in quotes, and strip the outer quotes
                 loop {
-                    if let Some(args) = distant_args
+                    if let Some(a) = distant_args
                         .strip_prefix('"')
                         .and_then(|s| s.strip_suffix('"'))
                     {
-                        distant_args = args;
-                    } else if let Some(args) = distant_args
+                        distant_args = a;
+                    } else if let Some(a) = distant_args
                         .strip_prefix('\'')
                         .and_then(|s| s.strip_suffix('\''))
                     {
-                        distant_args = args;
+                        distant_args = a;
                     } else {
                         break;
                     }
                 }
 
                 // NOTE: Split arguments based on whether we are running on windows or unix
-                args.extend(if cfg!(windows) {
+                cmd_args.extend(if cfg!(windows) {
                     winsplit::split(distant_args)
                 } else {
                     shell_words::split(distant_args)
@@ -235,7 +241,7 @@ impl Plugin for DistantPlugin {
             let mut command = Command::new(program);
             command
                 .kill_on_drop(true)
-                .args(args)
+                .args(cmd_args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -318,17 +324,11 @@ impl Plugin for DistantPlugin {
     }
 }
 
-// SshPlugin is defined in the distant-ssh crate and re-exported from there.
-// DockerPlugin is defined in the distant-docker crate and re-exported from there.
-
 #[cfg(test)]
 mod tests {
-    //! Tests for handler helpers (`missing`/`invalid`), DistantPlugin,
-    //! ClientLaunchConfig extraction, args quote-stripping, and `bind_server` filtering.
-    //!
-    //! SSH option parsing tests now live in `distant-ssh/src/plugin.rs`.
+    //! Tests for helper functions (`missing`/`invalid`), HostPlugin construction,
+    //! args quote-stripping, and `bind_server` SSH filtering via inline Map extraction.
 
-    use distant_core::net::common::Host;
     use test_log::test;
 
     use super::*;
@@ -351,55 +351,71 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // DistantPlugin::new
+    // HostPlugin::new
     // -------------------------------------------------------
     #[test]
-    fn distant_plugin_new_does_not_panic() {
-        let _plugin = DistantPlugin::new();
+    fn host_plugin_new_does_not_panic() {
+        let _plugin = HostPlugin::new();
     }
 
     // -------------------------------------------------------
-    // DistantPlugin::name
+    // HostPlugin::default
     // -------------------------------------------------------
     #[test]
-    fn distant_plugin_name_is_distant() {
-        let plugin = DistantPlugin::new();
+    fn host_plugin_default_does_not_panic() {
+        let _plugin = HostPlugin::default();
+    }
+
+    // -------------------------------------------------------
+    // HostPlugin::name
+    // -------------------------------------------------------
+    #[test]
+    fn host_plugin_name_is_distant() {
+        let plugin = HostPlugin::new();
         assert_eq!(Plugin::name(&plugin), "distant");
     }
 
     // -------------------------------------------------------
-    // DistantPlugin::shutdown
+    // HostPlugin::shutdown
     // -------------------------------------------------------
     #[test]
-    fn distant_plugin_shutdown_does_not_panic() {
-        let plugin = DistantPlugin::new();
+    fn host_plugin_shutdown_does_not_panic() {
+        let plugin = HostPlugin::new();
         plugin.shutdown();
         // Call twice to ensure idempotent
         plugin.shutdown();
     }
 
     // -------------------------------------------------------
-    // DistantPlugin::drop calls shutdown
+    // HostPlugin::drop calls shutdown
     // -------------------------------------------------------
     #[test]
-    fn distant_plugin_drop_does_not_panic() {
-        let plugin = DistantPlugin::new();
+    fn host_plugin_drop_does_not_panic() {
+        let plugin = HostPlugin::new();
         drop(plugin);
     }
 
     // -------------------------------------------------------
-    // ClientLaunchConfig from options — used in launch path
+    // launch — inline option extraction from Map
     // -------------------------------------------------------
     #[test]
-    fn launch_config_from_options_extracts_distant_fields() {
+    fn launch_options_extract_distant_fields() {
         let mut options = Map::new();
         options.insert("distant.bin".to_string(), "/usr/bin/distant".to_string());
         options.insert("distant.bind_server".to_string(), "127.0.0.1".to_string());
         options.insert("distant.args".to_string(), "--port 8080".to_string());
 
-        let config = ClientLaunchConfig::from(options);
-        assert_eq!(config.distant.bin.as_deref(), Some("/usr/bin/distant"));
-        assert_eq!(config.distant.args.as_deref(), Some("--port 8080"));
+        let bin = options.get("distant.bin").cloned();
+        let bind_server = options
+            .get("distant.bind_server")
+            .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+            .cloned()
+            .unwrap_or_else(|| "any".to_string());
+        let args = options.get("distant.args").cloned();
+
+        assert_eq!(bin.as_deref(), Some("/usr/bin/distant"));
+        assert_eq!(bind_server, "127.0.0.1");
+        assert_eq!(args.as_deref(), Some("--port 8080"));
     }
 
     // -------------------------------------------------------
@@ -409,16 +425,16 @@ mod tests {
     fn args_quote_stripping_double_quotes() {
         let mut distant_args: &str = "\"--port 8080\"";
         loop {
-            if let Some(args) = distant_args
+            if let Some(a) = distant_args
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
             {
-                distant_args = args;
-            } else if let Some(args) = distant_args
+                distant_args = a;
+            } else if let Some(a) = distant_args
                 .strip_prefix('\'')
                 .and_then(|s| s.strip_suffix('\''))
             {
-                distant_args = args;
+                distant_args = a;
             } else {
                 break;
             }
@@ -430,16 +446,16 @@ mod tests {
     fn args_quote_stripping_single_quotes() {
         let mut distant_args: &str = "'--port 8080'";
         loop {
-            if let Some(args) = distant_args
+            if let Some(a) = distant_args
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
             {
-                distant_args = args;
-            } else if let Some(args) = distant_args
+                distant_args = a;
+            } else if let Some(a) = distant_args
                 .strip_prefix('\'')
                 .and_then(|s| s.strip_suffix('\''))
             {
-                distant_args = args;
+                distant_args = a;
             } else {
                 break;
             }
@@ -451,16 +467,16 @@ mod tests {
     fn args_quote_stripping_nested_quotes() {
         let mut distant_args: &str = "\"'--port 8080'\"";
         loop {
-            if let Some(args) = distant_args
+            if let Some(a) = distant_args
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
             {
-                distant_args = args;
-            } else if let Some(args) = distant_args
+                distant_args = a;
+            } else if let Some(a) = distant_args
                 .strip_prefix('\'')
                 .and_then(|s| s.strip_suffix('\''))
             {
-                distant_args = args;
+                distant_args = a;
             } else {
                 break;
             }
@@ -472,16 +488,16 @@ mod tests {
     fn args_quote_stripping_no_quotes() {
         let mut distant_args: &str = "--port 8080";
         loop {
-            if let Some(args) = distant_args
+            if let Some(a) = distant_args
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
             {
-                distant_args = args;
-            } else if let Some(args) = distant_args
+                distant_args = a;
+            } else if let Some(a) = distant_args
                 .strip_prefix('\'')
                 .and_then(|s| s.strip_suffix('\''))
             {
-                distant_args = args;
+                distant_args = a;
             } else {
                 break;
             }
@@ -490,77 +506,56 @@ mod tests {
     }
 
     // -------------------------------------------------------
-    // DistantPlugin — bind_server ssh filtering
+    // bind_server SSH filtering via inline extraction
     // -------------------------------------------------------
     #[test]
     fn bind_server_ssh_is_filtered_to_any() {
-        let bind_server = Some(BindAddress::Ssh);
-        let result = bind_server
-            .as_ref()
-            .filter(|x| !x.is_ssh())
-            .unwrap_or(&BindAddress::Any);
-        assert_eq!(*result, BindAddress::Any);
+        let mut options = Map::new();
+        options.insert("distant.bind_server".to_string(), "ssh".to_string());
+
+        let bind_server = options
+            .get("distant.bind_server")
+            .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+            .cloned()
+            .unwrap_or_else(|| "any".to_string());
+        assert_eq!(bind_server, "any");
     }
 
     #[test]
     fn bind_server_any_is_not_filtered() {
-        let bind_server = Some(BindAddress::Any);
-        let result = bind_server
-            .as_ref()
-            .filter(|x| !x.is_ssh())
-            .unwrap_or(&BindAddress::Any);
-        assert_eq!(*result, BindAddress::Any);
+        let mut options = Map::new();
+        options.insert("distant.bind_server".to_string(), "any".to_string());
+
+        let bind_server = options
+            .get("distant.bind_server")
+            .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+            .cloned()
+            .unwrap_or_else(|| "any".to_string());
+        assert_eq!(bind_server, "any");
     }
 
     #[test]
     fn bind_server_host_is_not_filtered() {
-        let bind_server = Some(BindAddress::Host(Host::Name("example.com".to_string())));
-        let result = bind_server
-            .as_ref()
-            .filter(|x| !x.is_ssh())
-            .unwrap_or(&BindAddress::Any);
-        assert_eq!(
-            *result,
-            BindAddress::Host(Host::Name("example.com".to_string()))
-        );
+        let mut options = Map::new();
+        options.insert("distant.bind_server".to_string(), "example.com".to_string());
+
+        let bind_server = options
+            .get("distant.bind_server")
+            .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+            .cloned()
+            .unwrap_or_else(|| "any".to_string());
+        assert_eq!(bind_server, "example.com");
     }
 
     #[test]
     fn bind_server_none_defaults_to_any() {
-        let bind_server: Option<BindAddress> = None;
-        let result = bind_server
-            .as_ref()
-            .filter(|x| !x.is_ssh())
-            .unwrap_or(&BindAddress::Any);
-        assert_eq!(*result, BindAddress::Any);
-    }
-
-    // -------------------------------------------------------
-    // SshPlugin launch config extraction (timeout parsing)
-    // -------------------------------------------------------
-    #[test]
-    fn ssh_launch_config_timeout_parsing() {
-        let mut options = Map::new();
-        options.insert("timeout".to_string(), "5000".to_string());
-
-        let timeout = match options.get("timeout") {
-            Some(s) => std::time::Duration::from_millis(s.parse::<u64>().unwrap()),
-            None => std::time::Duration::from_secs(15), // default
-        };
-
-        assert_eq!(timeout, std::time::Duration::from_millis(5000));
-    }
-
-    #[test]
-    fn ssh_launch_config_timeout_default() {
         let options = Map::new();
 
-        let default_timeout = std::time::Duration::from_secs(15);
-        let timeout = match options.get("timeout") {
-            Some(s) => std::time::Duration::from_millis(s.parse::<u64>().unwrap()),
-            None => default_timeout,
-        };
-
-        assert_eq!(timeout, default_timeout);
+        let bind_server = options
+            .get("distant.bind_server")
+            .filter(|s| !s.eq_ignore_ascii_case("ssh"))
+            .cloned()
+            .unwrap_or_else(|| "any".to_string());
+        assert_eq!(bind_server, "any");
     }
 }

@@ -27,22 +27,25 @@ static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
     application: String::from("manager"),
 });
 
-mod handlers;
 mod plugins_config;
 
 /// Collect all plugins (built-in + external from config) and register them by scheme.
 /// Returns an error if two plugins claim the same scheme.
+#[allow(clippy::vec_init_then_push)]
 fn build_plugin_map(
     extra_plugins: Vec<(String, PathBuf)>,
 ) -> anyhow::Result<HashMap<String, Arc<dyn Plugin>>> {
     let mut map: HashMap<String, Arc<dyn Plugin>> = HashMap::new();
 
-    // Built-in plugins
+    // Built-in plugins — conditionally populated based on enabled features
     #[allow(unused_mut)]
-    let mut builtins: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(handlers::DistantPlugin::new()),
-        Arc::new(distant_ssh::SshPlugin),
-    ];
+    let mut builtins: Vec<Arc<dyn Plugin>> = Vec::new();
+
+    #[cfg(feature = "host")]
+    builtins.push(Arc::new(distant_host::HostPlugin::new()));
+
+    #[cfg(feature = "ssh")]
+    builtins.push(Arc::new(distant_ssh::SshPlugin));
 
     #[cfg(feature = "docker")]
     builtins.push(Arc::new(distant_docker::DockerPlugin));
@@ -304,11 +307,14 @@ mod tests {
     #[test]
     fn build_plugin_map_with_no_extras_has_builtins() {
         let map = build_plugin_map(Vec::new()).unwrap();
-        // Should contain "distant" and "ssh"
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"), "missing 'distant' scheme");
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"), "missing 'ssh' scheme");
+        let _ = &map; // suppress unused warning when no features enabled
     }
 
+    #[cfg(all(feature = "host", feature = "ssh"))]
     #[test]
     fn build_plugin_map_builtins_have_correct_names() {
         let map = build_plugin_map(Vec::new()).unwrap();
@@ -337,8 +343,9 @@ mod tests {
             PathBuf::from("/usr/local/bin/myplugin"),
         )];
         let map = build_plugin_map(extras).unwrap();
-        // Should contain builtins plus the extra
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"));
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"));
         assert!(map.contains_key("myplugin"), "missing 'myplugin' scheme");
     }
@@ -346,6 +353,7 @@ mod tests {
     // -------------------------------------------------------
     // build_plugin_map — duplicate scheme detection
     // -------------------------------------------------------
+    #[cfg(feature = "ssh")]
     #[test]
     fn build_plugin_map_rejects_duplicate_builtin_scheme() {
         // Trying to register a plugin with scheme "ssh" should fail
@@ -372,7 +380,9 @@ mod tests {
         let map = build_plugin_map(extras).unwrap();
         assert!(map.contains_key("custom"));
         assert!(map.contains_key("k8s"));
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"));
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"));
     }
 }
