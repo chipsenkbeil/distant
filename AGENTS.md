@@ -101,8 +101,10 @@ Each item is tagged with a category:
 1. **(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service integration
    may be incomplete/untested.
 2. **(Acknowledgement)** Windows CI SSH tests have intermittent auth failures
-   from resource contention — mitigated with nextest retries (4x), not
-   root-caused.
+   from resource contention — mitigated with nextest retries (4x). Root cause
+   of the 19/47 consistent failures was nextest `leak-timeout` (100ms period,
+   `result = "fail"`) interfering with sshd child processes on Windows;
+   resolved by removing leak-timeout in eef94df.
 3. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
    (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
    `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
@@ -184,9 +186,13 @@ cargo install --locked cargo-nextest
 cargo nextest run --profile ci --all-features --workspace --all-targets
 ```
 
-The nextest configuration lives in `.config/nextest.toml` and defines SSH test
-throttling (`max-threads = 4` for `distant-ssh` tests), a retry policy (4
-retries), and slow-timeout settings (60s period, terminate after 3 periods).
+The nextest configuration lives in `.config/nextest.toml` and defines two test
+groups: SSH throttling (`max-threads = 4` for `distant-ssh`) and Docker
+throttling (`max-threads = 2` for `distant-docker`). These groups are assigned
+via `[profile.default.overrides]`. The CI profile adds retries (4) and
+slow-timeout (60s period, terminate after 3 periods). Note: `leak-timeout` was
+intentionally removed (eef94df) because it interfered with sshd child processes
+on Windows — do not re-add it.
 
 ## Coding Style & Standards
 
@@ -201,6 +207,18 @@ standards.
 4. **Serialization:** Serde for JSON/TOML, MessagePack for protocol
 5. **CLI:** Clap v4 with derive macros
 6. **Logging:** Use `log` crate macros, configured via `flexi_logger`
+7. **Remote paths:** Use `RemotePath` (not `PathBuf`) in all protocol and API
+   signatures. `RemotePath` is a `String` newtype with no encoding assumptions —
+   each plugin interprets paths in its own context (Docker = always Unix,
+   SSH = auto-detected). Defined in `distant-core/src/protocol/common/remote_path.rs`,
+   re-exported via `distant_core::protocol::RemotePath`.
+8. **Plugin architecture:** Backend integrations implement the `Plugin` trait
+   (`distant_core::Plugin`), which provides `connect()` and optionally
+   `launch()`. Plugins receive raw destination strings (not parsed `Destination`
+   structs), allowing non-standard URI formats like `docker://ubuntu:22.04`.
+   Helpers `extract_scheme()` and `parse_destination()` are re-exported from
+   `distant_core` for standard URI parsing. External process-based plugins use
+   `ProcessPlugin` (see `PLUGINS.md`).
 
 ### Anti-Patterns
 
