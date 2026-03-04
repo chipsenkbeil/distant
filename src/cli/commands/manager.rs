@@ -27,7 +27,7 @@ static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
     application: String::from("manager"),
 });
 
-mod plugins_config;
+mod plugins;
 
 /// Collect all plugins (built-in + external from config) and register them by scheme.
 /// Returns an error if two plugins claim the same scheme.
@@ -38,20 +38,17 @@ fn build_plugin_map(
     let mut map: HashMap<String, Arc<dyn Plugin>> = HashMap::new();
 
     // Built-in plugins — conditionally populated based on enabled features
-    #[allow(unused_mut)]
-    let mut builtins: Vec<Arc<dyn Plugin>> = Vec::new();
-
-    #[cfg(feature = "host")]
-    builtins.push(Arc::new(distant_host::HostPlugin::new()));
-
-    #[cfg(feature = "ssh")]
-    builtins.push(Arc::new(distant_ssh::SshPlugin));
-
-    #[cfg(feature = "docker")]
-    builtins.push(Arc::new(distant_docker::DockerPlugin));
+    let builtins: Vec<Arc<dyn Plugin>> = vec![
+        #[cfg(feature = "host")]
+        Arc::new(distant_host::HostPlugin::new()),
+        #[cfg(feature = "ssh")]
+        Arc::new(distant_ssh::SshPlugin),
+        #[cfg(feature = "docker")]
+        Arc::new(distant_docker::DockerPlugin),
+    ];
 
     // External plugins from config file + CLI flags
-    let external = plugins_config::load_external_plugins(extra_plugins)?;
+    let external = plugins::load_external_plugins(extra_plugins)?;
 
     let all_plugins = builtins.into_iter().chain(external);
 
