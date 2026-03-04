@@ -158,34 +158,143 @@ pub async fn query_shell(handle: &Handle<ClientHandler>, is_windows: bool) -> io
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Determines if using windows by checking the OS environment variable
-pub async fn is_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
-    let output = powershell_output(
-        handle,
-        "[Environment]::GetEnvironmentVariable('OS')",
-        SSH_EXEC_TIMEOUT,
-    )
-    .await?;
+/// Returns `true` if `slice` contains `subslice` as a contiguous subsequence.
+fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+    if subslice.is_empty() {
+        return true;
+    }
+    slice.windows(subslice.len()).any(|w| w == subslice)
+}
 
-    fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
-        if subslice.is_empty() {
-            return true;
+/// Returns `true` if the path starts with a Windows drive letter prefix (`/X:/`).
+///
+/// SFTP servers on Windows return canonical paths like `/C:/Users/foo`,
+/// while Unix servers return standard paths like `/home/user`.
+fn has_windows_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 4
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && bytes[3] == b'/'
+}
+
+/// Determines if the remote system is Windows.
+///
+/// Uses a layered detection strategy:
+/// 1. **SSH identification string** — checks for "Windows" (e.g. `OpenSSH_for_Windows`).
+///    Zero cost: already captured during key exchange, no channels needed.
+/// 2. **SFTP `canonicalize(".")`** — checks for a Windows drive letter prefix (`/C:/...`).
+///    Reliable fallback that avoids shell execution entirely.
+/// 3. **Exec fallback** — `echo %OS%` (cmd.exe) then PowerShell as a safety net.
+pub async fn is_windows(
+    handle: &Handle<ClientHandler>,
+    remote_sshid: Option<&str>,
+) -> io::Result<bool> {
+    // Layer 1: SSH identification string (zero cost, already captured).
+    if let Some(sshid) = remote_sshid {
+        let sshid_lower = sshid.to_lowercase();
+        if sshid_lower.contains("windows") {
+            log::debug!("Windows detected via SSH ID: {sshid}");
+            return Ok(true);
         }
-        for i in 0..slice.len() {
-            if i + subslice.len() > slice.len() {
-                break;
-            }
-
-            if slice[i..].starts_with(subslice) {
-                return true;
-            }
-        }
-
-        false
+        // SSH ID is present but doesn't contain "windows" — could be standard
+        // OpenSSH on Unix, or a Windows server with a custom/stripped banner.
+        // Fall through to SFTP.
     }
 
-    Ok(contains_subslice(&output.stdout, b"Windows_NT")
-        || contains_subslice(&output.stderr, b"Windows_NT"))
+    // Layer 2: SFTP-based detection (no exec, no shell dependency).
+    let sftp_result: Result<bool, io::Error> = async {
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(io::Error::other)?;
+
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(io::Error::other)?;
+
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(io::Error::other)?;
+
+        let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
+        log::debug!("SFTP canonicalize(\".\") returned: {home}");
+        Ok(has_windows_drive_prefix(&home))
+    }
+    .await;
+
+    match sftp_result {
+        Ok(result) => {
+            log::debug!("Windows detected via SFTP: {result}");
+            return Ok(result);
+        }
+        Err(e) => {
+            log::debug!("SFTP-based Windows detection failed ({e}), falling back to exec");
+        }
+    }
+
+    // Layer 3: parallel exec fallback (safety net).
+    // Run cmd.exe and PowerShell probes concurrently — return as soon as
+    // either confirms Windows.
+    exec_detect_windows(handle).await
+}
+
+/// Run `echo %OS%` and PowerShell OS detection in parallel.
+///
+/// Returns `Ok(true)` as soon as either probe outputs `Windows_NT`.
+/// If both complete without a match, returns `Ok(false)`.
+/// Only returns `Err` if *both* probes fail.
+async fn exec_detect_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
+    let timeout = Some(Duration::from_secs(10));
+
+    let is_win = |out: &ExecOutput| {
+        contains_subslice(&out.stdout, b"Windows_NT")
+            || contains_subslice(&out.stderr, b"Windows_NT")
+    };
+
+    let mut echo_fut = std::pin::pin!(execute_output(handle, "echo %OS%", timeout));
+    let mut ps_fut = std::pin::pin!(powershell_output(
+        handle,
+        "[Environment]::GetEnvironmentVariable('OS')",
+        timeout,
+    ));
+
+    // Wait for whichever finishes first. Both arms return the same type
+    // (Result + bool flag) so the match is well-typed.
+    let (first_result, echo_finished) = tokio::select! {
+        result = &mut echo_fut => (result, true),
+        result = &mut ps_fut => (result, false),
+    };
+
+    // If the first result matched Windows, return immediately.
+    if let Ok(ref output) = first_result
+        && is_win(output)
+    {
+        log::debug!("Windows detected via exec (first probe)");
+        return Ok(true);
+    }
+
+    // First didn't match or errored — await the second.
+    let second_result = if echo_finished {
+        ps_fut.await
+    } else {
+        echo_fut.await
+    };
+
+    if let Ok(ref output) = second_result
+        && is_win(output)
+    {
+        log::debug!("Windows detected via exec (second probe)");
+        return Ok(true);
+    }
+
+    // Neither matched Windows_NT. If both errored, propagate.
+    match (first_result, second_result) {
+        (Err(e1), Err(_)) => Err(e1),
+        _ => Ok(false),
+    }
 }
 
 /// An owned path in SFTP wire format, aware of the remote platform.
@@ -366,12 +475,8 @@ impl From<SftpPathBuf> for String {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for utility functions: `ExecOutput` Debug/equality behavior, constants, and
-    //! `contains_subslice`.
-    //!
-    //! The `contains_subslice` function is replicated from the private function
-    //! defined inside `is_windows()`, since it is not directly accessible from test
-    //! code. If the production function diverges, these tests will not detect it.
+    //! Tests for utility functions: `ExecOutput` Debug/equality behavior, constants,
+    //! `contains_subslice`, `has_windows_drive_prefix`, and `SftpPathBuf`.
 
     use super::*;
 
@@ -682,24 +787,10 @@ mod tests {
     }
 
     // --- contains_subslice logic tests ---
-    // Replicate the contains_subslice function from is_windows for testing
+    // Uses the module-level contains_subslice function directly.
 
-    fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
-        if subslice.is_empty() {
-            return true;
-        }
-        for i in 0..slice.len() {
-            if i + subslice.len() > slice.len() {
-                break;
-            }
-
-            if slice[i..].starts_with(subslice) {
-                return true;
-            }
-        }
-
-        false
-    }
+    use super::contains_subslice;
+    use super::has_windows_drive_prefix;
 
     #[test]
     fn contains_subslice_finds_at_start() {
@@ -1035,5 +1126,52 @@ mod tests {
         let p = SftpPathBuf::from_sftp("/home/user", SshFamily::Unix);
         let s: String = p.into();
         assert_eq!(s, "/home/user");
+    }
+
+    // --- has_windows_drive_prefix tests ---
+
+    #[test]
+    fn drive_prefix_typical_windows_path() {
+        assert!(has_windows_drive_prefix("/C:/Users/foo"));
+    }
+
+    #[test]
+    fn drive_prefix_lowercase_drive() {
+        assert!(has_windows_drive_prefix("/c:/Users/foo"));
+    }
+
+    #[test]
+    fn drive_prefix_d_drive() {
+        assert!(has_windows_drive_prefix("/D:/Data"));
+    }
+
+    #[test]
+    fn drive_prefix_unix_path() {
+        assert!(!has_windows_drive_prefix("/home/user"));
+    }
+
+    #[test]
+    fn drive_prefix_short_path() {
+        assert!(!has_windows_drive_prefix("/C:"));
+    }
+
+    #[test]
+    fn drive_prefix_no_leading_slash() {
+        assert!(!has_windows_drive_prefix("C:/Users"));
+    }
+
+    #[test]
+    fn drive_prefix_digit_not_letter() {
+        assert!(!has_windows_drive_prefix("/1:/foo"));
+    }
+
+    #[test]
+    fn drive_prefix_empty() {
+        assert!(!has_windows_drive_prefix(""));
+    }
+
+    #[test]
+    fn drive_prefix_exactly_four_chars() {
+        assert!(has_windows_drive_prefix("/Z:/x"));
     }
 }
