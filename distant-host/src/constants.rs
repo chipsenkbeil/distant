@@ -12,3 +12,7 @@ pub const MAX_PIPE_CHUNK_SIZE: usize = 16384;
 /// Duration in milliseconds to sleep between reading stdout/stderr chunks
 /// to avoid sending many small messages to clients
 pub const READ_PAUSE_DURATION: Duration = Duration::from_millis(1);
+
+/// Maximum time to wait for stdout/stderr to drain after a process exits.
+/// Guards against Windows ConPTY readers that may never signal EOF.
+pub const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);

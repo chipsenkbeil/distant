@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use crate::api::process::{
     InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
 };
+use crate::constants::OUTPUT_DRAIN_TIMEOUT;
 
 /// Holds information related to a spawned process on the server
 pub struct ProcessInstance {
@@ -45,6 +46,9 @@ impl Drop for ProcessInstance {
             if let Err(x) = killer.kill().await {
                 error!("Failed to kill process {} when dropped: {}", id, x);
 
+                // stdout/stderr tasks are now owned by wait_task, so aborting
+                // wait_task drops their JoinHandles (the underlying tasks exit
+                // naturally when I/O sources close after the process is killed)
                 if let Some(task) = stdout_task.as_ref() {
                     task.abort();
                 }
@@ -129,9 +133,15 @@ impl ProcessInstance {
             None => None,
         };
 
-        // Spawn a task that waits on the process to exit but can also
-        // kill the process when triggered
-        let wait_task = Some(tokio::spawn(wait_task(id, child, reply)));
+        // Spawn a task that waits on the process to exit, then drains
+        // stdout/stderr before sending ProcDone
+        let wait_task = Some(tokio::spawn(wait_task(
+            id,
+            child,
+            reply,
+            stdout_task,
+            stderr_task,
+        )));
 
         Ok(ProcessInstance {
             cmd,
@@ -140,8 +150,9 @@ impl ProcessInstance {
             stdin,
             killer,
             pty,
-            stdout_task,
-            stderr_task,
+            // stdout/stderr tasks are now owned by wait_task
+            stdout_task: None,
+            stderr_task: None,
             wait_task,
         })
     }
@@ -199,8 +210,22 @@ async fn wait_task(
     id: ProcessId,
     mut child: Box<dyn Process>,
     reply: Box<dyn Reply<Data = Response>>,
+    stdout_task: Option<JoinHandle<io::Result<()>>>,
+    stderr_task: Option<JoinHandle<io::Result<()>>>,
 ) -> io::Result<()> {
     let status = child.wait().await;
+
+    // Wait for output tasks to finish draining before sending ProcDone.
+    // Timeout guards against Windows ConPTY readers that may never EOF.
+    let drain = async {
+        if let Some(task) = stdout_task {
+            let _ = task.await;
+        }
+        if let Some(task) = stderr_task {
+            let _ = task.await;
+        }
+    };
+    let _ = tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, drain).await;
 
     match status {
         Ok(status) => reply.send(Response::ProcDone {
@@ -219,7 +244,9 @@ mod tests {
     //! current_dir, PTY spawn, and the Drop-based kill behavior.
 
     use super::*;
+    use crate::api::process::{ExitStatus, FutureReturn, NoProcessPty};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use test_log::test;
     use tokio::sync::mpsc;
 
@@ -707,5 +734,129 @@ mod tests {
             }
         }
         assert!(got_done, "Never received ProcDone after dropping instance");
+    }
+
+    // ---- race condition regression test ----
+
+    /// Output channel that yields one chunk after a delay, then EOF.
+    struct DelayedOutput {
+        data: Option<Vec<u8>>,
+        delay: Duration,
+    }
+
+    impl OutputChannel for DelayedOutput {
+        fn recv(&mut self) -> FutureReturn<'_, io::Result<Option<Vec<u8>>>> {
+            Box::pin(async move {
+                tokio::time::sleep(self.delay).await;
+                Ok(self.data.take())
+            })
+        }
+    }
+
+    /// Process that exits immediately with success.
+    struct InstantExitProcess {
+        id: ProcessId,
+    }
+
+    impl NoProcessPty for InstantExitProcess {}
+
+    impl ProcessKiller for InstantExitProcess {
+        fn kill(&mut self) -> FutureReturn<'_, io::Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn clone_killer(&self) -> Box<dyn ProcessKiller> {
+            let (tx, _rx) = mpsc::channel(1);
+            Box::new(tx)
+        }
+    }
+
+    impl Process for InstantExitProcess {
+        fn id(&self) -> ProcessId {
+            self.id
+        }
+
+        fn wait(&mut self) -> FutureReturn<'_, io::Result<ExitStatus>> {
+            Box::pin(async {
+                Ok(ExitStatus {
+                    success: true,
+                    code: Some(0),
+                })
+            })
+        }
+
+        fn stdin(&self) -> Option<&dyn InputChannel> {
+            None
+        }
+
+        fn mut_stdin(&mut self) -> Option<&mut (dyn InputChannel + 'static)> {
+            None
+        }
+
+        fn take_stdin(&mut self) -> Option<Box<dyn InputChannel>> {
+            None
+        }
+
+        fn stdout(&self) -> Option<&dyn OutputChannel> {
+            None
+        }
+
+        fn mut_stdout(&mut self) -> Option<&mut (dyn OutputChannel + 'static)> {
+            None
+        }
+
+        fn take_stdout(&mut self) -> Option<Box<dyn OutputChannel>> {
+            None
+        }
+
+        fn stderr(&self) -> Option<&dyn OutputChannel> {
+            None
+        }
+
+        fn mut_stderr(&mut self) -> Option<&mut (dyn OutputChannel + 'static)> {
+            None
+        }
+
+        fn take_stderr(&mut self) -> Option<Box<dyn OutputChannel>> {
+            None
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn proc_done_waits_for_delayed_stdout_to_drain() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        // Stdout with 200ms delay — simulates slow PTY reader
+        let delayed: Box<dyn OutputChannel> = Box::new(DelayedOutput {
+            data: Some(b"delayed_data".to_vec()),
+            delay: Duration::from_millis(200),
+        });
+        let stdout_handle = tokio::spawn(stdout_task(42, delayed, Box::new(tx.clone())));
+
+        // Process exits instantly (no delay)
+        let child: Box<dyn Process> = Box::new(InstantExitProcess { id: 42 });
+
+        // wait_task should await stdout_handle before sending ProcDone
+        let _ = wait_task(42, child, Box::new(tx), Some(stdout_handle), None).await;
+
+        // Collect all responses
+        let mut responses = Vec::new();
+        while let Ok(resp) = rx.try_recv() {
+            responses.push(resp);
+        }
+
+        let stdout_idx = responses
+            .iter()
+            .position(|r| matches!(r, Response::ProcStdout { .. }));
+        let done_idx = responses
+            .iter()
+            .position(|r| matches!(r, Response::ProcDone { .. }));
+
+        assert!(stdout_idx.is_some(), "Missing ProcStdout");
+        assert!(done_idx.is_some(), "Missing ProcDone");
+        assert!(
+            stdout_idx.unwrap() < done_idx.unwrap(),
+            "ProcStdout must arrive before ProcDone"
+        );
     }
 }

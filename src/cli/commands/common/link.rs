@@ -10,6 +10,9 @@ use tokio::task::JoinHandle;
 
 use super::stdin;
 
+/// Maximum time to wait for stdout/stderr to drain after process exit.
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Represents a link between a remote process' stdin/stdout/stderr and this process'
 /// stdin/stdout/stderr
 pub struct RemoteProcessLink {
@@ -122,11 +125,14 @@ impl RemoteProcessLink {
             let _ = self.stdout_task.await;
             let _ = self.stderr_task.await;
         };
-        if tokio::time::timeout(Duration::from_secs(5), drain)
+        if tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, drain)
             .await
             .is_err()
         {
-            warn!("stdout/stderr drain timed out after 5s");
+            warn!(
+                "stdout/stderr drain timed out after {}s",
+                OUTPUT_DRAIN_TIMEOUT.as_secs()
+            );
         }
     }
 }
