@@ -632,7 +632,7 @@ impl DistantApi for Api {
             arch: env::consts::ARCH.to_string(),
             current_dir: RemotePath::from(env::current_dir().unwrap_or_default()),
             main_separator: std::path::MAIN_SEPARATOR,
-            username: whoami::username(),
+            username: whoami::username().unwrap_or_default(),
             shell: if cfg!(windows) {
                 env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
             } else {
@@ -2786,7 +2786,7 @@ mod tests {
                 arch: std::env::consts::ARCH.to_string(),
                 current_dir: RemotePath::from(std::env::current_dir().unwrap_or_default()),
                 main_separator: std::path::MAIN_SEPARATOR,
-                username: whoami::username(),
+                username: whoami::username().unwrap_or_default(),
                 shell: if cfg!(windows) {
                     std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
                 } else {

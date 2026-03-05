@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use derive_more::{Deref, DerefMut, IntoIterator};
 use serde::{Deserialize, Serialize};
-use strum::{EnumString, EnumVariantNames, VariantNames};
+use strum::{EnumString, VariantNames};
 
 use super::RemotePath;
 
@@ -84,7 +84,7 @@ pub enum ChangeDetailsAttribute {
     Debug,
     strum::Display,
     EnumString,
-    EnumVariantNames,
+    VariantNames,
     Hash,
     PartialEq,
     Eq,

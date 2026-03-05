@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize, de};
 /// Represents some range of ports
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
 #[display(
-    fmt = "{}{}",
+    "{}{}",
     start,
-    "end.as_ref().map(|end| format!(\":{}\", end)).unwrap_or_default()"
+    end.as_ref().map(|end| format!(":{}", end)).unwrap_or_default()
 )]
 pub struct PortRange {
     pub start: u16,

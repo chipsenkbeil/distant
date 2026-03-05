@@ -11,11 +11,11 @@ use crate::net::common::{SecretKey, SecretKey32};
 )]
 pub enum EncryptionType {
     /// ChaCha20Poly1305 variant with an extended 192-bit (24-byte) nonce
-    #[display(fmt = "xchacha20poly1305")]
+    #[display("xchacha20poly1305")]
     XChaCha20Poly1305,
 
     /// Indicates an unknown encryption type for use in handshakes
-    #[display(fmt = "unknown")]
+    #[display("unknown")]
     #[serde(other)]
     Unknown,
 }

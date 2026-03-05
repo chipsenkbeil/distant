@@ -37,37 +37,37 @@ host = ["dep:distant-host"]
 ssh = ["dep:distant-ssh"]
 
 [dependencies]
-anyhow = "1.0.71"
-clap = { version = "4.3.0", features = ["derive"] }
-clap_complete = "4.3.0"
-console = "0.15"
-config = { version = "0.13.3", default-features = false, features = ["toml"] }
-derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
-dialoguer = { version = "0.10.4", default-features = false }
+anyhow = "1.0.102"
+clap = { version = "4.5.60", features = ["derive"] }
+clap_complete = "4.5.66"
+console = "0.16.2"
+config = { version = "0.15.19", default-features = false, features = ["toml"] }
+derive_more = { version = "2.1.1", default-features = false, features = ["display", "from", "error", "is_variant"] }
+dialoguer = { version = "0.12.0", default-features = false }
 distant-core = { version = "=0.20.0", path = "distant-core" }
 distant-host = { version = "=0.20.0", path = "distant-host", optional = true }
 directories = "5.0.1"
 file-mode = "0.1.2"
-flexi_logger = "0.25.5"
+flexi_logger = "0.31.8"
 indicatif = "0.17"
-indoc = "2.0.1"
-log = "0.4.18"
-once_cell = "1.17.2"
-rand = { version = "0.8.5", features = ["getrandom"] }
-rpassword = "7.2.0"
-serde = { version = "1.0.163", features = ["derive"] }
-serde_json = "1.0.96"
-shell-words = "1.1.0"
-service-manager = { version = "0.2.0", features = ["clap", "serde"] }
-tabled = "0.12.0"
-tokio = { version = "1.28.2", features = ["full"] }
-toml_edit = { version = "0.19.10", features = ["serde"] }
+indoc = "2.0.7"
+log = "0.4.29"
+once_cell = "1.21.3"
+rand = "0.8.5"
+rpassword = "7.4.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+shell-words = "1.1.1"
+service-manager = { version = "0.11.0", features = ["clap", "serde"] }
+tabled = "0.20.0"
+tokio = { version = "1.50.0", features = ["full"] }
+toml_edit = { version = "0.25.4", features = ["serde"] }
 terminal_size = "0.2.6"
-termwiz = "0.20.0"
-typed-path = "0.3.2"
-which = "4.4.0"
+termwiz = "0.23.3"
+typed-path = "0.12.3"
+which = "8.0.0"
 winsplit = "0.1.0"
-whoami = "1.4.0"
+whoami = "2.1.1"
 
 # Optional Docker backend
 distant-docker = { version = "=0.20.0", path = "distant-docker", optional = true }
@@ -76,25 +76,25 @@ distant-docker = { version = "=0.20.0", path = "distant-docker", optional = true
 distant-ssh = { version = "=0.20.0", path = "distant-ssh", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-fork = "0.1.21"
+fork = "0.1.23"
 
 [target.'cfg(windows)'.dependencies]
-sysinfo = "0.29.0"
-windows-service = "0.6.0"
+sysinfo = "0.33.0"
+windows-service = "0.8.0"
 
 [dev-dependencies]
 assert_cmd = "2.1"
-assert_fs = "1.0.13"
+assert_fs = "1.1.3"
 distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
-env_logger = "0.10.0"
+env_logger = "0.11.9"
 expectrl = "0.8"
-indoc = "2.0.1"
+indoc = "2.0.7"
 once_cell = "1"
-predicates = "3.0.3"
+predicates = "3.1.4"
 regex = "1"
-rstest = "0.17.0"
+rstest = "0.26.1"
 serde_json = "1"
-test-log = "0.2.11"
+test-log = "0.2.19"
 toml = "0.7"
 
 [lints.rust]

@@ -14,31 +14,31 @@ license = "MIT OR Apache-2.0"
 default = []
 
 [dependencies]
-async-once-cell = "0.5.2"
+async-once-cell = "0.5.4"
 bollard = "0.20"
 bytes = "1"
-derive_more = { version = "0.99.17", default-features = false, features = ["display", "error"] }
+derive_more = { version = "2.1.1", default-features = false, features = ["display", "error"] }
 distant-core = { version = "=0.20.0", path = "../distant-core" }
-futures = "0.3.28"
-log = "0.4.18"
-rand = { version = "0.8.5", features = ["getrandom"] }
+futures = "0.3.32"
+log = "0.4.29"
+rand = "0.8.5"
 semver = "1"
 shlex = "1.3"
 tar = "0.4"
-tokio = { version = "1.28.2", features = ["full"] }
+tokio = { version = "1.50.0", features = ["full"] }
 
 # Optional serde support for data structures
-serde = { version = "1.0.163", features = ["derive"], optional = true }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
 
 [dev-dependencies]
-anyhow = "1.0.71"
-assert_fs = "1.0.13"
+anyhow = "1.0.102"
+assert_fs = "1.1.3"
 distant-test-harness = { path = "../distant-test-harness", features = ["docker"] }
-env_logger = "0.10.0"
-once_cell = "1.17.2"
-predicates = "3.0.3"
-rstest = "0.17.0"
-test-log = "0.2.11"
+env_logger = "0.11.9"
+once_cell = "1.21.3"
+predicates = "3.1.4"
+rstest = "0.26.1"
+test-log = "0.2.19"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }

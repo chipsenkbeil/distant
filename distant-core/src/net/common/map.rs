@@ -114,13 +114,13 @@ impl fmt::Display for Map {
 
 #[derive(Clone, Debug, Display, Error)]
 pub enum MapParseError {
-    #[display(fmt = "Missing = after key ('{key}')")]
+    #[display("Missing = after key ('{key}')")]
     MissingEqualsAfterKey { key: String },
 
-    #[display(fmt = "Key ('{key}') must start with alphabetic character")]
+    #[display("Key ('{key}') must start with alphabetic character")]
     KeyMustStartWithAlphabeticCharacter { key: String },
 
-    #[display(fmt = "Missing closing \" for value")]
+    #[display("Missing closing \" for value")]
     MissingClosingQuoteForValue,
 }
 

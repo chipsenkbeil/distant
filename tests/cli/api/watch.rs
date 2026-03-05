@@ -115,38 +115,30 @@ async fn should_support_json_watching_directory_recursively(
     // Make a change to some file
     file.write_str("some text").unwrap();
 
-    // Windows reports a directory change first
-    if cfg!(windows) {
-        // Pause a bit to ensure that the process detected the change and reported it
+    // Build the platform-specific list of expected change paths.
+    // Linux and Windows emit a directory change before the file change;
+    // macOS (FSEvents) only emits the file change.
+    let mut expected: Vec<serde_json::Value> = Vec::new();
+    if cfg!(not(target_os = "macos")) {
+        expected.push(json!(dir.to_path_buf().canonicalize().unwrap()));
+    }
+    expected.push(json!(file.to_path_buf().canonicalize().unwrap()));
+
+    // Collect events, removing each from `expected` as it arrives.
+    // Uses the process's built-in read timeout to avoid hanging.
+    while !expected.is_empty() {
         wait_even_longer().await;
 
-        // Get the response and verify the change
         // NOTE: Don't bother checking the kind as it can vary by platform
         let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
-
         assert_eq!(res["origin_id"], id, "JSON: {res}");
         assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
-        assert_eq!(
-            res["payload"]["path"],
-            json!(dir.to_path_buf().canonicalize().unwrap()),
-            "JSON: {res}"
-        );
+
+        let path = &res["payload"]["path"];
+        if let Some(pos) = expected.iter().position(|p| p == path) {
+            expected.remove(pos);
+        }
     }
-
-    // Pause a bit to ensure that the process detected the change and reported it
-    wait_even_longer().await;
-
-    // Get the response and verify the change
-    // NOTE: Don't bother checking the kind as it can vary by platform
-    let res = api_process.read_json_from_stdout().await.unwrap().unwrap();
-
-    assert_eq!(res["origin_id"], id, "JSON: {res}");
-    assert_eq!(res["payload"]["type"], "changed", "JSON: {res}");
-    assert_eq!(
-        res["payload"]["path"],
-        json!(file.to_path_buf().canonicalize().unwrap()),
-        "JSON: {res}"
-    );
 }
 
 #[rstest]

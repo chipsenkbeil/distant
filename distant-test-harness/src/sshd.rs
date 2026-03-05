@@ -40,7 +40,7 @@ static BIN_PATH: Lazy<PathBuf> =
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
-pub static USERNAME: Lazy<String> = Lazy::new(whoami::username);
+pub static USERNAME: Lazy<String> = Lazy::new(|| whoami::username().unwrap_or_default());
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
 const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
@@ -53,7 +53,7 @@ const SPAWN_RETRY_CNT: usize = 3;
 /// In non-admin contexts, additively grants permissions without stripping inherited ones.
 #[cfg(windows)]
 fn set_windows_file_permissions(path: &Path) {
-    let current_user = whoami::username();
+    let current_user = whoami::username().unwrap_or_else(|_| String::from("unknown"));
     let path_str = path.to_string_lossy();
 
     // Try to set SYSTEM ownership — only works as admin
@@ -170,23 +170,23 @@ impl SshKeygen {
 #[allow(dead_code)]
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Hash)]
 pub enum SshdLogLevel {
-    #[display(fmt = "QUIET")]
+    #[display("QUIET")]
     Quiet,
-    #[display(fmt = "FATAL")]
+    #[display("FATAL")]
     Fatal,
-    #[display(fmt = "ERROR")]
+    #[display("ERROR")]
     Error,
-    #[display(fmt = "INFO")]
+    #[display("INFO")]
     Info,
-    #[display(fmt = "VERBOSE")]
+    #[display("VERBOSE")]
     Verbose,
-    #[display(fmt = "DEBUG")]
+    #[display("DEBUG")]
     Debug,
-    #[display(fmt = "DEBUG1")]
+    #[display("DEBUG1")]
     Debug1,
-    #[display(fmt = "DEBUG2")]
+    #[display("DEBUG2")]
     Debug2,
-    #[display(fmt = "DEBUG3")]
+    #[display("DEBUG3")]
     Debug3,
 }
 

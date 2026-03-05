@@ -114,11 +114,11 @@ pub struct VerificationResponse {
 #[serde(rename_all = "snake_case")]
 pub enum VerificationKind {
     /// An ask to verify the host such as with SSH
-    #[display(fmt = "host")]
+    #[display("host")]
     Host,
 
     /// When the verification is unknown (happens when other side is unaware of the kind)
-    #[display(fmt = "unknown")]
+    #[display("unknown")]
     #[serde(other)]
     Unknown,
 }
@@ -159,7 +159,7 @@ impl Question {
 
 /// Represents some error that occurred during authentication
 #[derive(Clone, Debug, Display, Error, PartialEq, Eq, Serialize, Deserialize)]
-#[display(fmt = "{kind}: {text}")]
+#[display("{kind}: {text}")]
 pub struct Error {
     /// Represents the kind of error
     pub kind: ErrorKind,

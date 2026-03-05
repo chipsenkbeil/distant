@@ -35,15 +35,15 @@ impl Default for ServerConfig {
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
 pub enum Shutdown {
     /// Server should shutdown immediately after duration exceeded
-    #[display(fmt = "after={}", "_0.as_secs_f32()")]
+    #[display("after={}", _0.as_secs_f32())]
     After(Duration),
 
     /// Server should shutdown after no connections for over duration time
-    #[display(fmt = "lonely={}", "_0.as_secs_f32()")]
+    #[display("lonely={}", _0.as_secs_f32())]
     Lonely(Duration),
 
     /// No shutdown logic will be applied to the server
-    #[display(fmt = "never")]
+    #[display("never")]
     Never,
 }
 
@@ -67,16 +67,16 @@ impl Default for Shutdown {
 /// Parsing errors that can occur for [`Shutdown`]
 #[derive(Clone, Debug, Display, Error, PartialEq, Eq)]
 pub enum ShutdownParseError {
-    #[display(fmt = "Bad value for after: {_0}")]
+    #[display("Bad value for after: {_0}")]
     BadValueForAfter(ParseFloatError),
 
-    #[display(fmt = "Bad value for lonely: {_0}")]
+    #[display("Bad value for lonely: {_0}")]
     BadValueForLonely(ParseFloatError),
 
-    #[display(fmt = "Missing key")]
+    #[display("Missing key")]
     MissingKey,
 
-    #[display(fmt = "Unknown key")]
+    #[display("Unknown key")]
     UnknownKey,
 }
 

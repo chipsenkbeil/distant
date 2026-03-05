@@ -356,7 +356,7 @@ impl Ssh {
             .user
             .clone()
             .or(ssh_config.user.clone())
-            .unwrap_or_else(whoami::username);
+            .unwrap_or_else(|| whoami::username().unwrap_or_default());
 
         info!(
             "SSH connection attempt: {}:{} as user '{}'",

@@ -58,7 +58,7 @@ pub mod user {
     /// * `/tmp/{user}.distant.dock` on MacOS
     pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
         // Form of {user}.distant.sock
-        let mut file_name = whoami::username_os();
+        let mut file_name = whoami::username_os().unwrap_or_else(|_| "unknown".into());
         file_name.push(".");
         file_name.push(SOCKET_FILE_STR);
 
@@ -70,8 +70,12 @@ pub mod user {
     });
 
     /// Name of the pipe used by Windows in the form of `{user}.distant`
-    pub static WINDOWS_PIPE_NAME: Lazy<String> =
-        Lazy::new(|| format!("{}.distant", whoami::username()));
+    pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| {
+        format!(
+            "{}.distant",
+            whoami::username().unwrap_or_else(|_| String::from("unknown"))
+        )
+    });
 }
 
 /// Global paths.
