@@ -428,7 +428,7 @@ mod tests {
 
         // Spawn a long-running process
         let cmd = if cfg!(windows) {
-            "cmd /C ping -n 100 127.0.0.1".to_string()
+            "ping -n 100 127.0.0.1".to_string()
         } else {
             "sleep 60".to_string()
         };
