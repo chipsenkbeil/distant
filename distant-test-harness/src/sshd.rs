@@ -798,14 +798,18 @@ impl Drop for Sshd {
     fn drop(&mut self) {
         debug!("Dropping sshd on port {}", self.port);
 
-        // Capture sshd log before killing — the log file lives inside `self.tmp`
-        // which will be deleted when the `TempDir` drops.
-        self.print_log_file();
-
+        // Kill sshd BEFORE reading the log file. On Windows, sshd holds an
+        // exclusive lock on its log file while running (os error 32).
+        // kill_process_tree() calls child.wait(), guaranteeing the process
+        // has exited and released the lock before we try to read.
         if let Some(mut child) = self.child.lock().unwrap().take() {
             kill_process_tree(&mut child);
             debug!("Sshd on port {} finished", self.port);
         }
+
+        // Log file is inside self.tmp (TempDir). Since we have a manual Drop
+        // impl, struct fields drop AFTER this method returns, so tmp still exists.
+        self.print_log_file();
     }
 }
 
