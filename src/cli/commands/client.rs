@@ -2484,7 +2484,7 @@ mod tests {
 
         fn make_version(caps: Vec<&str>) -> Version {
             Version {
-                server_version: "0.21.0".parse().unwrap(),
+                server_version: env!("CARGO_PKG_VERSION").parse().unwrap(),
                 protocol_version: "0.1.0".parse().unwrap(),
                 capabilities: caps.into_iter().map(String::from).collect(),
             }
@@ -2502,7 +2502,7 @@ mod tests {
         fn includes_server_version_line() {
             let version = make_version(vec![]);
             let output = format_version_shell(&version).unwrap();
-            assert!(output.contains("Server: 0.21.0"));
+            assert!(output.contains(&format!("Server: {}", env!("CARGO_PKG_VERSION"))));
             assert!(output.contains("Protocol 0.1.0"));
         }
 

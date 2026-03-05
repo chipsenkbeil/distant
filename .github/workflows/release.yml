@@ -5,7 +5,7 @@ on:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+
       - v[0-9]+.[0-9]+.[0-9]+-**
-      - latest
+      - nightly
 
 # Status of Targets:
 #
@@ -44,6 +44,13 @@ jobs:
           - aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp nightly version
+        if: github.ref == 'refs/tags/nightly'
+        shell: bash
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          find . -name 'Cargo.toml' -not -path './target/*' -exec \
+            perl -i -pe "s/-dev\"/-nightly.$DATE\"/g" {} +
       - name: Install Rust (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@master
         with:
@@ -94,6 +101,13 @@ jobs:
           - aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp nightly version
+        if: github.ref == 'refs/tags/nightly'
+        shell: bash
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          find . -name 'Cargo.toml' -not -path './target/*' -exec \
+            perl -i -pe "s/-dev\"/-nightly.$DATE\"/g" {} +
       - name: Install Rust (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@master
         with:
@@ -149,6 +163,13 @@ jobs:
               tar xz -C $HOME/.cargo/bin
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp nightly version
+        if: github.ref == 'refs/tags/nightly'
+        shell: bash
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          find . -name 'Cargo.toml' -not -path './target/*' -exec \
+            perl -i -pe "s/-dev\"/-nightly.$DATE\"/g" {} +
       - name: Install Rust (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@master
         with:
@@ -246,7 +267,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: |
-            CHANGELOG.md
+            docs/CHANGELOG.md
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
       - name: Generate SHA256 checksums
@@ -261,30 +282,30 @@ jobs:
           TAG_NAME=${{ github.ref }}
           echo "TAG_NAME=${TAG_NAME#refs/tags/}" >> $GITHUB_ENV
           echo "TAG_VERSION=${TAG_NAME#refs/tags/v}" >> $GITHUB_ENV
-      - name: Check git tag for pre-release or latest
+      - name: Check git tag for pre-release or nightly
         id: check-tag
         run: |
           if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-.*$ ]]; then
               echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          elif [[ ${{ github.ref }} =~ ^refs/tags/latest$ ]]; then
-              echo "is_latest=true" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} =~ ^refs/tags/nightly$ ]]; then
+              echo "is_nightly=true" >> $GITHUB_OUTPUT
           fi
-      - name: Print pre-release status
+      - name: Print release status
         run: |
           echo "Is ${{ github.ref }} pre-release: ${{ steps.check-tag.outputs.is_prerelease }}"
-          echo "Is ${{ github.ref }} latest: ${{ steps.check-tag.outputs.is_latest }}"
+          echo "Is ${{ github.ref }} nightly: ${{ steps.check-tag.outputs.is_nightly }}"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
         with:
           version: ${{ env.TAG_VERSION }}
-          path: "./CHANGELOG.md"
-        if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
-      - name: Publish (latest)
-        if: ${{ steps.check-tag.outputs.is_latest == 'true' }}
+          path: "./docs/CHANGELOG.md"
+        if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
+      - name: Publish (nightly)
+        if: ${{ steps.check-tag.outputs.is_nightly == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          name: Latest Build
+          name: Nightly Build
           fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}
           draft: false
@@ -292,10 +313,10 @@ jobs:
           files: |
             **/distant-*
           body: |
-            This is the latest commit (${{ github.sha }}) built for testing.
+            Nightly build from master (${{ github.sha }}).
             This is not guaranteed to pass all tests or even function properly.
       - name: Publish (release)
-        if: ${{ steps.check-tag.outputs.is_latest != 'true' }}
+        if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           name: distant ${{ env.TAG_NAME }}

@@ -118,7 +118,21 @@ The manager enforces a 120-second timeout on the setup phase (everything before 
 
 The protocol is platform-independent: stdin/stdout JSON-lines works identically on Linux, macOS, and Windows. No platform-specific IPC mechanisms are required.
 
-## Example: Minimal Plugin
+## Built-in Plugins
+
+Distant ships with three built-in plugins compiled directly into the binary
+(enabled via Cargo features):
+
+| Plugin | Feature | Schemes | Description |
+|--------|---------|---------|-------------|
+| **host** | `host` | `distant` | Runs a distant server on the local/remote host via the `distant_host` crate |
+| **ssh** | `ssh` | `ssh` | Pure Rust SSH client using `russh` via the `distant_ssh` crate |
+| **docker** | `docker` | `docker` | Docker container interaction via the Bollard API (`distant_docker`) |
+
+Built-in plugins implement the `Plugin` trait (`distant_core::Plugin`) directly.
+They receive raw destination strings and handle URI parsing internally.
+
+## Example: Minimal Plugin (Bash)
 
 A minimal plugin that only supports `connect` (not `launch`):
 
@@ -141,3 +155,58 @@ case "$1" in
     ;;
 esac
 ```
+
+## Example: Auth Relay Round-Trip (Bash)
+
+A plugin that prompts for a password before connecting:
+
+```bash
+#!/bin/bash
+case "$1" in
+  connect)
+    DEST="$2"
+
+    # Send an auth challenge to the manager
+    echo '{"auth_challenge": {"questions": [{"text": "Password:", "options": {"echo": "false"}}]}}'
+
+    # Read the auth response from stdin
+    read -r RESPONSE
+    PASSWORD=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['auth_response']['answers'][0])")
+
+    # Use the password to authenticate (example: curl with basic auth)
+    HOST=$(echo "$DEST" | sed 's|.*://||')
+    if curl -sf -u "user:$PASSWORD" "http://$HOST/api/health" > /dev/null 2>&1; then
+      echo '{"ready": true}'
+      # Proxy loop: read requests from stdin, forward to server, write responses to stdout
+      while read -r REQUEST; do
+        RESPONSE=$(curl -sf -u "user:$PASSWORD" -X POST -d "$REQUEST" "http://$HOST/api/distant")
+        echo "$RESPONSE"
+      done
+    else
+      echo '{"error": {"kind": "permission_denied", "description": "Authentication failed"}}'
+      exit 1
+    fi
+    ;;
+  launch)
+    echo '{"error": {"kind": "unsupported", "description": "launch not supported"}}'
+    exit 1
+    ;;
+esac
+```
+
+## Troubleshooting
+
+Common issues when developing plugins:
+
+- **Plugin not found**: Ensure the `path` in `plugins.toml` is an absolute path and
+  the binary is executable (`chmod +x`).
+- **No response from plugin**: The manager expects JSON-lines on stdout. Ensure all
+  debug output goes to stderr, not stdout.
+- **Timeout errors**: The manager enforces a 120-second timeout on setup. If your
+  plugin takes longer (e.g., pulling Docker images), consider optimizing the
+  operation or sending periodic auth challenges to keep the connection alive.
+- **Debugging**: Run distant with `--log-level debug` to see the full JSON-lines
+  exchange between the manager and plugin:
+  ```bash
+  distant manager listen --log-level debug
+  ```
