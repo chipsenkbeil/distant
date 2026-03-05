@@ -6,8 +6,9 @@ max-threads = 2
 
 [profile.default]
 fail-fast = false
+leak-timeout = { period = "100ms", result = "fail" }
 status-level = "fail"
-final-status-level = "fail"
+final-status-level = "leak"
 
 [[profile.default.overrides]]
 filter = 'binary_id(distant-ssh::lib)'

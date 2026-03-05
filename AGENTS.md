@@ -102,9 +102,9 @@ Each item is tagged with a category:
    may be incomplete/untested.
 2. **(Acknowledgement)** Windows CI SSH tests have intermittent auth failures
    from resource contention — mitigated with nextest retries (4x). Root cause
-   of the 19/47 consistent failures was nextest `leak-timeout` (100ms period,
-   `result = "fail"`) interfering with sshd child processes on Windows;
-   resolved by removing leak-timeout in eef94df.
+   of the 19/47 consistent failures was the system sshd service running on the
+   `windows-latest` VM, conflicting with per-test sshd instances; resolved by
+   stopping the system service in CI.
 3. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
    (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
    `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
@@ -190,9 +190,7 @@ The nextest configuration lives in `.config/nextest.toml` and defines two test
 groups: SSH throttling (`max-threads = 4` for `distant-ssh`) and Docker
 throttling (`max-threads = 2` for `distant-docker`). These groups are assigned
 via `[profile.default.overrides]`. The CI profile adds retries (4) and
-slow-timeout (60s period, terminate after 3 periods). Note: `leak-timeout` was
-intentionally removed (eef94df) because it interfered with sshd child processes
-on Windows — do not re-add it.
+slow-timeout (60s period, terminate after 3 periods).
 
 ## Coding Style & Standards
 

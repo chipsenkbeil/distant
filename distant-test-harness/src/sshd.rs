@@ -531,43 +531,6 @@ impl Sshd {
                 .with_context(|| format!("Port {port} already taken"))?,
         );
 
-        #[cfg(windows)]
-        {
-            warn!(
-                "Attempting to spawn sshd on Windows - this may require administrator privileges"
-            );
-
-            // Log the exact command being executed
-            error!(
-                "Spawning sshd with command: {:?} {:?}",
-                BIN_PATH.as_path(),
-                [
-                    "-D",
-                    "-p",
-                    &port.to_string(),
-                    "-f",
-                    config_path.as_ref().to_string_lossy().as_ref(),
-                    "-E",
-                    log_path.as_ref().to_string_lossy().as_ref()
-                ]
-            );
-
-            // Check if sshd binary exists and is accessible
-            if let Ok(metadata) = std::fs::metadata(&*BIN_PATH) {
-                error!(
-                    "sshd binary info: path={:?}, size={}, readonly={}",
-                    BIN_PATH.as_path(),
-                    metadata.len(),
-                    metadata.permissions().readonly()
-                );
-            } else {
-                error!(
-                    "sshd binary not found or not accessible at {:?}",
-                    BIN_PATH.as_path()
-                );
-            }
-        }
-
         let mut cmd = Command::new(BIN_PATH.as_path());
         cmd.arg("-D")
             .arg("-p")
@@ -581,15 +544,8 @@ impl Sshd {
             #[cfg(windows)]
             {
                 format!(
-                    "Failed to spawn {:?}. On Windows Server 2025, sshd requires:\n\
-                         1. Host key files owned by SYSTEM account\n\
-                         2. Proper ACL permissions (SYSTEM:F, Administrators:F)\n\
-                         3. No conflicting SSH services on the same port\n\
-                         4. Administrator privileges for the test process\n\
-                         \nTroubleshooting:\n\
-                         - Check if system SSH service is running on port 22\n\
-                         - Verify host key file permissions with 'icacls'\n\
-                         - Ensure OpenSSH is properly installed",
+                    "Failed to spawn {:?}. Ensure the system sshd service is stopped \
+                     and the host key files have correct permissions.",
                     BIN_PATH.as_path()
                 )
             }
@@ -614,41 +570,23 @@ impl Sshd {
             error!("sshd stdout: {}", String::from_utf8_lossy(&output.stdout));
             error!("sshd stderr: {}", String::from_utf8_lossy(&output.stderr));
 
-            // Windows Server 2025 specific diagnostics on failure
             #[cfg(windows)]
             {
-                // Detect Windows version
-                if let Ok(output) = Command::new("ver").output()
-                    && let Ok(version) = String::from_utf8(output.stdout)
-                {
-                    error!("Windows version: {}", version.trim());
-                    if version.contains("2025") || version.contains("26100") {
-                        error!(
-                            "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
-                        );
-                    }
-                }
-
-                // Check system SSH service conflicts
+                // Check if system SSH service is conflicting
                 if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
                     if let Ok(status) = String::from_utf8(output.stdout) {
                         if status.contains("RUNNING") {
                             error!(
                                 "System SSH service is RUNNING - may conflict with test sshd instances"
                             );
-                        } else if status.contains("STOPPED") {
-                            error!("System SSH service is STOPPED");
                         }
                     }
-                } else {
-                    error!("Could not check system SSH service status");
                 }
 
-                // Check Windows OpenSSH version
+                // Log OpenSSH version for diagnostics
                 if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output()
                     && let Ok(version) = String::from_utf8(output.stderr)
                 {
-                    // SSH version goes to stderr
                     error!("OpenSSH version: {}", version.trim());
                 }
             }
@@ -726,37 +664,17 @@ impl Sshd {
                 out.push('\n');
                 out.push('\n');
 
-                // Add Windows-specific diagnostic information
+                // Check if system SSH service is conflicting
                 #[cfg(windows)]
+                if let Ok(output) = std::process::Command::new("sc")
+                    .args(["query", "sshd"])
+                    .output()
+                    && let Ok(status) = String::from_utf8(output.stdout)
+                    && status.contains("RUNNING")
                 {
-                    out.push_str("= WINDOWS DIAGNOSTICS\n");
-                    out.push_str("====================\n");
-
-                    // Check if this is Windows Server 2025 which has stricter requirements
-                    if let Ok(output) = std::process::Command::new("ver").output()
-                        && let Ok(version) = String::from_utf8(output.stdout)
-                    {
-                        out.push_str(&format!("Windows Version: {}\n", version.trim()));
-                        if version.contains("2025") || version.contains("26100") {
-                            out.push_str(
-                                "Detected Windows Server 2025 - requires SYSTEM file ownership\n",
-                            );
-                        }
-                    }
-
-                    // Check if system SSH service is running
-                    if let Ok(output) = std::process::Command::new("sc")
-                        .args(["query", "sshd"])
-                        .output()
-                        && let Ok(status) = String::from_utf8(output.stdout)
-                        && status.contains("RUNNING")
-                    {
-                        out.push_str(
-                            "System SSH service is RUNNING - may conflict with test instances\n",
-                        );
-                    }
-
-                    out.push('\n');
+                    out.push_str(
+                        "WARNING: System SSH service is RUNNING - may conflict with test instances\n",
+                    );
                 }
 
                 out.push_str("====================\n");
