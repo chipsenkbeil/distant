@@ -122,6 +122,12 @@ jobs:
           # Windows Server 2025 has OpenSSH installed by default
           # We don't start the system sshd service as our tests spawn their own sshd instances
 
+          # Stop the system sshd service — it ships running on the windows-latest
+          # VM image and interferes with per-test sshd instances (the user-context
+          # sshd -z subprocess hangs, producing no output on exec/sftp channels).
+          Stop-Service sshd -ErrorAction SilentlyContinue
+          Set-Service sshd -StartupType Disabled
+
           # Ensure ssh-agent is available for key management
           Set-Service ssh-agent -StartupType Automatic
           Start-Service ssh-agent
