@@ -82,26 +82,29 @@ pub fn run() -> Result<(), ServiceError> {
 
 /// Returns true if running as a windows service
 pub fn is_windows_service() -> bool {
-    use sysinfo::{Pid, PidExt, Process, ProcessExt, System, SystemExt};
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
     let mut system = System::new();
 
     // Get our own process pid
-    let pid = Pid::from_u32(std::process::id());
+    let pid = Pid::from(std::process::id() as usize);
+
+    // Only refresh the exe path, which is all we need for the parent check
+    let refresh_kind = ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet);
 
     // Update our system's knowledge about our process
-    system.refresh_process(pid);
+    system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, refresh_kind);
 
-    // Get our parent process' pid and update sustem's knowledge about parent process
-    let maybe_parent_pid = system.process(pid).and_then(Process::parent);
+    // Get our parent process' pid and update system's knowledge about parent process
+    let maybe_parent_pid = system.process(pid).and_then(|p| p.parent());
     if let Some(pid) = maybe_parent_pid {
-        system.refresh_process(pid);
+        system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, refresh_kind);
     }
 
     // Check modeled after https://github.com/dotnet/extensions/blob/9069ee83c6ff1e4471cfbc07215c715c5ce157e1/src/Hosting/WindowsServices/src/WindowsServiceHelpers.cs#L31
     maybe_parent_pid
         .and_then(|pid| system.process(pid))
-        .map(Process::exe)
+        .and_then(|p| p.exe())
         .and_then(Path::file_name)
         .map(OsStr::to_string_lossy)
         .map(|s| s.eq_ignore_ascii_case("services"))

@@ -33,7 +33,7 @@ async fn should_support_json_system_info(mut api_process: CtxCommand<ApiProcess>
             "arch": env::consts::ARCH.to_string(),
             "current_dir": env::current_dir().unwrap_or_default(),
             "main_separator": std::path::MAIN_SEPARATOR.to_string(),
-            "username": whoami::username(),
+            "username": whoami::username().unwrap_or_default(),
             "shell": if cfg!(windows) {
                 std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
             } else {

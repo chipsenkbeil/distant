@@ -23,26 +23,26 @@ macos-kqueue = ["notify/macos_kqueue"]
 distant-core = { version = "=0.20.0", path = "../distant-core" }
 grep = "0.2.12"
 ignore = "0.4.20"
-log = "0.4.18"
-notify = { version = "6.0.0", default-features = false, features = ["macos_fsevent"] }
-notify-debouncer-full = { version = "0.1.0", default-features = false  }
-num_cpus = "1.15.0"
+log = "0.4.29"
+notify = { version = "8.2.0", default-features = false, features = ["macos_fsevent"] }
+notify-debouncer-full = { version = "0.7.0", default-features = false  }
+num_cpus = "1.17.0"
 portable-pty = "0.8.1"
-rand = { version = "0.8.5", features = ["getrandom"] }
-shell-words = "1.1.0"
-tokio = { version = "1.28.2", features = ["full"] }
-walkdir = "2.3.3"
-which = "4.4.0"
-whoami = "1.4.0"
+rand = "0.8.5"
+shell-words = "1.1.1"
+tokio = { version = "1.50.0", features = ["full"] }
+walkdir = "2.5.0"
+which = "8.0.0"
+whoami = "2.1.1"
 winsplit = "0.1.0"
 
 [dev-dependencies]
-assert_fs = "1.0.13"
+assert_fs = "1.1.3"
 distant-test-harness = { path = "../distant-test-harness" }
-env_logger = "0.10.0"
-indoc = "2.0.1"
-once_cell = "1.17.2"
-predicates = "3.0.3"
-rstest = "0.17.0"
+env_logger = "0.11.9"
+indoc = "2.0.7"
+once_cell = "1.21.3"
+predicates = "3.1.4"
+rstest = "0.26.1"
 tempfile = "3"
-test-log = "0.2.11"
+test-log = "0.2.19"

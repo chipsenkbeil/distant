@@ -14,7 +14,7 @@ use notify::{
     Config as WatcherConfig, Error as WatcherError, ErrorKind as WatcherErrorKind,
     Event as WatcherEvent, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
 };
-use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer_opt};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer_opt};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -74,13 +74,13 @@ impl WatcherBuilder {
 
         macro_rules! new_debouncer {
             ($watcher:ident, $tx:ident) => {{
-                new_debouncer_opt::<_, $watcher, FileIdMap>(
+                new_debouncer_opt::<_, $watcher, RecommendedCache>(
                     self.config.debounce_timeout,
                     self.config.debounce_tick_rate,
                     move |result: DebounceEventResult| match result {
                         Ok(events) => {
                             for x in events {
-                                process_event!($tx, Ok(x));
+                                process_event!($tx, Ok(x.event));
                             }
                         }
                         Err(errors) => {
@@ -89,7 +89,7 @@ impl WatcherBuilder {
                             }
                         }
                     },
-                    FileIdMap::new(),
+                    RecommendedCache::new(),
                     watcher_config,
                 )
             }};
@@ -229,11 +229,10 @@ enum InnerWatcherMsg {
     },
 }
 
-async fn watcher_task<W>(
-    mut debouncer: Debouncer<W, FileIdMap>,
-    mut rx: mpsc::Receiver<InnerWatcherMsg>,
-) where
+async fn watcher_task<W, C>(mut debouncer: Debouncer<W, C>, mut rx: mpsc::Receiver<InnerWatcherMsg>)
+where
     W: Watcher,
+    C: notify_debouncer_full::FileIdCache + Send,
 {
     // TODO: Optimize this in some way to be more performant than
     //       checking every path whenever an event comes in
@@ -259,7 +258,6 @@ async fn watcher_task<W>(
                     let _ = cb.send(Ok(()));
                 } else {
                     let res = debouncer
-                        .watcher()
                         .watch(
                             registered_path.path(),
                             if registered_path.is_recursive() {
@@ -298,8 +296,7 @@ async fn watcher_task<W>(
                     // 2. If we removed nothing from our path list, we want to return an error
                     // 3. Otherwise, we return okay because we succeeded
                     if *cnt <= removed_cnt {
-                        let _ =
-                            cb.send(debouncer.watcher().unwatch(&path).map_err(io::Error::other));
+                        let _ = cb.send(debouncer.unwatch(&path).map_err(io::Error::other));
                     } else if removed_cnt == 0 {
                         // Send a failure as there was nothing to unwatch for this connection
                         let _ = cb.send(Err(io::Error::other(format!(

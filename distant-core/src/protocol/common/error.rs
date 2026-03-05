@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// General purpose error type that can be sent across the wire
 #[derive(Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
-#[display(fmt = "{kind}: {description}")]
+#[display("{kind}: {description}")]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Error {
     /// Label describing the kind of error

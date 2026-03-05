@@ -22,8 +22,8 @@ use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
 static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
-    qualifier: String::from("rocks"),
-    organization: String::from("distant"),
+    qualifier: Some(String::from("rocks")),
+    organization: Some(String::from("distant")),
     application: String::from("manager"),
 });
 
@@ -183,6 +183,16 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
                         .ok()
                         .unwrap_or_else(|| PathBuf::from("distant")),
                     args,
+                    contents: None,
+                    username: None,
+                    working_directory: None,
+                    environment: None,
+                    autostart: false,
+                    restart_policy: service_manager::RestartPolicy::OnFailure {
+                        delay_secs: None,
+                        max_retries: None,
+                        reset_after_secs: None,
+                    },
                 })
                 .context("Failed to install service")?;
 
@@ -293,8 +303,8 @@ mod tests {
     // -------------------------------------------------------
     #[test]
     fn service_label_has_correct_fields() {
-        assert_eq!(SERVICE_LABEL.qualifier, "rocks");
-        assert_eq!(SERVICE_LABEL.organization, "distant");
+        assert_eq!(SERVICE_LABEL.qualifier.as_deref(), Some("rocks"));
+        assert_eq!(SERVICE_LABEL.organization.as_deref(), Some("distant"));
         assert_eq!(SERVICE_LABEL.application, "manager");
     }
 

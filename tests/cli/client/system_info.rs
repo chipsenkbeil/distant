@@ -26,7 +26,7 @@ fn should_output_system_info(ctx: ManagerCtx) {
         env::consts::ARCH.to_string(),
         env::current_dir().unwrap_or_default(),
         std::path::MAIN_SEPARATOR,
-        whoami::username(),
+        whoami::username().unwrap_or_default(),
         if cfg!(windows) {
             std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
         } else {

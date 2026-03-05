@@ -19,9 +19,10 @@ use distant_core::protocol::{
 use distant_core::{Channel, ChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
+use tabled::settings::disable::Remove;
 use tabled::settings::object::Rows;
 use tabled::settings::style::Style;
-use tabled::settings::{Alignment, Disable, Modify};
+use tabled::settings::{Alignment, Modify};
 use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
@@ -1782,7 +1783,7 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
                     path: entry.path.to_string(),
                 }))
                 .with(Style::blank())
-                .with(Disable::row(Rows::new(..1)))
+                .with(Remove::row(Rows::new(..1)))
                 .with(Modify::new(Rows::new(..)).with(Alignment::left()))
                 .to_string()
                 .into_bytes();

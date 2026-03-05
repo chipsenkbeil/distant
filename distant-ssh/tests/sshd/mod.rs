@@ -54,7 +54,7 @@ const MAX_DROP_WAIT_TIME: Duration = Duration::from_millis(500);
 /// In non-admin contexts, additively grants permissions without stripping inherited ones.
 #[cfg(windows)]
 fn set_windows_file_permissions(path: &Path) {
-    let current_user = whoami::username();
+    let current_user = whoami::username().unwrap_or_else(|_| String::from("unknown"));
     let path_str = path.to_string_lossy();
 
     // Try to set SYSTEM ownership — only works as admin
@@ -171,23 +171,23 @@ impl SshKeygen {
 #[allow(dead_code)]
 #[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Hash)]
 pub enum SshdLogLevel {
-    #[display(fmt = "QUIET")]
+    #[display("QUIET")]
     Quiet,
-    #[display(fmt = "FATAL")]
+    #[display("FATAL")]
     Fatal,
-    #[display(fmt = "ERROR")]
+    #[display("ERROR")]
     Error,
-    #[display(fmt = "INFO")]
+    #[display("INFO")]
     Info,
-    #[display(fmt = "VERBOSE")]
+    #[display("VERBOSE")]
     Verbose,
-    #[display(fmt = "DEBUG")]
+    #[display("DEBUG")]
     Debug,
-    #[display(fmt = "DEBUG1")]
+    #[display("DEBUG1")]
     Debug1,
-    #[display(fmt = "DEBUG2")]
+    #[display("DEBUG2")]
     Debug2,
-    #[display(fmt = "DEBUG3")]
+    #[display("DEBUG3")]
     Debug3,
 }
 
