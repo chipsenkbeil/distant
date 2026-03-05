@@ -2057,11 +2057,16 @@ async fn proc_spawn_with_pty_should_be_killable(#[future] client: Ctx<Client>) {
         .await
         .unwrap();
 
-    // Kill the process
+    // Brief delay to let the remote process fully start before sending kill
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Kill the process — should complete quickly, not wait for sleep to finish
     proc.kill().await.unwrap();
 
-    // Verify killed
-    let status = proc.wait().await.unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(5), proc.wait())
+        .await
+        .expect("kill did not terminate process within 5 seconds")
+        .unwrap();
     assert!(!status.success, "PTY process succeeded when killed");
 }
 
@@ -2096,9 +2101,15 @@ async fn proc_spawn_with_pty_should_support_resize(#[future] client: Ctx<Client>
     .await
     .unwrap();
 
-    // Clean up
+    // Brief delay to let the remote process fully start before sending kill
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Clean up — kill should complete quickly
     proc.kill().await.unwrap();
-    let _ = proc.wait().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), proc.wait())
+        .await
+        .expect("kill did not terminate process within 5 seconds")
+        .unwrap();
 }
 
 #[rstest]

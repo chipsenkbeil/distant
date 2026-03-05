@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use distant_core::net::server::Reply;
 use distant_core::protocol::{Environment, ProcessId, PtySize, RemotePath, Response};
-use russh::ChannelMsg;
 use russh::client::Handle;
+use russh::{ChannelMsg, Sig};
 use tokio::sync::mpsc;
 
 use crate::ClientHandler;
@@ -123,6 +123,13 @@ where
                     // has been flushed, so no output will be lost.
                     break;
                 }
+                ChannelMsg::ExitSignal { signal_name, .. } => {
+                    log::debug!(
+                        "spawn_simple reader: ExitSignal({signal_name:?}) for pid={msg_id}"
+                    );
+                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
                 _ => {
                     log::debug!("spawn_simple reader: other ChannelMsg for pid={msg_id}");
                 }
@@ -157,7 +164,9 @@ where
                 }
                 Some(()) = kill_rx.recv() => {
                     *was_killed.lock().await = true;
+                    let _ = write_half.signal(Sig::KILL).await;
                     let _ = write_half.eof().await;
+                    let _ = write_half.close().await;
                     break;
                 }
                 else => break,
@@ -288,6 +297,11 @@ where
                     // has been flushed, so no output will be lost.
                     break;
                 }
+                ChannelMsg::ExitSignal { signal_name, .. } => {
+                    log::debug!("spawn_pty reader: ExitSignal({signal_name:?}) for pid={msg_id}");
+                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
                 _ => {
                     log::debug!("spawn_pty reader: other ChannelMsg for pid={msg_id}");
                 }
@@ -322,7 +336,9 @@ where
                 }
                 Some(()) = kill_rx.recv() => {
                     *was_killed.lock().await = true;
+                    let _ = write_half.signal(Sig::KILL).await;
                     let _ = write_half.eof().await;
+                    let _ = write_half.close().await;
                     break;
                 }
                 Some(new_size) = resize_rx.recv() => {
