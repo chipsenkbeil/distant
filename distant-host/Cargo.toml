@@ -2,7 +2,7 @@
 name = "distant-host"
 description = "Library implementing the distant API for host-local operations"
 categories = ["network-programming"]
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2024"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -20,7 +20,7 @@ macos-fsevent = ["notify/macos_fsevent"]
 macos-kqueue = ["notify/macos_kqueue"]
 
 [dependencies]
-distant-core = { version = "=0.20.0", path = "../distant-core" }
+distant-core = { version = "=0.21.0", path = "../distant-core" }
 grep = "0.2.12"
 ignore = "0.4.20"
 log = "0.4.29"

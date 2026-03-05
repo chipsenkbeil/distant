@@ -1103,7 +1103,7 @@ dependencies = [
 
 [[package]]
 name = "distant"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "distant-core"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "bitflags 2.11.0",
  "bytes",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "distant-docker"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "assert_fs",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "distant-host"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "assert_fs",
  "distant-core",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "distant-ssh"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "assert_fs",

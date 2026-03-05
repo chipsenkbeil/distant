@@ -30,9 +30,9 @@ pub use self::config::*;
 
 /// Build version string with optional git metadata and enabled features.
 ///
-/// When built from a git checkout, produces `0.20.0 (abc1234def 2026-03-03) [docker, host, ssh]`.
-/// A dirty working tree appends `+` to the hash: `0.20.0 (abc1234def+ 2026-03-03) [docker, host, ssh]`.
-/// When git is unavailable (tarball builds), falls back to `0.20.0 [docker, host, ssh]`.
+/// When built from a git checkout, produces `0.21.0 (abc1234def 2026-03-03) [docker, host, ssh]`.
+/// A dirty working tree appends `+` to the hash: `0.21.0 (abc1234def+ 2026-03-03) [docker, host, ssh]`.
+/// When git is unavailable (tarball builds), falls back to `0.21.0 [docker, host, ssh]`.
 /// When no optional features are enabled, the brackets are omitted.
 static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
     let base = match (

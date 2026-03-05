@@ -2,7 +2,7 @@
 name = "distant-ssh"
 description = "Library to enable SSH protocol for use with distant sessions"
 categories = ["network-programming"]
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2024"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -17,7 +17,7 @@ default = []
 async-once-cell = "0.5.4"
 derive_more = { version = "2.1.1", default-features = false, features = ["display", "error"] }
 dirs = "5.0.1"
-distant-core = { version = "=0.20.0", path = "../distant-core" }
+distant-core = { version = "=0.21.0", path = "../distant-core" }
 futures = "0.3.32"
 hex = "0.4.3"
 log = "0.4.29"

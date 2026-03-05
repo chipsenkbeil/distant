@@ -199,7 +199,7 @@ standards.
 
 ### General Patterns
 
-1. **Workspace versioning:** Internal dependencies use exact version pinning (`version = "=0.20.0"`)
+1. **Workspace versioning:** Internal dependencies use exact version pinning (`version = "=0.21.0"`)
 2. **Testing:** Use `rstest` for parameterized tests, `assert_fs` for filesystem tests
 3. **Async runtime:** Tokio with full features
 4. **Serialization:** Serde for JSON/TOML, MessagePack for protocol

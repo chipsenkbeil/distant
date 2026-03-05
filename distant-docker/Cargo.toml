@@ -2,7 +2,7 @@
 name = "distant-docker"
 description = "Library to enable Docker container interaction for use with distant sessions"
 categories = ["network-programming"]
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Chip Senkbeil <chip@senkbeil.org>"]
 edition = "2024"
 homepage = "https://github.com/chipsenkbeil/distant"
@@ -18,7 +18,7 @@ async-once-cell = "0.5.4"
 bollard = "0.20"
 bytes = "1"
 derive_more = { version = "2.1.1", default-features = false, features = ["display", "error"] }
-distant-core = { version = "=0.20.0", path = "../distant-core" }
+distant-core = { version = "=0.21.0", path = "../distant-core" }
 futures = "0.3.32"
 log = "0.4.29"
 rand = "0.8.5"
