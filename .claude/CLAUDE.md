@@ -61,15 +61,15 @@ To move beyond basic code generation, use the following patterns:
     4. **Host tests:** `cargo test --all-features -p distant-host`
     5. **SSH tests:** `cargo test --all-features -p distant-ssh`
 
-## Memory Bank Maintenance (`CLAUDE.md` aka `AGENTS.md`)
+## Memory Bank Maintenance (`CLAUDE.md`)
 
-> **Note:** `CLAUDE.md` is a symlink to `AGENTS.md`. Edits to either file
-> automatically apply to both — no copying needed.
+> **Note:** The real file lives at `.claude/CLAUDE.md`. Root `CLAUDE.md` is a
+> symlink for tool compatibility.
 
 Prevent *context drift* by treating project documentation as a living journal:
 
 1. **The Checkpoint Habit:** At the end of every session, run: *"Summarize
-   architectural decisions made today and update AGENTS.md. Remove deprecated
+   architectural decisions made today and update CLAUDE.md. Remove deprecated
    patterns."*
 2. **The Debt Ledger:** Maintain a `## Technical Debt` section. Every shortcut
    taken by the AI or yourself must be logged here to force acknowledgment in
@@ -199,7 +199,7 @@ standards.
 
 ### General Patterns
 
-1. **Workspace versioning:** Internal dependencies use exact version pinning (`version = "=0.21.0"`)
+1. **Workspace versioning:** All crates use `version.workspace = true`; internal dependencies use exact version pinning via `[workspace.dependencies]` (e.g. `version = "=0.21.0-dev"`)
 2. **Testing:** Use `rstest` for parameterized tests, `assert_fs` for filesystem tests
 3. **Async runtime:** Tokio with full features
 4. **Serialization:** Serde for JSON/TOML, MessagePack for protocol

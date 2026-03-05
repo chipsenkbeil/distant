@@ -1,0 +1,50 @@
+name: Nightly
+
+on:
+  schedule:
+    # Run at midnight UTC every day
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare nightly tag with HEAD
+        id: check
+        run: |
+          NIGHTLY_SHA=$(git rev-parse refs/tags/nightly 2>/dev/null || echo "none")
+          HEAD_SHA=$(git rev-parse HEAD)
+          echo "Nightly tag SHA: $NIGHTLY_SHA"
+          echo "HEAD SHA: $HEAD_SHA"
+          if [ "$NIGHTLY_SHA" = "$HEAD_SHA" ]; then
+            echo "No new commits since last nightly."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          else
+            echo "New commits found."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
+  stamp:
+    name: Update nightly tag
+    needs: [check]
+    if: needs.check.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force-update nightly tag
+        env:
+          ACTOR_NAME: ${{ github.actor }}
+        run: |
+          git config user.name "$ACTOR_NAME"
+          git config user.email "${ACTOR_NAME}@users.noreply.github.com"
+          git tag nightly --force
+          git push origin nightly --force

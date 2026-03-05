@@ -5,7 +5,7 @@
   <a href="https://github.com/chipsenkbeil/distant/discussions">Discussion</a>
 </h1>
 
-[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![CI][distant_ci_img]][distant_ci_lnk] [![RustC 1.70+][distant_rustc_img]][distant_rustc_lnk]
+[![Crates.io][distant_crates_img]][distant_crates_lnk] [![Docs.rs][distant_doc_img]][distant_doc_lnk] [![CI][distant_ci_img]][distant_ci_lnk] [![RustC 1.88.0+][distant_rustc_img]][distant_rustc_lnk]
 
 [distant_crates_img]: https://img.shields.io/crates/v/distant.svg
 [distant_crates_lnk]: https://crates.io/crates/distant
@@ -13,8 +13,8 @@
 [distant_doc_lnk]: https://docs.rs/distant
 [distant_ci_img]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml/badge.svg
 [distant_ci_lnk]: https://github.com/chipsenkbeil/distant/actions/workflows/ci.yml
-[distant_rustc_img]: https://img.shields.io/badge/distant-rustc_1.70+-lightgray.svg
-[distant_rustc_lnk]: https://blog.rust-lang.org/2023/06/01/Rust-1.70.0.html
+[distant_rustc_img]: https://img.shields.io/badge/distant-rustc_1.88.0+-lightgray.svg
+[distant_rustc_lnk]: https://blog.rust-lang.org/2025/06/26/Rust-1.88.0.html
 
 🚧 **(Alpha stage software) This program is in rapid development and may break or change frequently!** 🚧
 
@@ -44,20 +44,25 @@ See https://distant.dev/getting-started/installation/windows/ for more details.
 ## Usage
 
 ```sh
-# Start a manager in the background
-distant manager listen --daemon
+# SSH into a server and open a shell
+distant ssh example.com
 
-# SSH into a server, start distant, and connect to the distant server
-distant launch ssh://example.com
-
-# Read the current working directory
+# Read the remote current working directory
 distant fs read .
 
-# Start a shell on the remote machine
-distant shell
+# Run a command on the remote machine
+distant spawn -- ls -la
 ```
 
 See https://distant.dev/getting-started/usage/ for more details.
+
+## Documentation
+
+- [Building from Source](docs/BUILDING.md)
+- [Testing](docs/TESTING.md)
+- [Plugin Specification](docs/PLUGINS.md)
+- [Publishing Releases](docs/PUBLISHING.md)
+- [Changelog](docs/CHANGELOG.md)
 
 ## License
 
