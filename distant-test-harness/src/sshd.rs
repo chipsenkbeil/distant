@@ -573,14 +573,11 @@ impl Sshd {
             #[cfg(windows)]
             {
                 // Check if system SSH service is conflicting
-                if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
-                    if let Ok(status) = String::from_utf8(output.stdout) {
-                        if status.contains("RUNNING") {
-                            error!(
-                                "System SSH service is RUNNING - may conflict with test sshd instances"
-                            );
-                        }
-                    }
+                if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output()
+                    && let Ok(status) = String::from_utf8(output.stdout)
+                    && status.contains("RUNNING")
+                {
+                    error!("System SSH service is RUNNING - may conflict with test sshd instances");
                 }
 
                 // Log OpenSSH version for diagnostics
