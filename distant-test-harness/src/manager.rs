@@ -1,10 +1,12 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use crate::process::{kill_process_tree, set_process_group};
 
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
@@ -78,12 +80,10 @@ impl ManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        set_process_group(&mut manager_cmd);
         eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(Some(status)) = manager.try_wait() {
-            panic!("Manager exited ({}): {:?}", status.success(), status.code());
-        }
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
 
         let mut server = None;
         'outer: for i in 1..=MAX_RETRY_ATTEMPTS {
@@ -104,6 +104,7 @@ impl ManagerCtx {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            set_process_group(&mut server_cmd);
             eprintln!("Spawning server cmd: {server_cmd:?}");
             server = match server_cmd.spawn() {
                 Ok(server) => Some(server),
@@ -400,6 +401,39 @@ fn resolve_bin_path() -> PathBuf {
     )
 }
 
+/// Waits for the manager to be ready by polling for the socket/pipe.
+fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(2);
+    let poll_interval = Duration::from_millis(25);
+
+    loop {
+        // Check if manager crashed
+        if let Ok(Some(status)) = manager.try_wait() {
+            panic!("Manager exited ({}): {:?}", status.success(), status.code());
+        }
+
+        // On Unix, check if the socket file exists
+        if !cfg!(windows) && Path::new(socket_or_pipe).exists() {
+            return;
+        }
+
+        // On Windows, just wait a reasonable time for the named pipe
+        if cfg!(windows) && start.elapsed() > Duration::from_millis(200) {
+            return;
+        }
+
+        if start.elapsed() > timeout {
+            panic!(
+                "Manager did not create socket {:?} within {:?}",
+                socket_or_pipe, timeout
+            );
+        }
+
+        thread::sleep(poll_interval);
+    }
+}
+
 fn random_log_file(prefix: &str) -> PathBuf {
     ROOT_LOG_DIR.join(format!(
         "{}.{}.{}.log",
@@ -410,12 +444,10 @@ fn random_log_file(prefix: &str) -> PathBuf {
 }
 
 impl Drop for ManagerCtx {
-    /// Kills manager upon drop
+    /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        let _ = self.manager.kill();
-        let _ = self.server.kill();
-        let _ = self.manager.wait();
-        let _ = self.server.wait();
+        kill_process_tree(&mut self.manager);
+        kill_process_tree(&mut self.server);
     }
 }
 
@@ -467,12 +499,10 @@ impl ManagerOnlyCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        set_process_group(&mut manager_cmd);
         eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(Some(status)) = manager.try_wait() {
-            panic!("Manager exited ({}): {:?}", status.success(), status.code());
-        }
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
 
         // Spawn a server and capture the credentials
         let mut server_cmd = StdCommand::new(bin_path());
@@ -488,6 +518,7 @@ impl ManagerOnlyCtx {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        set_process_group(&mut server_cmd);
         eprintln!("ManagerOnlyCtx: Spawning server cmd: {server_cmd:?}");
         let mut server = server_cmd.spawn().expect("Failed to spawn server");
 
@@ -584,11 +615,10 @@ impl ManagerOnlyCtx {
 }
 
 impl Drop for ManagerOnlyCtx {
+    /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        let _ = self.manager.kill();
-        let _ = self.server.kill();
-        let _ = self.manager.wait();
-        let _ = self.server.wait();
+        kill_process_tree(&mut self.manager);
+        kill_process_tree(&mut self.server);
     }
 }
 

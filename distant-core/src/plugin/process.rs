@@ -191,7 +191,7 @@ impl Plugin for ProcessPlugin {
 
     fn connect<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
@@ -200,12 +200,12 @@ impl Plugin for ProcessPlugin {
                 "[{}] Spawning connect process: {} connect {}",
                 self.name,
                 self.path.display(),
-                destination
+                raw_destination
             );
 
             let mut child = Command::new(&self.path)
                 .arg("connect")
-                .arg(destination.to_string())
+                .arg(raw_destination)
                 .args(map_to_args(options))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -312,7 +312,7 @@ impl Plugin for ProcessPlugin {
 
     fn launch<'a>(
         &'a self,
-        destination: &'a Destination,
+        raw_destination: &'a str,
         options: &'a Map,
         authenticator: &'a mut dyn Authenticator,
     ) -> Pin<Box<dyn Future<Output = io::Result<Destination>> + Send + 'a>> {
@@ -321,12 +321,12 @@ impl Plugin for ProcessPlugin {
                 "[{}] Spawning launch process: {} launch {}",
                 self.name,
                 self.path.display(),
-                destination
+                raw_destination
             );
 
             let mut child = Command::new(&self.path)
                 .arg("launch")
-                .arg(destination.to_string())
+                .arg(raw_destination)
                 .args(map_to_args(options))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -700,11 +700,10 @@ mod tests {
     #[test(tokio::test)]
     async fn connect_fails_with_nonexistent_binary() {
         let plugin = make_plugin("fake", "/nonexistent/path/to/plugin", None);
-        let dest: Destination = "ssh://localhost".parse().expect("parse destination");
         let options = Map::new();
 
         let mut auth = TestAuthenticator::default();
-        let result = plugin.connect(&dest, &options, &mut auth).await;
+        let result = plugin.connect("ssh://localhost", &options, &mut auth).await;
         assert!(result.is_err(), "expected error for nonexistent binary");
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
@@ -718,11 +717,10 @@ mod tests {
     #[test(tokio::test)]
     async fn launch_fails_with_nonexistent_binary() {
         let plugin = make_plugin("fake", "/nonexistent/path/to/plugin", None);
-        let dest: Destination = "ssh://localhost".parse().expect("parse destination");
         let options = Map::new();
 
         let mut auth = TestAuthenticator::default();
-        let result = plugin.launch(&dest, &options, &mut auth).await;
+        let result = plugin.launch("ssh://localhost", &options, &mut auth).await;
         assert!(result.is_err(), "expected error for nonexistent binary");
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);

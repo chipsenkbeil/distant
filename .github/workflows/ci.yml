@@ -101,20 +101,40 @@ jobs:
           key: "ci-tests-${{ matrix.os }}-${{ matrix.rust }}-${{ matrix.target }}"
       - name: Check Cargo availability
         run: cargo --version
+      - name: Windows SSH diagnostics
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Write-Host "=== OpenSSH version ==="
+          & sshd -V 2>&1 | Out-Host
+          Write-Host "=== SSH-related processes ==="
+          Get-Process | Where-Object { $_.Name -like '*ssh*' } | Format-Table -AutoSize
+          Write-Host "=== Listening ports (count) ==="
+          netstat -an | Select-String "LISTEN" | Measure-Object | Select-Object -ExpandProperty Count
+          Write-Host "=== Windows version ==="
+          [System.Environment]::OSVersion | Format-List
+          Write-Host "=== System memory ==="
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List
       - name: Configure Windows for SSH testing
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           # Windows Server 2025 has OpenSSH installed by default
           # We don't start the system sshd service as our tests spawn their own sshd instances
-          
+
+          # Stop the system sshd service — it ships running on the windows-latest
+          # VM image and interferes with per-test sshd instances (the user-context
+          # sshd -z subprocess hangs, producing no output on exec/sftp channels).
+          Stop-Service sshd -ErrorAction SilentlyContinue
+          Set-Service sshd -StartupType Disabled
+
           # Ensure ssh-agent is available for key management
           Set-Service ssh-agent -StartupType Automatic
           Start-Service ssh-agent
-          
+
           # Configure firewall for SSH tests on high ports used by tests
           New-NetFirewallRule -Name sshd-tests -DisplayName 'OpenSSH Tests (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 49152-65535
-          
+
           # Ensure we have proper permissions for file operations
           # Grant current user SeCreateSymbolicLinkPrivilege if needed for tests
       - name: Extend Windows retry count to be more resilient
@@ -122,12 +142,15 @@ jobs:
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Set faster timeouts for Windows SSH debugging
-        run: echo "NEXTEST_TEST_TIMEOUT=30s" >> $GITHUB_ENV
+        run: echo "NEXTEST_TEST_TIMEOUT=90s" >> $GITHUB_ENV
         shell: bash
         if: matrix.os == 'windows-latest'
       - name: Ensure /run/sshd exists on Unix
         run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
+      - name: Pre-pull Docker test image
+        run: docker pull ubuntu:22.04
+        if: runner.os == 'Linux'
       - name: Run all workspace tests (all features)
         run: cargo nextest run --profile ci --release --all-features --workspace
       - name: Run all doc tests (all features)

@@ -2,12 +2,18 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
+#[cfg(feature = "host")]
+use clap::Args;
 use clap::builder::TypedValueParser as _;
-use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
+use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell as ClapCompleteShell;
 use derive_more::{Display, Error, From, IsVariant};
-use distant_core::net::common::{ConnectionId, Destination, Map, PortRange};
+#[cfg(feature = "host")]
+use distant_core::net::common::PortRange;
+use distant_core::net::common::{ConnectionId, Map};
+#[cfg(feature = "host")]
 use distant_core::net::server::Shutdown;
 use distant_core::protocol::ChangeKind;
 use service_manager::ServiceManagerKind;
@@ -22,13 +28,58 @@ pub use common::*;
 
 pub use self::config::*;
 
+/// Build version string with optional git metadata and enabled features.
+///
+/// When built from a git checkout, produces `0.20.0 (abc1234def 2026-03-03) [docker, host, ssh]`.
+/// A dirty working tree appends `+` to the hash: `0.20.0 (abc1234def+ 2026-03-03) [docker, host, ssh]`.
+/// When git is unavailable (tarball builds), falls back to `0.20.0 [docker, host, ssh]`.
+/// When no optional features are enabled, the brackets are omitted.
+static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
+    let base = match (
+        option_env!("DISTANT_BUILD_GIT_HASH"),
+        option_env!("DISTANT_BUILD_DATE"),
+    ) {
+        (Some(hash), Some(date)) => {
+            let dirty = if option_env!("DISTANT_BUILD_GIT_DIRTY") == Some("true") {
+                "+"
+            } else {
+                ""
+            };
+            format!("{} ({hash}{dirty} {date})", env!("CARGO_PKG_VERSION"))
+        }
+        _ => env!("CARGO_PKG_VERSION").to_string(),
+    };
+
+    // Collect enabled optional backend features (alphabetical order)
+    let mut features = Vec::new();
+    if cfg!(feature = "docker") {
+        features.push("docker");
+    }
+    if cfg!(feature = "host") {
+        features.push("host");
+    }
+    if cfg!(feature = "ssh") {
+        features.push("ssh");
+    }
+
+    if features.is_empty() {
+        base
+    } else {
+        format!("{base} [{}]", features.join(", "))
+    }
+});
+
 /// Primary entrypoint into options & subcommands for the CLI.
 #[derive(Debug, PartialEq, Parser)]
-#[clap(author, version, about)]
+#[clap(author, version = LONG_VERSION.as_str(), about)]
 #[clap(name = "distant")]
 pub struct Options {
     #[clap(flatten)]
     pub logging: LoggingSettings,
+
+    /// Suppress informational messages (spinners, connection status) on stderr
+    #[clap(long, short = 'q', global = true)]
+    pub quiet: bool,
 
     /// Configuration file to load instead of the default paths
     #[clap(long = "config", global = true, value_parser)]
@@ -71,6 +122,7 @@ impl Options {
             //       log file path
             this.logging.log_file = Some(match &this.command {
                 DistantSubcommand::Client(_) => constants::user::CLIENT_LOG_FILE_PATH.to_path_buf(),
+                #[cfg(feature = "host")]
                 DistantSubcommand::Server(_) => constants::user::SERVER_LOG_FILE_PATH.to_path_buf(),
                 DistantSubcommand::Generate(_) => {
                     constants::user::GENERATE_LOG_FILE_PATH.to_path_buf()
@@ -165,6 +217,7 @@ impl Options {
                     ClientSubcommand::Version { network, .. } => {
                         network.merge(config.client.network);
                     }
+                    #[cfg(feature = "ssh")]
                     ClientSubcommand::Ssh {
                         network, options, ..
                     } => {
@@ -200,6 +253,7 @@ impl Options {
                     ManagerSubcommand::Service(_) => (),
                 }
             }
+            #[cfg(feature = "host")]
             DistantSubcommand::Server(cmd) => {
                 update_logging!(server);
                 match cmd {
@@ -283,6 +337,7 @@ pub enum DistantSubcommand {
     Manager(ManagerSubcommand),
 
     /// Perform server commands
+    #[cfg(feature = "host")]
     #[clap(subcommand)]
     Server(ServerSubcommand),
 
@@ -298,6 +353,7 @@ impl DistantSubcommand {
         match self {
             Self::Client(x) => x.format(),
             Self::Manager(x) => x.format(),
+            #[cfg(feature = "host")]
             Self::Server(x) => x.format(),
             Self::Generate(x) => x.format(),
         }
@@ -358,7 +414,8 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
     },
 
     /// Subcommands for file system operations
@@ -414,7 +471,8 @@ pub enum ClientSubcommand {
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
 
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -553,6 +611,7 @@ pub enum ClientSubcommand {
     /// Examples:
     ///   distant ssh user@host              # open an interactive shell
     ///   distant ssh user@host -- ls -la    # run a single command
+    #[cfg(feature = "ssh")]
     #[clap(name = "ssh")]
     Ssh {
         /// Location to store cached data
@@ -585,8 +644,8 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
-        /// Destination in the form [user@]host[:port]
-        destination: Box<Destination>,
+        /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
+        destination: String,
 
         /// Optional command to run instead of opening an interactive shell
         #[clap(name = "CMD", last = true)]
@@ -669,6 +728,7 @@ impl ClientSubcommand {
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
+            #[cfg(feature = "ssh")]
             Self::Ssh { cache, .. } => cache.as_path(),
             Self::Status { cache, .. } => cache.as_path(),
             Self::SystemInfo { cache, .. } => cache.as_path(),
@@ -686,6 +746,7 @@ impl ClientSubcommand {
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
+            #[cfg(feature = "ssh")]
             Self::Ssh { network, .. } => network,
             Self::Status { network, .. } => network,
             Self::SystemInfo { network, .. } => network,
@@ -705,6 +766,7 @@ impl ClientSubcommand {
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
+            #[cfg(feature = "ssh")]
             Self::Ssh { .. } => Format::Shell,
             Self::Status { format, .. } => *format,
             Self::SystemInfo { .. } => Format::Shell,
@@ -1262,6 +1324,7 @@ pub enum ManagerServiceSubcommand {
 }
 
 /// Subcommands for `distant server`.
+#[cfg(feature = "host")]
 #[derive(Debug, PartialEq, Subcommand, IsVariant)]
 pub enum ServerSubcommand {
     /// Listen for incoming requests as a server
@@ -1328,6 +1391,7 @@ pub enum ServerSubcommand {
     },
 }
 
+#[cfg(feature = "host")]
 impl ServerSubcommand {
     /// Format used by the subcommand.
     #[inline]
@@ -1336,6 +1400,7 @@ impl ServerSubcommand {
     }
 }
 
+#[cfg(feature = "host")]
 #[derive(Args, Debug, PartialEq)]
 pub struct ServerListenWatchOptions {
     /// If specified, will use the polling-based watcher for filesystem changes
@@ -1392,6 +1457,7 @@ mod tests {
     //! `Format` enum, `IsVariant` derives, config merge behavior, and CLI
     //! argument parsing.
 
+    #[cfg(feature = "host")]
     use std::time::Duration;
 
     use distant_core::map;
@@ -1402,6 +1468,7 @@ mod tests {
     #[test]
     fn distant_api_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -1439,6 +1506,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -1460,6 +1528,7 @@ mod tests {
     #[test]
     fn distant_api_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -1497,6 +1566,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -1518,6 +1588,7 @@ mod tests {
     #[test]
     fn distant_capabilities_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -1555,6 +1626,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -1576,6 +1648,7 @@ mod tests {
     #[test]
     fn distant_capabilities_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -1613,6 +1686,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -1634,6 +1708,7 @@ mod tests {
     #[test]
     fn distant_connect_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -1648,7 +1723,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1673,6 +1748,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -1687,7 +1763,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1696,6 +1772,7 @@ mod tests {
     #[test]
     fn distant_connect_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -1710,7 +1787,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1735,6 +1812,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -1749,7 +1827,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1758,6 +1836,7 @@ mod tests {
     #[test]
     fn distant_launch_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -1774,7 +1853,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 format: Format::Json,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1806,6 +1885,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -1824,7 +1904,7 @@ mod tests {
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
                     format: Format::Json,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1833,6 +1913,7 @@ mod tests {
     #[test]
     fn distant_launch_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -1849,7 +1930,7 @@ mod tests {
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
                 format: Format::Json,
-                destination: Box::new("test://destination".parse().unwrap()),
+                destination: "test://destination".to_string(),
             }),
         };
 
@@ -1881,6 +1962,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -1899,7 +1981,7 @@ mod tests {
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
                     format: Format::Json,
-                    destination: Box::new("test://destination".parse().unwrap()),
+                    destination: "test://destination".to_string(),
                 }),
             }
         );
@@ -1908,6 +1990,7 @@ mod tests {
     #[test]
     fn distant_shell_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -1944,6 +2027,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -1967,6 +2051,7 @@ mod tests {
     #[test]
     fn distant_shell_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2003,6 +2088,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2026,6 +2112,7 @@ mod tests {
     #[test]
     fn distant_spawn_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2066,6 +2153,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2093,6 +2181,7 @@ mod tests {
     #[test]
     fn distant_spawn_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2133,6 +2222,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2160,6 +2250,7 @@ mod tests {
     #[test]
     fn distant_system_info_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2193,6 +2284,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2213,6 +2305,7 @@ mod tests {
     #[test]
     fn distant_system_info_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2246,6 +2339,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2266,6 +2360,7 @@ mod tests {
     #[test]
     fn distant_fs_copy_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2303,6 +2398,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2327,6 +2423,7 @@ mod tests {
     #[test]
     fn distant_fs_copy_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2364,6 +2461,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2388,6 +2486,7 @@ mod tests {
     #[test]
     fn distant_fs_exists_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2424,6 +2523,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2447,6 +2547,7 @@ mod tests {
     #[test]
     fn distant_fs_exists_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2483,6 +2584,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2506,6 +2608,7 @@ mod tests {
     #[test]
     fn distant_fs_makedir_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2543,6 +2646,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2567,6 +2671,7 @@ mod tests {
     #[test]
     fn distant_fs_makedir_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2604,6 +2709,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2628,6 +2734,7 @@ mod tests {
     #[test]
     fn distant_fs_metadata_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2666,6 +2773,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2691,6 +2799,7 @@ mod tests {
     #[test]
     fn distant_fs_metadata_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2729,6 +2838,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2754,6 +2864,7 @@ mod tests {
     #[test]
     fn distant_fs_read_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2794,6 +2905,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2821,6 +2933,7 @@ mod tests {
     #[test]
     fn distant_fs_read_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2861,6 +2974,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -2888,6 +3002,7 @@ mod tests {
     #[test]
     fn distant_fs_remove_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -2925,6 +3040,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -2949,6 +3065,7 @@ mod tests {
     #[test]
     fn distant_fs_remove_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -2986,6 +3103,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3010,6 +3128,7 @@ mod tests {
     #[test]
     fn distant_fs_rename_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3047,6 +3166,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3071,6 +3191,7 @@ mod tests {
     #[test]
     fn distant_fs_rename_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3108,6 +3229,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3132,6 +3254,7 @@ mod tests {
     #[test]
     fn distant_fs_search_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3171,6 +3294,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3197,6 +3321,7 @@ mod tests {
     #[test]
     fn distant_fs_search_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3236,6 +3361,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3262,6 +3388,7 @@ mod tests {
     #[test]
     fn distant_fs_watch_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3301,6 +3428,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3327,6 +3455,7 @@ mod tests {
     #[test]
     fn distant_fs_watch_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3366,6 +3495,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3392,6 +3522,7 @@ mod tests {
     #[test]
     fn distant_fs_write_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3430,6 +3561,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3455,6 +3587,7 @@ mod tests {
     #[test]
     fn distant_fs_write_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3493,6 +3626,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3518,6 +3652,7 @@ mod tests {
     #[test]
     fn distant_generate_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3542,6 +3677,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3558,6 +3694,7 @@ mod tests {
     #[test]
     fn distant_generate_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3582,6 +3719,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3598,6 +3736,7 @@ mod tests {
     #[test]
     fn distant_manager_capabilities_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3630,6 +3769,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3649,6 +3789,7 @@ mod tests {
     #[test]
     fn distant_manager_capabilities_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3681,6 +3822,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3700,6 +3842,7 @@ mod tests {
     #[test]
     fn distant_status_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3734,6 +3877,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3755,6 +3899,7 @@ mod tests {
     #[test]
     fn distant_status_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3789,6 +3934,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3810,6 +3956,7 @@ mod tests {
     #[test]
     fn distant_kill_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3844,6 +3991,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3865,6 +4013,7 @@ mod tests {
     #[test]
     fn distant_kill_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -3899,6 +4048,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -3920,6 +4070,7 @@ mod tests {
     #[test]
     fn distant_select_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -3954,6 +4105,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -3975,6 +4127,7 @@ mod tests {
     #[test]
     fn distant_select_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -4009,6 +4162,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -4030,6 +4184,7 @@ mod tests {
     #[test]
     fn distant_manager_listen_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -4065,6 +4220,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -4087,6 +4243,7 @@ mod tests {
     #[test]
     fn distant_manager_listen_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -4122,6 +4279,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -4144,6 +4302,7 @@ mod tests {
     #[test]
     fn distant_manager_service_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -4172,6 +4331,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -4191,6 +4351,7 @@ mod tests {
     #[test]
     fn distant_manager_service_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -4219,6 +4380,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -4235,9 +4397,11 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "host")]
     #[test]
     fn distant_server_listen_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -4289,6 +4453,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -4315,9 +4480,11 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "host")]
     #[test]
     fn distant_server_listen_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -4369,6 +4536,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -4540,6 +4708,7 @@ mod tests {
         assert_eq!(cmd.format(), Format::Shell);
     }
 
+    #[cfg(feature = "ssh")]
     #[test]
     fn format_ssh_returns_shell() {
         let cmd = ClientSubcommand::Ssh {
@@ -4549,7 +4718,7 @@ mod tests {
             current_dir: None,
             environment: Default::default(),
             new: false,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
             cmd: None,
         };
         assert_eq!(cmd.format(), Format::Shell);
@@ -4573,7 +4742,7 @@ mod tests {
             network: NetworkSettings::default(),
             format: Format::Json,
             new: false,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
         };
         assert!(cmd.format().is_json());
     }
@@ -4588,7 +4757,7 @@ mod tests {
             options: Default::default(),
             network: NetworkSettings::default(),
             format: Format::Shell,
-            destination: Box::new("test://host".parse().unwrap()),
+            destination: "test://host".to_string(),
         };
         assert_eq!(cmd.format(), Format::Shell);
     }
@@ -4662,24 +4831,27 @@ mod tests {
         let sub = DistantSubcommand::Generate(GenerateSubcommand::Config { output: None });
         assert_eq!(sub.format(), Format::Shell);
 
-        let sub = DistantSubcommand::Server(ServerSubcommand::Listen {
-            host: Value::Default(BindAddress::Any),
-            port: Value::Default(distant_core::net::common::PortRange::EPHEMERAL),
-            use_ipv6: false,
-            shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
-            current_dir: None,
-            daemon: false,
-            watch: ServerListenWatchOptions {
-                watch_polling: false,
-                watch_poll_interval: None,
-                watch_compare_contents: false,
-                watch_debounce_timeout: Value::Default(Seconds::try_from(0.5).unwrap()),
-                watch_debounce_tick_rate: None,
-            },
-            key_from_stdin: false,
-            output_to_local_pipe: None,
-        });
-        assert_eq!(sub.format(), Format::Shell);
+        #[cfg(feature = "host")]
+        {
+            let sub = DistantSubcommand::Server(ServerSubcommand::Listen {
+                host: Value::Default(BindAddress::Any),
+                port: Value::Default(distant_core::net::common::PortRange::EPHEMERAL),
+                use_ipv6: false,
+                shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
+                current_dir: None,
+                daemon: false,
+                watch: ServerListenWatchOptions {
+                    watch_polling: false,
+                    watch_poll_interval: None,
+                    watch_compare_contents: false,
+                    watch_debounce_timeout: Value::Default(Seconds::try_from(0.5).unwrap()),
+                    watch_debounce_tick_rate: None,
+                },
+                key_from_stdin: false,
+                output_to_local_pipe: None,
+            });
+            assert_eq!(sub.format(), Format::Shell);
+        }
 
         let sub = DistantSubcommand::Manager(ManagerSubcommand::Listen {
             access: None,
@@ -4726,7 +4898,7 @@ mod tests {
                 network: net.clone(),
                 format: Format::Shell,
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
             },
             ClientSubcommand::Launch {
                 cache: cache.clone(),
@@ -4736,7 +4908,7 @@ mod tests {
                 options: Default::default(),
                 network: net.clone(),
                 format: Format::Shell,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
             },
             ClientSubcommand::Shell {
                 cache: cache.clone(),
@@ -4769,6 +4941,7 @@ mod tests {
                 network: net.clone(),
                 format: Format::Shell,
             },
+            #[cfg(feature = "ssh")]
             ClientSubcommand::Ssh {
                 cache: cache.clone(),
                 options: Default::default(),
@@ -4776,7 +4949,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             },
             ClientSubcommand::Status {
@@ -4942,17 +5115,20 @@ mod tests {
         };
         assert_eq!(cmd.network_settings(), &net);
 
-        let cmd = ClientSubcommand::Ssh {
-            cache: PathBuf::new(),
-            options: Default::default(),
-            network: net.clone(),
-            current_dir: None,
-            environment: Default::default(),
-            new: false,
-            destination: Box::new("test://host".parse().unwrap()),
-            cmd: None,
-        };
-        assert_eq!(cmd.network_settings(), &net);
+        #[cfg(feature = "ssh")]
+        {
+            let cmd = ClientSubcommand::Ssh {
+                cache: PathBuf::new(),
+                options: Default::default(),
+                network: net.clone(),
+                current_dir: None,
+                environment: Default::default(),
+                new: false,
+                destination: "test://host".to_string(),
+                cmd: None,
+            };
+            assert_eq!(cmd.network_settings(), &net);
+        }
 
         let cmd = ClientSubcommand::Status {
             id: None,
@@ -5199,6 +5375,7 @@ mod tests {
     // -------------------------------------------------------
     // ServerSubcommand::format tests
     // -------------------------------------------------------
+    #[cfg(feature = "host")]
     #[test]
     fn server_listen_format_is_shell() {
         let cmd = ServerSubcommand::Listen {
@@ -5224,9 +5401,11 @@ mod tests {
     // -------------------------------------------------------
     // Ssh merge tests
     // -------------------------------------------------------
+    #[cfg(feature = "ssh")]
     #[test]
     fn distant_ssh_should_support_merging_with_config() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: None,
@@ -5242,7 +5421,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             }),
         };
@@ -5268,6 +5447,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("config-log-file")),
@@ -5283,16 +5463,18 @@ mod tests {
                     current_dir: None,
                     environment: Default::default(),
                     new: false,
-                    destination: Box::new("test://host".parse().unwrap()),
+                    destination: "test://host".to_string(),
                     cmd: None,
                 }),
             }
         );
     }
 
+    #[cfg(feature = "ssh")]
     #[test]
     fn distant_ssh_should_prioritize_explicit_cli_options_when_merging() {
         let mut options = Options {
+            quiet: false,
             config_path: None,
             logging: LoggingSettings {
                 log_file: Some(PathBuf::from("cli-log-file")),
@@ -5308,7 +5490,7 @@ mod tests {
                 current_dir: None,
                 environment: Default::default(),
                 new: false,
-                destination: Box::new("test://host".parse().unwrap()),
+                destination: "test://host".to_string(),
                 cmd: None,
             }),
         };
@@ -5334,6 +5516,7 @@ mod tests {
         assert_eq!(
             options,
             Options {
+                quiet: false,
                 config_path: None,
                 logging: LoggingSettings {
                     log_file: Some(PathBuf::from("cli-log-file")),
@@ -5349,7 +5532,7 @@ mod tests {
                     current_dir: None,
                     environment: Default::default(),
                     new: false,
-                    destination: Box::new("test://host".parse().unwrap()),
+                    destination: "test://host".to_string(),
                     cmd: None,
                 }),
             }
@@ -5359,6 +5542,7 @@ mod tests {
     // -------------------------------------------------------
     // CLI parsing tests for subcommands
     // -------------------------------------------------------
+    #[cfg(feature = "ssh")]
     #[test]
     fn distant_ssh_should_parse_basic() {
         let options = Options::try_parse_from(["distant", "ssh", "user@host"]).unwrap();
@@ -5369,7 +5553,7 @@ mod tests {
                 new,
                 ..
             }) => {
-                assert_eq!(destination.host.to_string(), "host");
+                assert_eq!(destination, "user@host");
                 assert!(cmd.is_none());
                 assert!(!new);
             }
@@ -5377,6 +5561,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ssh")]
     #[test]
     fn distant_ssh_should_parse_with_command() {
         let options =
@@ -5389,6 +5574,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ssh")]
     #[test]
     fn distant_ssh_should_parse_with_new_flag() {
         let options = Options::try_parse_from(["distant", "ssh", "--new", "user@host"]).unwrap();
@@ -5400,6 +5586,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "host")]
     #[test]
     fn distant_server_listen_should_parse_defaults() {
         let options = Options::try_parse_from(["distant", "server", "listen"]).unwrap();
@@ -5418,6 +5605,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "host")]
     #[test]
     fn distant_server_listen_should_parse_with_flags() {
         let options = Options::try_parse_from([
@@ -5601,6 +5789,7 @@ mod tests {
             timeout: None,
         });
         assert!(client.is_client());
+        #[cfg(feature = "host")]
         assert!(!client.is_server());
         assert!(!client.is_manager());
         assert!(!client.is_generate());

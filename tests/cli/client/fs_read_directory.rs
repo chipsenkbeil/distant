@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
 use distant_test_harness::manager::*;
@@ -218,7 +217,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
         .assert()
         .code(1)
         .stdout("")
-        .stderr(predicates::str::is_empty().not());
+        .stderr(predicates::str::contains("error:"));
 }
 
 #[rstest]

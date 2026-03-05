@@ -2,7 +2,7 @@ use crate::auth::msg::AuthenticationResponse;
 use serde::{Deserialize, Serialize};
 
 use super::{ManagerAuthenticationId, ManagerChannelId};
-use crate::net::common::{ConnectionId, Destination, Map, UntypedRequest};
+use crate::net::common::{ConnectionId, Map, UntypedRequest};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -13,8 +13,9 @@ pub enum ManagerRequest {
 
     /// Launch a server using the manager
     Launch {
-        // NOTE: Boxed per clippy's large_enum_variant warning
-        destination: Box<Destination>,
+        /// Raw destination string (e.g. `"docker://ubuntu:22.04"` or `"ssh://host:22"`).
+        /// Parsing is deferred to the plugin matched by scheme.
+        destination: String,
 
         /// Additional options specific to the connection
         options: Map,
@@ -22,8 +23,8 @@ pub enum ManagerRequest {
 
     /// Initiate a connection through the manager
     Connect {
-        // NOTE: Boxed per clippy's large_enum_variant warning
-        destination: Box<Destination>,
+        /// Raw destination string. Parsing is deferred to the plugin matched by scheme.
+        destination: String,
 
         /// Additional options specific to the connection
         options: Map,

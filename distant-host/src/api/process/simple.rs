@@ -56,6 +56,7 @@ impl SimpleProcess {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()?
         };
 
@@ -137,10 +138,13 @@ impl Process for SimpleProcess {
                 task.abort();
             }
             if let Some(task) = this.stdout_task.take() {
-                let _ = task.await;
+                // Abort rather than await: on Windows, killed processes may leave
+                // child processes alive (e.g. cmd /C → ping), keeping pipes open
+                // and blocking the read task indefinitely.
+                task.abort();
             }
             if let Some(task) = this.stderr_task.take() {
-                let _ = task.await;
+                task.abort();
             }
 
             if status.success && status.code.is_none() {

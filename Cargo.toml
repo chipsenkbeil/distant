@@ -15,6 +15,7 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
     "distant-core",
+    "distant-docker",
     "distant-host",
     "distant-ssh",
     "distant-test-harness",
@@ -30,7 +31,10 @@ codegen-units = 1
 strip = true
 
 [features]
-default = []
+default = ["docker", "host", "ssh"]
+docker = ["dep:distant-docker"]
+host = ["dep:distant-host"]
+ssh = ["dep:distant-ssh"]
 
 [dependencies]
 anyhow = "1.0.71"
@@ -41,7 +45,7 @@ config = { version = "0.13.3", default-features = false, features = ["toml"] }
 derive_more = { version = "0.99.17", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.10.4", default-features = false }
 distant-core = { version = "=0.20.0", path = "distant-core" }
-distant-host = { version = "=0.20.0", path = "distant-host" }
+distant-host = { version = "=0.20.0", path = "distant-host", optional = true }
 directories = "5.0.1"
 file-mode = "0.1.2"
 flexi_logger = "0.25.5"
@@ -65,8 +69,11 @@ which = "4.4.0"
 winsplit = "0.1.0"
 whoami = "1.4.0"
 
-# Native SSH functionality (always enabled)
-distant-ssh = { version = "=0.20.0", path = "distant-ssh", default-features = false, features = ["serde"] }
+# Optional Docker backend
+distant-docker = { version = "=0.20.0", path = "distant-docker", optional = true }
+
+# SSH backend (optional)
+distant-ssh = { version = "=0.20.0", path = "distant-ssh", default-features = false, features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.21"
@@ -78,7 +85,7 @@ windows-service = "0.6.0"
 [dev-dependencies]
 assert_cmd = "2.1"
 assert_fs = "1.0.13"
-distant-test-harness = { path = "distant-test-harness" }
+distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
 env_logger = "0.10.0"
 expectrl = "0.8"
 indoc = "2.0.1"

@@ -1,16 +1,17 @@
 use std::fs::FileType as StdFileType;
-use std::path::PathBuf;
 
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 use strum::AsRefStr;
+
+use super::RemotePath;
 
 /// Represents information about a single entry within a directory
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct DirEntry {
     /// Represents the full path to the entry
-    pub path: PathBuf,
+    pub path: RemotePath,
 
     /// Represents the type of the entry as a file/dir/symlink
     pub file_type: FileType,
@@ -52,12 +53,12 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let entry = DirEntry {
-                path: PathBuf::from("dir").join("file"),
+                path: RemotePath::new("dir/file"),
                 file_type: FileType::File,
                 depth: 1,
             };
 
-            let path = entry.path.to_str().unwrap().to_string();
+            let path = entry.path.to_string();
             let value = serde_json::to_value(entry).unwrap();
             assert_eq!(
                 value,
@@ -81,7 +82,7 @@ mod tests {
             assert_eq!(
                 entry,
                 DirEntry {
-                    path: PathBuf::from("test-file"),
+                    path: RemotePath::new("test-file"),
                     file_type: FileType::File,
                     depth: 0,
                 }
@@ -91,7 +92,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let entry = DirEntry {
-                path: PathBuf::from("dir").join("file"),
+                path: RemotePath::new("dir/file"),
                 file_type: FileType::File,
                 depth: 1,
             };
@@ -110,7 +111,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&DirEntry {
-                path: PathBuf::from("test-file"),
+                path: RemotePath::new("test-file"),
                 file_type: FileType::File,
                 depth: 0,
             })
@@ -120,7 +121,7 @@ mod tests {
             assert_eq!(
                 entry,
                 DirEntry {
-                    path: PathBuf::from("test-file"),
+                    path: RemotePath::new("test-file"),
                     file_type: FileType::File,
                     depth: 0,
                 }

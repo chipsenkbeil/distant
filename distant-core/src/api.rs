@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::net::common::ConnectionId;
@@ -9,7 +8,7 @@ use log::*;
 
 use crate::protocol::{
     self, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId, PtySize,
-    SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 
 mod reply;
@@ -78,7 +77,7 @@ pub trait Api {
     fn read_file(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
     ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
         async { unsupported("read_file") }
     }
@@ -92,7 +91,7 @@ pub trait Api {
     fn read_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
     ) -> impl Future<Output = io::Result<String>> + Send {
         async { unsupported("read_file_text") }
     }
@@ -107,7 +106,7 @@ pub trait Api {
     fn write_file(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: Vec<u8>,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("write_file") }
@@ -123,7 +122,7 @@ pub trait Api {
     fn write_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: String,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("write_file_text") }
@@ -139,7 +138,7 @@ pub trait Api {
     fn append_file(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: Vec<u8>,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("append_file") }
@@ -155,7 +154,7 @@ pub trait Api {
     fn append_file_text(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         data: String,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("append_file_text") }
@@ -174,7 +173,7 @@ pub trait Api {
     fn read_dir(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         depth: usize,
         absolute: bool,
         canonicalize: bool,
@@ -193,7 +192,7 @@ pub trait Api {
     fn create_dir(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         all: bool,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("create_dir") }
@@ -209,8 +208,8 @@ pub trait Api {
     fn copy(
         &self,
         ctx: Ctx,
-        src: PathBuf,
-        dst: PathBuf,
+        src: RemotePath,
+        dst: RemotePath,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("copy") }
     }
@@ -225,7 +224,7 @@ pub trait Api {
     fn remove(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         force: bool,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("remove") }
@@ -241,8 +240,8 @@ pub trait Api {
     fn rename(
         &self,
         ctx: Ctx,
-        src: PathBuf,
-        dst: PathBuf,
+        src: RemotePath,
+        dst: RemotePath,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("rename") }
     }
@@ -259,7 +258,7 @@ pub trait Api {
     fn watch(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         recursive: bool,
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
@@ -273,7 +272,7 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    fn unwatch(&self, ctx: Ctx, path: PathBuf) -> impl Future<Output = io::Result<()>> + Send {
+    fn unwatch(&self, ctx: Ctx, path: RemotePath) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("unwatch") }
     }
 
@@ -283,7 +282,7 @@ pub trait Api {
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
-    fn exists(&self, ctx: Ctx, path: PathBuf) -> impl Future<Output = io::Result<bool>> + Send {
+    fn exists(&self, ctx: Ctx, path: RemotePath) -> impl Future<Output = io::Result<bool>> + Send {
         async { unsupported("exists") }
     }
 
@@ -298,7 +297,7 @@ pub trait Api {
     fn metadata(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> impl Future<Output = io::Result<Metadata>> + Send {
@@ -316,7 +315,7 @@ pub trait Api {
     fn set_permissions(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         permissions: Permissions,
         options: SetPermissionsOptions,
     ) -> impl Future<Output = io::Result<()>> + Send {
@@ -361,7 +360,7 @@ pub trait Api {
         ctx: Ctx,
         cmd: String,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> impl Future<Output = io::Result<ProcessId>> + Send {
         async { unsupported("proc_spawn") }
@@ -716,7 +715,7 @@ mod tests {
     //! ApiServerHandler request dispatch (single, parallel batch, sequential batch with fail-fast).
 
     use super::*;
-    use std::path::PathBuf;
+    use crate::protocol::RemotePath;
     use tokio::sync::mpsc;
 
     use crate::net::common::{Header, Request, Response};
@@ -771,7 +770,10 @@ mod tests {
     async fn default_read_file_returns_unsupported() {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
-        let err = api.read_file(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        let err = api
+            .read_file(ctx, RemotePath::from("/tmp"))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 
@@ -780,7 +782,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .read_file_text(ctx, PathBuf::from("/tmp"))
+            .read_file_text(ctx, RemotePath::from("/tmp"))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -791,7 +793,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .write_file(ctx, PathBuf::from("/tmp"), vec![1])
+            .write_file(ctx, RemotePath::from("/tmp"), vec![1])
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -802,7 +804,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .write_file_text(ctx, PathBuf::from("/tmp"), String::new())
+            .write_file_text(ctx, RemotePath::from("/tmp"), String::new())
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -813,7 +815,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .append_file(ctx, PathBuf::from("/tmp"), vec![1])
+            .append_file(ctx, RemotePath::from("/tmp"), vec![1])
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -824,7 +826,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .append_file_text(ctx, PathBuf::from("/tmp"), String::new())
+            .append_file_text(ctx, RemotePath::from("/tmp"), String::new())
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -835,7 +837,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .read_dir(ctx, PathBuf::from("/tmp"), 1, false, false, false)
+            .read_dir(ctx, RemotePath::from("/tmp"), 1, false, false, false)
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -846,7 +848,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .create_dir(ctx, PathBuf::from("/tmp"), false)
+            .create_dir(ctx, RemotePath::from("/tmp"), false)
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -857,7 +859,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .copy(ctx, PathBuf::from("/a"), PathBuf::from("/b"))
+            .copy(ctx, RemotePath::from("/a"), RemotePath::from("/b"))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -868,7 +870,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .remove(ctx, PathBuf::from("/tmp"), false)
+            .remove(ctx, RemotePath::from("/tmp"), false)
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -879,7 +881,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .rename(ctx, PathBuf::from("/a"), PathBuf::from("/b"))
+            .rename(ctx, RemotePath::from("/a"), RemotePath::from("/b"))
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -890,7 +892,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .watch(ctx, PathBuf::from("/tmp"), false, vec![], vec![])
+            .watch(ctx, RemotePath::from("/tmp"), false, vec![], vec![])
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -900,7 +902,10 @@ mod tests {
     async fn default_unwatch_returns_unsupported() {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
-        let err = api.unwatch(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        let err = api
+            .unwatch(ctx, RemotePath::from("/tmp"))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 
@@ -908,7 +913,7 @@ mod tests {
     async fn default_exists_returns_unsupported() {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
-        let err = api.exists(ctx, PathBuf::from("/tmp")).await.unwrap_err();
+        let err = api.exists(ctx, RemotePath::from("/tmp")).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 
@@ -917,7 +922,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .metadata(ctx, PathBuf::from("/tmp"), false, false)
+            .metadata(ctx, RemotePath::from("/tmp"), false, false)
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -930,7 +935,7 @@ mod tests {
         let err = api
             .set_permissions(
                 ctx,
-                PathBuf::from("/tmp"),
+                RemotePath::from("/tmp"),
                 Permissions::default(),
                 SetPermissionsOptions::default(),
             )
@@ -947,7 +952,7 @@ mod tests {
             .search(
                 ctx,
                 SearchQuery {
-                    paths: vec![PathBuf::from("/tmp")],
+                    paths: vec![RemotePath::from("/tmp")],
                     target: protocol::SearchQueryTarget::Path,
                     condition: protocol::SearchQueryCondition::Regex {
                         value: String::from(".*"),
@@ -1050,7 +1055,7 @@ mod tests {
             })
         }
 
-        async fn read_file(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<Vec<u8>> {
+        async fn read_file(&self, _ctx: Ctx, _path: RemotePath) -> io::Result<Vec<u8>> {
             Ok(vec![1, 2, 3])
         }
 
@@ -1059,14 +1064,14 @@ mod tests {
                 family: String::from("unix"),
                 os: String::from("linux"),
                 arch: String::from("x86_64"),
-                current_dir: PathBuf::from("/home"),
+                current_dir: RemotePath::from("/home"),
                 main_separator: '/',
                 username: String::from("test"),
                 shell: String::from("/bin/sh"),
             })
         }
 
-        async fn exists(&self, _ctx: Ctx, _path: PathBuf) -> io::Result<bool> {
+        async fn exists(&self, _ctx: Ctx, _path: RemotePath) -> io::Result<bool> {
             Ok(true)
         }
     }
@@ -1123,7 +1128,7 @@ mod tests {
         let handler = ApiServerHandler::new(MockApi);
         let (ctx, mut rx) = make_request_ctx(
             Msg::Single(protocol::Request::FileRead {
-                path: PathBuf::from("/test"),
+                path: RemotePath::from("/test"),
             }),
             Header::new(),
         );
@@ -1162,7 +1167,7 @@ mod tests {
         let handler = ApiServerHandler::new(MockApi);
         let (ctx, mut rx) = make_request_ctx(
             Msg::Single(protocol::Request::FileReadText {
-                path: PathBuf::from("/test"),
+                path: RemotePath::from("/test"),
             }),
             Header::new(),
         );
@@ -1206,11 +1211,11 @@ mod tests {
         let (ctx, mut rx) = make_request_ctx(
             Msg::Batch(vec![
                 protocol::Request::FileReadText {
-                    path: PathBuf::from("/missing"),
+                    path: RemotePath::from("/missing"),
                 },
                 protocol::Request::Version {},
                 protocol::Request::FileWriteText {
-                    path: PathBuf::from("/x"),
+                    path: RemotePath::from("/x"),
                     text: String::from("data"),
                 },
             ]),
@@ -1244,7 +1249,7 @@ mod tests {
                 protocol::Request::Version {},
                 protocol::Request::SystemInfo {},
                 protocol::Request::Exists {
-                    path: PathBuf::from("/tmp"),
+                    path: RemotePath::from("/tmp"),
                 },
             ]),
             header,
@@ -1273,7 +1278,7 @@ mod tests {
             Msg::Batch(vec![
                 protocol::Request::Version {},
                 protocol::Request::FileReadText {
-                    path: PathBuf::from("/missing"),
+                    path: RemotePath::from("/missing"),
                 },
                 protocol::Request::SystemInfo {},
             ]),
@@ -1307,7 +1312,7 @@ mod tests {
         let (ctx, mut rx) = make_request_ctx(
             Msg::Batch(vec![
                 protocol::Request::FileReadText {
-                    path: PathBuf::from("/missing"),
+                    path: RemotePath::from("/missing"),
                 },
                 protocol::Request::Version {},
                 protocol::Request::SystemInfo {},
@@ -1357,7 +1362,7 @@ mod tests {
         let handler = ApiServerHandler::new(MockApi);
         let (ctx, mut rx) = make_request_ctx(
             Msg::Single(protocol::Request::Exists {
-                path: PathBuf::from("/test"),
+                path: RemotePath::from("/test"),
             }),
             Header::new(),
         );

@@ -8,9 +8,11 @@ pub struct ReadmeDoctests;
 mod api;
 mod config;
 mod constants;
+mod plugin;
 pub use api::Api;
 pub use config::*;
 use distant_core::ApiServerHandler;
+pub use plugin::HostPlugin;
 
 /// Implementation of [`ApiServerHandler`] using [`Api`].
 pub type Handler = ApiServerHandler<Api>;

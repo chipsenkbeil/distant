@@ -27,24 +27,28 @@ static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
     application: String::from("manager"),
 });
 
-mod handlers;
-mod plugins_config;
+mod plugins;
 
 /// Collect all plugins (built-in + external from config) and register them by scheme.
 /// Returns an error if two plugins claim the same scheme.
+#[allow(clippy::vec_init_then_push)]
 fn build_plugin_map(
     extra_plugins: Vec<(String, PathBuf)>,
 ) -> anyhow::Result<HashMap<String, Arc<dyn Plugin>>> {
     let mut map: HashMap<String, Arc<dyn Plugin>> = HashMap::new();
 
-    // Built-in plugins
+    // Built-in plugins — conditionally populated based on enabled features
     let builtins: Vec<Arc<dyn Plugin>> = vec![
-        Arc::new(handlers::DistantPlugin::new()),
-        Arc::new(handlers::SshPlugin),
+        #[cfg(feature = "host")]
+        Arc::new(distant_host::HostPlugin::new()),
+        #[cfg(feature = "ssh")]
+        Arc::new(distant_ssh::SshPlugin),
+        #[cfg(feature = "docker")]
+        Arc::new(distant_docker::DockerPlugin),
     ];
 
     // External plugins from config file + CLI flags
-    let external = plugins_config::load_external_plugins(extra_plugins)?;
+    let external = plugins::load_external_plugins(extra_plugins)?;
 
     let all_plugins = builtins.into_iter().chain(external);
 
@@ -67,18 +71,18 @@ fn build_plugin_map(
     Ok(map)
 }
 
-pub fn run(cmd: ManagerSubcommand) -> CliResult {
+pub fn run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
     match &cmd {
-        ManagerSubcommand::Listen { daemon, .. } if *daemon => run_daemon(cmd),
+        ManagerSubcommand::Listen { daemon, .. } if *daemon => run_daemon(cmd, quiet),
         _ => {
             let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-            rt.block_on(async_run(cmd))
+            rt.block_on(async_run(cmd, quiet))
         }
     }
 }
 
 #[cfg(windows)]
-fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
+fn run_daemon(_cmd: ManagerSubcommand, _quiet: bool) -> CliResult {
     use crate::cli::Spawner;
     let pid = Spawner::spawn_running_background(Vec::new())
         .context("Failed to spawn background process")?;
@@ -87,14 +91,14 @@ fn run_daemon(_cmd: ManagerSubcommand) -> CliResult {
 }
 
 #[cfg(unix)]
-fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
+fn run_daemon(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
     use fork::{Fork, daemon};
 
     debug!("Forking process");
     match daemon(true, true) {
         Ok(Fork::Child) => {
             let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
-            rt.block_on(async { async_run(cmd).await })?;
+            rt.block_on(async { async_run(cmd, quiet).await })?;
             Ok(())
         }
         Ok(Fork::Parent(pid)) => {
@@ -109,8 +113,8 @@ fn run_daemon(cmd: ManagerSubcommand) -> CliResult {
     }
 }
 
-async fn async_run(cmd: ManagerSubcommand) -> CliResult {
-    let ui = Ui::new();
+async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
+    let ui = Ui::new(quiet);
 
     match cmd {
         ManagerSubcommand::Service(ManagerServiceSubcommand::Start { kind, user }) => {
@@ -300,11 +304,14 @@ mod tests {
     #[test]
     fn build_plugin_map_with_no_extras_has_builtins() {
         let map = build_plugin_map(Vec::new()).unwrap();
-        // Should contain "distant" and "ssh"
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"), "missing 'distant' scheme");
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"), "missing 'ssh' scheme");
+        let _ = &map; // suppress unused warning when no features enabled
     }
 
+    #[cfg(all(feature = "host", feature = "ssh"))]
     #[test]
     fn build_plugin_map_builtins_have_correct_names() {
         let map = build_plugin_map(Vec::new()).unwrap();
@@ -333,8 +340,9 @@ mod tests {
             PathBuf::from("/usr/local/bin/myplugin"),
         )];
         let map = build_plugin_map(extras).unwrap();
-        // Should contain builtins plus the extra
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"));
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"));
         assert!(map.contains_key("myplugin"), "missing 'myplugin' scheme");
     }
@@ -342,6 +350,7 @@ mod tests {
     // -------------------------------------------------------
     // build_plugin_map — duplicate scheme detection
     // -------------------------------------------------------
+    #[cfg(feature = "ssh")]
     #[test]
     fn build_plugin_map_rejects_duplicate_builtin_scheme() {
         // Trying to register a plugin with scheme "ssh" should fail
@@ -362,13 +371,15 @@ mod tests {
     #[test]
     fn build_plugin_map_with_multiple_extra_plugins() {
         let extras = vec![
-            ("docker".to_string(), PathBuf::from("/bin/docker-plugin")),
+            ("custom".to_string(), PathBuf::from("/bin/custom-plugin")),
             ("k8s".to_string(), PathBuf::from("/bin/k8s-plugin")),
         ];
         let map = build_plugin_map(extras).unwrap();
-        assert!(map.contains_key("docker"));
+        assert!(map.contains_key("custom"));
         assert!(map.contains_key("k8s"));
+        #[cfg(feature = "host")]
         assert!(map.contains_key("distant"));
+        #[cfg(feature = "ssh")]
         assert!(map.contains_key("ssh"));
     }
 }

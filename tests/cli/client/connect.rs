@@ -31,10 +31,10 @@ fn should_connect_in_default_format(manager_only_ctx: ManagerOnlyCtx) {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Shell format outputs the connection ID
+    // Shell format outputs the numeric connection ID
     assert!(
-        !stdout.trim().is_empty(),
-        "Expected non-empty connect output, got empty"
+        stdout.trim().parse::<u64>().is_ok(),
+        "Expected numeric connection ID, got: {stdout}",
     );
 }
 

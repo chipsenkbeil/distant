@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::io;
-use std::path::PathBuf;
 use std::pin::Pin;
 
 use crate::net::client::Channel;
@@ -12,7 +11,7 @@ use crate::client::{
 };
 use crate::protocol::{
     self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
-    SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -27,25 +26,29 @@ pub trait ChannelExt {
     /// Appends to a remote file using the data from a collection of bytes
     fn append_file(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
     ) -> AsyncReturn<'_, ()>;
 
     /// Appends to a remote file using the data from a string
     fn append_file_text(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
 
     /// Copies a remote file or directory from src to dst
-    fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
+    fn copy(
+        &mut self,
+        src: impl Into<RemotePath>,
+        dst: impl Into<RemotePath>,
+    ) -> AsyncReturn<'_, ()>;
 
     /// Creates a remote directory, optionally creating all parent components if specified
-    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()>;
+    fn create_dir(&mut self, path: impl Into<RemotePath>, all: bool) -> AsyncReturn<'_, ()>;
 
     /// Checks whether the `path` exists on the remote machine
-    fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool>;
+    fn exists(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, bool>;
 
     /// Checks whether this client is compatible with the remote server
     fn is_compatible(&mut self) -> AsyncReturn<'_, bool>;
@@ -53,7 +56,7 @@ pub trait ChannelExt {
     /// Retrieves metadata about a path on a remote machine
     fn metadata(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> AsyncReturn<'_, Metadata>;
@@ -61,7 +64,7 @@ pub trait ChannelExt {
     /// Sets permissions for a path on a remote machine
     fn set_permissions(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         permissions: Permissions,
         options: SetPermissionsOptions,
     ) -> AsyncReturn<'_, ()>;
@@ -75,7 +78,7 @@ pub trait ChannelExt {
     /// Reads entries from a directory, returning a tuple of directory entries and failures
     fn read_dir(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         depth: usize,
         absolute: bool,
         canonicalize: bool,
@@ -83,36 +86,40 @@ pub trait ChannelExt {
     ) -> AsyncReturn<'_, (Vec<DirEntry>, Vec<Failure>)>;
 
     /// Reads a remote file as a collection of bytes
-    fn read_file(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, Vec<u8>>;
+    fn read_file(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, Vec<u8>>;
 
     /// Returns a remote file as a string
-    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, String>;
+    fn read_file_text(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, String>;
 
     /// Removes a remote file or directory, supporting removal of non-empty directories if
     /// force is true
-    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> AsyncReturn<'_, ()>;
+    fn remove(&mut self, path: impl Into<RemotePath>, force: bool) -> AsyncReturn<'_, ()>;
 
     /// Renames a remote file or directory from src to dst
-    fn rename(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
+    fn rename(
+        &mut self,
+        src: impl Into<RemotePath>,
+        dst: impl Into<RemotePath>,
+    ) -> AsyncReturn<'_, ()>;
 
     /// Watches a remote file or directory
     fn watch(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
     ) -> AsyncReturn<'_, Watcher>;
 
     /// Unwatches a remote file or directory
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()>;
+    fn unwatch(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, ()>;
 
     /// Spawns a process on the remote machine
     fn spawn(
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess>;
 
@@ -121,7 +128,7 @@ pub trait ChannelExt {
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess>;
 
@@ -130,7 +137,7 @@ pub trait ChannelExt {
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput>;
 
@@ -146,14 +153,14 @@ pub trait ChannelExt {
     /// Writes a remote file with the data from a collection of bytes
     fn write_file(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
     ) -> AsyncReturn<'_, ()>;
 
     /// Writes a remote file with the data from a string
     fn write_file_text(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
 }
@@ -187,7 +194,7 @@ macro_rules! make_body {
 impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<protocol::Response>> {
     fn append_file(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
     ) -> AsyncReturn<'_, ()> {
         make_body!(
@@ -199,7 +206,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn append_file_text(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()> {
         make_body!(
@@ -209,7 +216,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn copy(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
+    fn copy(
+        &mut self,
+        src: impl Into<RemotePath>,
+        dst: impl Into<RemotePath>,
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             protocol::Request::Copy { src: src.into(), dst: dst.into() },
@@ -217,7 +228,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn create_dir(&mut self, path: impl Into<PathBuf>, all: bool) -> AsyncReturn<'_, ()> {
+    fn create_dir(&mut self, path: impl Into<RemotePath>, all: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             protocol::Request::DirCreate { path: path.into(), all },
@@ -225,7 +236,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn exists(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, bool> {
+    fn exists(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, bool> {
         make_body!(
             self,
             protocol::Request::Exists { path: path.into() },
@@ -248,7 +259,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn metadata(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> AsyncReturn<'_, Metadata> {
@@ -269,7 +280,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn set_permissions(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         permissions: Permissions,
         options: SetPermissionsOptions,
     ) -> AsyncReturn<'_, ()> {
@@ -299,7 +310,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn read_dir(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         depth: usize,
         absolute: bool,
         canonicalize: bool,
@@ -322,7 +333,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn read_file(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, Vec<u8>> {
+    fn read_file(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, Vec<u8>> {
         make_body!(
             self,
             protocol::Request::FileRead { path: path.into() },
@@ -334,7 +345,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn read_file_text(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, String> {
+    fn read_file_text(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, String> {
         make_body!(
             self,
             protocol::Request::FileReadText { path: path.into() },
@@ -346,7 +357,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn remove(&mut self, path: impl Into<PathBuf>, force: bool) -> AsyncReturn<'_, ()> {
+    fn remove(&mut self, path: impl Into<RemotePath>, force: bool) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             protocol::Request::Remove { path: path.into(), force },
@@ -354,7 +365,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn rename(&mut self, src: impl Into<PathBuf>, dst: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
+    fn rename(
+        &mut self,
+        src: impl Into<RemotePath>,
+        dst: impl Into<RemotePath>,
+    ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
             protocol::Request::Rename { src: src.into(), dst: dst.into() },
@@ -364,7 +379,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn watch(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         recursive: bool,
         only: impl Into<ChangeKindSet>,
         except: impl Into<ChangeKindSet>,
@@ -375,13 +390,13 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         Box::pin(async move { Watcher::watch(self.clone(), path, recursive, only, except).await })
     }
 
-    fn unwatch(&mut self, path: impl Into<PathBuf>) -> AsyncReturn<'_, ()> {
+    fn unwatch(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, ()> {
         fn inner_unwatch(
             channel: &mut Channel<
                 protocol::Msg<protocol::Request>,
                 protocol::Msg<protocol::Response>,
             >,
-            path: impl Into<PathBuf>,
+            path: impl Into<RemotePath>,
         ) -> AsyncReturn<'_, ()> {
             make_body!(
                 channel,
@@ -399,7 +414,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteProcess> {
         let cmd = cmd.into();
@@ -417,7 +432,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteLspProcess> {
         let cmd = cmd.into();
@@ -435,7 +450,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         &mut self,
         cmd: impl Into<String>,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> AsyncReturn<'_, RemoteOutput> {
         let cmd = cmd.into();
@@ -473,7 +488,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn write_file(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
     ) -> AsyncReturn<'_, ()> {
         make_body!(
@@ -485,7 +500,7 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
 
     fn write_file_text(
         &mut self,
-        path: impl Into<PathBuf>,
+        path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()> {
         make_body!(
@@ -501,7 +516,7 @@ mod tests {
     //! Tests for ChannelExt convenience methods: file I/O, directory ops, metadata, search,
     //! system info, version, compatibility checks, and mismatched response error handling.
 
-    use std::path::PathBuf;
+    use crate::protocol::RemotePath;
 
     use crate::Client;
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
@@ -532,7 +547,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileAppend { path, data } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
                 assert_eq!(data, [1, 2, 3]);
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -606,7 +621,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileAppendText { path, text } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
                 assert_eq!(text, "hello");
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -634,8 +649,8 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::Copy { src, dst } => {
-                assert_eq!(src, PathBuf::from("/src"));
-                assert_eq!(dst, PathBuf::from("/dst"));
+                assert_eq!(src, RemotePath::from("/src"));
+                assert_eq!(dst, RemotePath::from("/dst"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -662,7 +677,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::DirCreate { path, all } => {
-                assert_eq!(path, PathBuf::from("/test/dir"));
+                assert_eq!(path, RemotePath::from("/test/dir"));
                 assert!(all);
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -690,7 +705,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::Exists { path } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -835,7 +850,7 @@ mod tests {
                 canonicalize,
                 resolve_file_type,
             } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
                 assert!(canonicalize);
                 assert!(!resolve_file_type);
             }
@@ -843,7 +858,7 @@ mod tests {
         }
 
         let expected_metadata = Metadata {
-            canonicalized_path: Some(PathBuf::from("/test/path")),
+            canonicalized_path: Some(RemotePath::from("/test/path")),
             file_type: FileType::File,
             len: 1024,
             readonly: false,
@@ -917,7 +932,7 @@ mod tests {
                 permissions: req_perms,
                 options: req_opts,
             } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
                 assert_eq!(req_perms, permissions);
                 assert_eq!(req_opts, options);
             }
@@ -1003,7 +1018,7 @@ mod tests {
                 canonicalize,
                 include_root,
             } => {
-                assert_eq!(path, PathBuf::from("/test/dir"));
+                assert_eq!(path, RemotePath::from("/test/dir"));
                 assert_eq!(depth, 1);
                 assert!(absolute);
                 assert!(!canonicalize);
@@ -1013,7 +1028,7 @@ mod tests {
         }
 
         let entries = vec![DirEntry {
-            path: PathBuf::from("/test/dir/file.txt"),
+            path: RemotePath::from("/test/dir/file.txt"),
             file_type: FileType::File,
             depth: 1,
         }];
@@ -1066,7 +1081,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileRead { path } => {
-                assert_eq!(path, PathBuf::from("/test/file"));
+                assert_eq!(path, RemotePath::from("/test/file"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1122,7 +1137,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileReadText { path } => {
-                assert_eq!(path, PathBuf::from("/test/file"));
+                assert_eq!(path, RemotePath::from("/test/file"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1177,7 +1192,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::Remove { path, force } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
                 assert!(force);
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -1205,8 +1220,8 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::Rename { src, dst } => {
-                assert_eq!(src, PathBuf::from("/old"));
-                assert_eq!(dst, PathBuf::from("/new"));
+                assert_eq!(src, RemotePath::from("/old"));
+                assert_eq!(dst, RemotePath::from("/new"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1233,7 +1248,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::Unwatch { path } => {
-                assert_eq!(path, PathBuf::from("/test/path"));
+                assert_eq!(path, RemotePath::from("/test/path"));
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1290,7 +1305,7 @@ mod tests {
             family: String::from("unix"),
             os: String::from("macos"),
             arch: String::from("aarch64"),
-            current_dir: PathBuf::from("/home/user"),
+            current_dir: RemotePath::from("/home/user"),
             main_separator: '/',
             username: String::from("user"),
             shell: String::from("/bin/bash"),
@@ -1451,7 +1466,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileWrite { path, data } => {
-                assert_eq!(path, PathBuf::from("/test/file"));
+                assert_eq!(path, RemotePath::from("/test/file"));
                 assert_eq!(data, [4, 5, 6]);
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -1504,7 +1519,7 @@ mod tests {
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
             protocol::Request::FileWriteText { path, text } => {
-                assert_eq!(path, PathBuf::from("/test/file"));
+                assert_eq!(path, RemotePath::from("/test/file"));
                 assert_eq!(text, "hello world");
             }
             x => panic!("Unexpected request: {:?}", x),

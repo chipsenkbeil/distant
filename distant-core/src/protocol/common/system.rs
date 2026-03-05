@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
+
+use super::RemotePath;
 
 /// Represents information about a system
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct SystemInfo {
     pub arch: String,
 
     /// Current working directory of the running server process
-    pub current_dir: PathBuf,
+    pub current_dir: RemotePath,
 
     /// Primary separator for path components for the current platform
     /// as defined in https://doc.rust-lang.org/std/path/constant.MAIN_SEPARATOR.html
@@ -41,7 +41,7 @@ mod tests {
             family: String::from("family"),
             os: String::from("os"),
             arch: String::from("arch"),
-            current_dir: PathBuf::from("current-dir"),
+            current_dir: RemotePath::new("current-dir"),
             main_separator: '/',
             username: String::from("username"),
             shell: String::from("shell"),
@@ -81,7 +81,7 @@ mod tests {
                 family: String::from("family"),
                 os: String::from("os"),
                 arch: String::from("arch"),
-                current_dir: PathBuf::from("current-dir"),
+                current_dir: RemotePath::new("current-dir"),
                 main_separator: '/',
                 username: String::from("username"),
                 shell: String::from("shell"),
@@ -95,7 +95,7 @@ mod tests {
             family: String::from("family"),
             os: String::from("os"),
             arch: String::from("arch"),
-            current_dir: PathBuf::from("current-dir"),
+            current_dir: RemotePath::new("current-dir"),
             main_separator: '/',
             username: String::from("username"),
             shell: String::from("shell"),
@@ -118,7 +118,7 @@ mod tests {
             family: String::from("family"),
             os: String::from("os"),
             arch: String::from("arch"),
-            current_dir: PathBuf::from("current-dir"),
+            current_dir: RemotePath::new("current-dir"),
             main_separator: '/',
             username: String::from("username"),
             shell: String::from("shell"),
@@ -132,7 +132,7 @@ mod tests {
                 family: String::from("family"),
                 os: String::from("os"),
                 arch: String::from("arch"),
-                current_dir: PathBuf::from("current-dir"),
+                current_dir: RemotePath::new("current-dir"),
                 main_separator: '/',
                 username: String::from("username"),
                 shell: String::from("shell"),

@@ -1,9 +1,7 @@
-use std::path::PathBuf;
-
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::common::FileType;
+use crate::protocol::common::{FileType, RemotePath};
 
 /// Represents metadata about some path on a remote machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,7 +9,7 @@ pub struct Metadata {
     /// Canonicalized path to the file or directory, resolving symlinks, only included if flagged
     /// during the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canonicalized_path: Option<PathBuf>,
+    pub canonicalized_path: Option<RemotePath>,
 
     /// Represents the type of the entry as a file/dir/symlink.
     pub file_type: FileType,
@@ -346,7 +344,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_metadata_to_json() {
             let metadata = Metadata {
-                canonicalized_path: Some(PathBuf::from("test-dir")),
+                canonicalized_path: Some(RemotePath::new("test-dir")),
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
@@ -495,7 +493,7 @@ mod tests {
             assert_eq!(
                 metadata,
                 Metadata {
-                    canonicalized_path: Some(PathBuf::from("test-dir")),
+                    canonicalized_path: Some(RemotePath::new("test-dir")),
                     file_type: FileType::Dir,
                     len: 999,
                     readonly: true,
@@ -558,7 +556,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_metadata_to_msgpack() {
             let metadata = Metadata {
-                canonicalized_path: Some(PathBuf::from("test-dir")),
+                canonicalized_path: Some(RemotePath::new("test-dir")),
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
@@ -645,7 +643,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Metadata {
-                canonicalized_path: Some(PathBuf::from("test-dir")),
+                canonicalized_path: Some(RemotePath::new("test-dir")),
                 file_type: FileType::Dir,
                 len: 999,
                 readonly: true,
@@ -687,7 +685,7 @@ mod tests {
             assert_eq!(
                 metadata,
                 Metadata {
-                    canonicalized_path: Some(PathBuf::from("test-dir")),
+                    canonicalized_path: Some(RemotePath::new("test-dir")),
                     file_type: FileType::Dir,
                     len: 999,
                     readonly: true,

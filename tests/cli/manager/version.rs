@@ -36,9 +36,17 @@ fn should_output_version_in_json_format(ctx: ManagerCtx) {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
         .expect("manager version --format json should produce valid JSON");
 
-    // Verify it contains version information
+    // Manager version JSON format is { "version": "<version>" }
+    assert!(parsed.is_object(), "Expected JSON object, got: {parsed}");
+    let obj = parsed.as_object().unwrap();
     assert!(
-        parsed.is_object() || parsed.is_string(),
-        "Expected JSON object or string from manager version, got: {parsed}"
+        obj.contains_key("version"),
+        "Expected 'version' field in JSON, got keys: {:?}",
+        obj.keys().collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        obj["version"].as_str().unwrap(),
+        env!("CARGO_PKG_VERSION"),
+        "Version doesn't match CARGO_PKG_VERSION",
     );
 }

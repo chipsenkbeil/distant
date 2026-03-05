@@ -19,6 +19,11 @@ impl ServerRef {
     pub fn shutdown(&self) {
         let _ = self.shutdown.send(());
     }
+
+    /// Returns a receiver that is notified when [`shutdown`](Self::shutdown) is called.
+    pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
+        self.shutdown.subscribe()
+    }
 }
 
 impl Future for ServerRef {

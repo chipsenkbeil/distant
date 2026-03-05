@@ -53,6 +53,41 @@ impl Destination {
     }
 }
 
+/// Extracts the scheme from a destination string, if present.
+///
+/// Returns `None` for bare hosts like `"host:22"`, `Some("ssh")` for `"ssh://host"`.
+///
+/// # Examples
+///
+/// ```
+/// use distant_core::net::common::extract_scheme;
+///
+/// assert_eq!(extract_scheme("ssh://host:22"), Some("ssh"));
+/// assert_eq!(extract_scheme("docker://ubuntu:22.04"), Some("docker"));
+/// assert_eq!(extract_scheme("host:22"), None);
+/// ```
+pub fn extract_scheme(s: &str) -> Option<&str> {
+    s.split_once("://").map(|(scheme, _)| scheme)
+}
+
+/// Prepends a default scheme if the destination string has none.
+///
+/// # Examples
+///
+/// ```
+/// use distant_core::net::common::ensure_scheme;
+///
+/// assert_eq!(ensure_scheme("host:22", "ssh"), "ssh://host:22");
+/// assert_eq!(ensure_scheme("ssh://host:22", "ssh"), "ssh://host:22");
+/// ```
+pub fn ensure_scheme(s: &str, default: &str) -> String {
+    if s.contains("://") {
+        s.to_string()
+    } else {
+        format!("{default}://{s}")
+    }
+}
+
 impl AsRef<Destination> for &Destination {
     fn as_ref(&self) -> &Destination {
         self
@@ -281,5 +316,33 @@ mod tests {
             port: Some(12345),
         };
         assert_eq!(destination, "[::1]:12345");
+    }
+
+    #[test]
+    fn extract_scheme_returns_scheme_when_present() {
+        assert_eq!(extract_scheme("ssh://host:22"), Some("ssh"));
+        assert_eq!(extract_scheme("docker://ubuntu:22.04"), Some("docker"));
+        assert_eq!(extract_scheme("distant://localhost:59699"), Some("distant"));
+    }
+
+    #[test]
+    fn extract_scheme_returns_none_for_bare_host() {
+        assert_eq!(extract_scheme("host:22"), None);
+        assert_eq!(extract_scheme("localhost"), None);
+    }
+
+    #[test]
+    fn ensure_scheme_adds_default_when_missing() {
+        assert_eq!(ensure_scheme("host:22", "ssh"), "ssh://host:22");
+        assert_eq!(ensure_scheme("localhost", "ssh"), "ssh://localhost");
+    }
+
+    #[test]
+    fn ensure_scheme_preserves_existing_scheme() {
+        assert_eq!(ensure_scheme("ssh://host:22", "docker"), "ssh://host:22");
+        assert_eq!(
+            ensure_scheme("docker://ubuntu:22.04", "ssh"),
+            "docker://ubuntu:22.04"
+        );
     }
 }

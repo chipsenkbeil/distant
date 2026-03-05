@@ -218,6 +218,7 @@ mod tests {
     //! stdin, pty resize, abort lifecycle, and operations on nonexistent processes).
 
     use super::*;
+    use crate::constants::KILL_RESPONSE_TIMEOUT;
     use test_log::test;
 
     // ---- ProcessChannel::default ----
@@ -427,7 +428,7 @@ mod tests {
 
         // Spawn a long-running process
         let cmd = if cfg!(windows) {
-            "cmd /C ping -n 100 127.0.0.1".to_string()
+            "ping -n 100 127.0.0.1".to_string()
         } else {
             "sleep 60".to_string()
         };
@@ -444,15 +445,19 @@ mod tests {
         let result = state.kill(id).await;
         assert!(result.is_ok());
 
-        // Should eventually get a ProcDone
+        // Should get ProcDone quickly — timeout catches pipe-blocking regressions
         let mut got_done = false;
-        while let Some(resp) = rx.recv().await {
+        let deadline = tokio::time::Instant::now() + KILL_RESPONSE_TIMEOUT;
+        while let Ok(Some(resp)) = tokio::time::timeout_at(deadline, rx.recv()).await {
             if matches!(resp, Response::ProcDone { .. }) {
                 got_done = true;
                 break;
             }
         }
-        assert!(got_done, "Never received ProcDone after kill");
+        assert!(
+            got_done,
+            "Never received ProcDone after kill within timeout"
+        );
     }
 
     #[test(tokio::test)]

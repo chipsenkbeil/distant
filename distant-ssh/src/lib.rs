@@ -30,8 +30,12 @@ use ssh2_config_rs::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
+mod plugin;
 mod process;
 mod utils;
+
+pub use plugin::SshPlugin;
+pub use utils::SftpPathBuf;
 
 use api::SshApi;
 
@@ -278,7 +282,10 @@ impl SshAuthHandler for LocalSshAuthHandler {
 }
 
 /// Handles SSH client events from the russh connection, including host key verification.
-struct ClientHandler;
+struct ClientHandler {
+    /// The server's SSH identification string, captured during key exchange.
+    remote_sshid: Arc<Mutex<Option<String>>>,
+}
 
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
@@ -289,6 +296,21 @@ impl client::Handler for ClientHandler {
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
         // TODO: Implement proper host key verification using known_hosts
         async { Ok(true) }
+    }
+
+    fn kex_done(
+        &mut self,
+        _shared_secret: Option<&[u8]>,
+        _names: &russh::Names,
+        session: &mut russh::client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let sshid = String::from_utf8_lossy(session.remote_sshid()).into_owned();
+        let remote_sshid = Arc::clone(&self.remote_sshid);
+        async move {
+            debug!("Remote SSH identification: {}", sshid);
+            *remote_sshid.lock().await = Some(sshid);
+            Ok(())
+        }
     }
 }
 
@@ -301,6 +323,8 @@ pub struct Ssh {
     opts: SshOpts,
     authenticated: bool,
     cached_family: Mutex<Option<SshFamily>>,
+    /// The server's SSH identification string, captured during key exchange.
+    remote_sshid: Arc<Mutex<Option<String>>>,
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
@@ -367,7 +391,10 @@ impl Ssh {
             port
         );
 
-        let handler = ClientHandler;
+        let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let handler = ClientHandler {
+            remote_sshid: Arc::clone(&remote_sshid),
+        };
         let connect_result =
             russh::client::connect(Arc::new(config), (host.as_ref(), port), handler).await;
 
@@ -416,6 +443,7 @@ impl Ssh {
             opts,
             authenticated: false,
             cached_family: Mutex::new(None),
+            remote_sshid,
         })
     }
 
@@ -731,7 +759,10 @@ impl Ssh {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
-    /// Detects whether the family is Unix or Windows
+    /// Detects whether the family is Unix or Windows.
+    ///
+    /// Uses a layered detection strategy: SSH identification string, then SFTP
+    /// `canonicalize(".")`, then exec fallback. The result is cached for subsequent calls.
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
         {
             let guard = self.cached_family.lock().await;
@@ -740,12 +771,15 @@ impl Ssh {
             }
         }
 
-        let is_windows = utils::is_windows(&self.handle).await?;
+        let sshid = self.remote_sshid.lock().await.clone();
+        let is_windows = utils::is_windows(&self.handle, sshid.as_deref()).await?;
         let family = if is_windows {
             SshFamily::Windows
         } else {
             SshFamily::Unix
         };
+
+        debug!("Detected remote family: {:?}", family);
 
         {
             let mut guard = self.cached_family.lock().await;
@@ -2045,7 +2079,9 @@ mod tests {
     async fn client_handler_check_server_key_always_accepts() {
         use russh::client::Handler;
 
-        let mut handler = ClientHandler;
+        let mut handler = ClientHandler {
+            remote_sshid: Arc::new(Mutex::new(None)),
+        };
 
         // Generate a test public key by creating a keypair
         let private_key = russh::keys::PrivateKey::random(
@@ -2055,7 +2091,7 @@ mod tests {
         .unwrap();
         let public_key = private_key.public_key();
 
-        let result = handler.check_server_key(public_key).await;
+        let result: Result<bool, russh::Error> = handler.check_server_key(public_key).await;
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -2435,7 +2471,9 @@ mod tests {
     async fn client_handler_check_server_key_ed25519() {
         use russh::client::Handler;
 
-        let mut handler = ClientHandler;
+        let mut handler = ClientHandler {
+            remote_sshid: Arc::new(Mutex::new(None)),
+        };
 
         // Generate an Ed25519 key
         let private_key = russh::keys::PrivateKey::random(
@@ -2446,7 +2484,8 @@ mod tests {
         let public_key = private_key.public_key();
 
         // Should always return Ok(true) regardless of key type
-        assert!(handler.check_server_key(public_key).await.unwrap());
+        let result: Result<bool, russh::Error> = handler.check_server_key(public_key).await;
+        assert!(result.unwrap());
     }
 
     // --- parse_ssh_config additional hosts ---

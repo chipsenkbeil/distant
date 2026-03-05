@@ -8,13 +8,15 @@ manipulation.
 ## Project Overview
 
 - **Language:** Rust (Edition 2024, MSRV 1.88.0)
-- **Architecture:** Cargo workspace with 4 member crates
+- **Architecture:** Cargo workspace with 5 member crates
 - **Project Type:** CLI application with client-server architecture
 - **Main Crates:**
   - `distant` - Main binary implementation providing commands like `distant
     api`, `distant connect`, and `distant launch`
   - `distant-core` - Core library with API, protocol, plugin trait, and
     utilities
+  - `distant-docker` - Docker backend plugin using the Bollard API to interact
+    with Unix containers (the Docker host can be any platform)
   - `distant-host` - Custom server implementation to run on a host machine that
     implements the full distant specification, also providing a client-side
     plugin
@@ -22,7 +24,7 @@ manipulation.
     specification
   - `distant-test-harness` - non-published crate that provides test utilities to
     run e2e system tests that involve standing up distant servers, managers,
-    sshd, and more
+    sshd, Docker containers, and more
 
 ## General AI Workflow
 
@@ -55,8 +57,9 @@ To move beyond basic code generation, use the following patterns:
    on what has changed.
     1. **All tests:** `cargo test --all-features --workspace`
     2. **Core tests:** `cargo test --all-features -p distant-core`
-    2. **Host tests:** `cargo test --all-features -p distant-host`
-    2. **SSH tests:** `cargo test --all-features -p distant-ssh`
+    3. **Docker tests:** `cargo test --all-features -p distant-docker`
+    4. **Host tests:** `cargo test --all-features -p distant-host`
+    5. **SSH tests:** `cargo test --all-features -p distant-ssh`
 
 ## Memory Bank Maintenance (`CLAUDE.md` aka `AGENTS.md`)
 
@@ -84,10 +87,33 @@ Prevent *context drift* by treating project documentation as a living journal:
 Decisions we make that are considered shortcuts that we need to come back to
 later to resolve will be placed here.
 
-1. `win_service.rs` has `#![allow(dead_code)]` — Windows service integration
+Each item is tagged with a category:
+
+- **(Bug)** — Produces incorrect results, wrong behavior, or data corruption.
+- **(Limitation)** — Missing or unsupported functionality that is known and
+  intentionally deferred.
+- **(Workaround)** — Correct behavior achieved through a non-ideal mechanism
+  (e.g. fallback paths, platform shims). Works today but should be replaced
+  with a cleaner solution.
+- **(Acknowledgement)** — Known inconsistency or rough edge that is not
+  currently causing failures but could in the future.
+
+1. **(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service integration
    may be incomplete/untested.
-2. Windows CI SSH tests have intermittent auth failures from resource
-   contention — mitigated with nextest retries (4x), not root-caused.
+2. **(Acknowledgement)** Windows CI SSH tests have intermittent auth failures
+   from resource contention — mitigated with nextest retries (4x). Root cause
+   of the 19/47 consistent failures was the system sshd service running on the
+   `windows-latest` VM, conflicting with per-test sshd instances; resolved by
+   stopping the system service in CI.
+3. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
+   (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
+   `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
+   directory, which causes "Cannot perform a cyclic copy" when src and dst are
+   sibling files in the same directory.
+4. **(Limitation)** Docker image pull has no CLI-visible progress — `info!`
+   logs require `--log-level info` and go to the log file. Need a progress
+   callback mechanism (e.g. `ManagerResponse::Progress`) for real-time spinner
+   updates during long plugin operations like image pulls.
 
 ## Tooling & Command Reference
 
@@ -105,6 +131,7 @@ cargo build --all-features --workspace
 
 # Build specific crates
 cargo build -p distant-core
+cargo build -p distant-docker
 cargo build -p distant-host
 cargo build -p distant-ssh
 ```
@@ -159,9 +186,11 @@ cargo install --locked cargo-nextest
 cargo nextest run --profile ci --all-features --workspace --all-targets
 ```
 
-The nextest configuration lives in `.config/nextest.toml` and defines SSH test
-throttling (`max-threads = 4` for `distant-ssh` tests), a retry policy (4
-retries), and slow-timeout settings (60s period, terminate after 3 periods).
+The nextest configuration lives in `.config/nextest.toml` and defines two test
+groups: SSH throttling (`max-threads = 4` for `distant-ssh`) and Docker
+throttling (`max-threads = 2` for `distant-docker`). These groups are assigned
+via `[profile.default.overrides]`. The CI profile adds retries (4) and
+slow-timeout (60s period, terminate after 3 periods).
 
 ## Coding Style & Standards
 
@@ -176,6 +205,18 @@ standards.
 4. **Serialization:** Serde for JSON/TOML, MessagePack for protocol
 5. **CLI:** Clap v4 with derive macros
 6. **Logging:** Use `log` crate macros, configured via `flexi_logger`
+7. **Remote paths:** Use `RemotePath` (not `PathBuf`) in all protocol and API
+   signatures. `RemotePath` is a `String` newtype with no encoding assumptions —
+   each plugin interprets paths in its own context (Docker = always Unix,
+   SSH = auto-detected). Defined in `distant-core/src/protocol/common/remote_path.rs`,
+   re-exported via `distant_core::protocol::RemotePath`.
+8. **Plugin architecture:** Backend integrations implement the `Plugin` trait
+   (`distant_core::Plugin`), which provides `connect()` and optionally
+   `launch()`. Plugins receive raw destination strings (not parsed `Destination`
+   structs), allowing non-standard URI formats like `docker://ubuntu:22.04`.
+   Helpers `extract_scheme()` and `parse_destination()` are re-exported from
+   `distant_core` for standard URI parsing. External process-based plugins use
+   `ProcessPlugin` (see `PLUGINS.md`).
 
 ### Anti-Patterns
 
@@ -191,6 +232,32 @@ Keep a list of patterns to **avoid**:
 4. Don't run mass parallel SSH integration tests without throttling — use
    nextest `test-groups` with `max-threads` (configured in
    `.config/nextest.toml`).
+5. Always create a **feature branch** before starting multi-file or multi-phase
+   work — never commit directly to `master`. Use
+   `git checkout -b feature/<name>` before writing any code.
+6. **Commit per-phase** (or at minimum per logical unit of work) — don't
+   accumulate an entire feature as uncommitted changes across many phases. Each
+   phase should be a separate commit with `cargo fmt` and `cargo clippy` passing
+   before the commit is created.
+7. Always **run tests** (`cargo test --all-features -p <crate>`) after creating
+   or modifying test files — don't assume tests compile or pass without actually
+   executing them.
+8. Don't use forward-slash separators inside `PathBuf::join()` for
+   multi-component paths — `join("a/b/c")` embeds a Unix separator and
+   can break on Windows. Use chained `.join("a").join("b").join("c")`.
+9. Never bypass GPG commit signing — don't use `-c commit.gpgsign=false`
+   or `--no-gpg-sign`. If `gpg failed to sign the data`, stop and let the
+   user resolve the signing issue. The user's GPG key also handles SSH
+   push authentication.
+10. Never dismiss test failures as "intermittent" or "pre-existing" without
+    investigation. Every failure — even if it only reproduces sometimes —
+    must be analyzed to determine the root cause and a recommendation given
+    to fix it. If the root cause is a bug in production code, focus the
+    recommendation on the production code fix, not on test workarounds.
+11. Don't use `xcopy /E /I /Y` for single-file copies on Windows via SSH — the
+    `/I` flag makes xcopy treat the destination as a directory, causing "Cannot
+    perform a cyclic copy" when src and dst are in the same directory. Use
+    `copy /Y` for files and reserve `xcopy` for directory copies.
 
 ### Format standards
 

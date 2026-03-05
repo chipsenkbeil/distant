@@ -3,12 +3,13 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::ops::{BitOr, Sub};
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use derive_more::{Deref, DerefMut, IntoIterator};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, EnumVariantNames, VariantNames};
+
+use super::RemotePath;
 
 /// Change to a path on the filesystem.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,7 +23,7 @@ pub struct Change {
     pub kind: ChangeKind,
 
     /// Path that was changed
-    pub path: PathBuf,
+    pub path: RemotePath,
 
     /// Additional details associated with the change
     #[serde(default, skip_serializing_if = "ChangeDetails::is_empty")]
@@ -40,7 +41,7 @@ pub struct ChangeDetails {
     /// When event is renaming, this will be populated with the resulting name
     /// when we know both the old and new names (for kind == rename)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub renamed: Option<PathBuf>,
+    pub renamed: Option<RemotePath>,
 
     /// Unix timestamps (in seconds) related to the change. For other platforms, their timestamps
     /// are converted into a Unix timestamp format.
@@ -722,7 +723,7 @@ mod tests {
         #[test]
         fn is_empty_should_return_false_when_renamed_is_set() {
             let details = ChangeDetails {
-                renamed: Some(PathBuf::from("/new/name")),
+                renamed: Some(RemotePath::new("/new/name")),
                 ..Default::default()
             };
             assert!(!details.is_empty());
@@ -794,7 +795,7 @@ mod tests {
             let change = Change {
                 timestamp: 1000,
                 kind: ChangeKind::Create,
-                path: PathBuf::from("/tmp/file.txt"),
+                path: RemotePath::new("/tmp/file.txt"),
                 details: ChangeDetails::default(),
             };
 
@@ -816,9 +817,9 @@ mod tests {
             let change = Change {
                 timestamp: 2000,
                 kind: ChangeKind::Rename,
-                path: PathBuf::from("/old/name"),
+                path: RemotePath::new("/old/name"),
                 details: ChangeDetails {
-                    renamed: Some(PathBuf::from("/new/name")),
+                    renamed: Some(RemotePath::new("/new/name")),
                     ..Default::default()
                 },
             };
@@ -832,7 +833,7 @@ mod tests {
             let change = Change {
                 timestamp: 3000,
                 kind: ChangeKind::Modify,
-                path: PathBuf::from("/some/path"),
+                path: RemotePath::new("/some/path"),
                 details: ChangeDetails {
                     attribute: Some(ChangeDetailsAttribute::Permissions),
                     timestamp: Some(4000),
@@ -857,7 +858,7 @@ mod tests {
             let change: Change = serde_json::from_value(value).unwrap();
             assert_eq!(change.timestamp, 500);
             assert_eq!(change.kind, ChangeKind::Delete);
-            assert_eq!(change.path, PathBuf::from("/gone"));
+            assert_eq!(change.path, RemotePath::new("/gone"));
             assert!(change.details.is_empty());
         }
     }

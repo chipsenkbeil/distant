@@ -128,7 +128,8 @@ impl RegisteredPath {
         }
 
         // Only send if this registered path applies to the changed path
-        if self.applies_to_path(&change.path) {
+        let change_path: PathBuf = change.path.clone().into();
+        if self.applies_to_path(&change_path) {
             self.reply.send(Response::Changed(change)).map(|_| true)
         } else {
             Ok(false)
@@ -204,7 +205,7 @@ mod tests {
 
     use std::collections::hash_map::DefaultHasher;
 
-    use distant_core::protocol::{ChangeDetails, ChangeKind};
+    use distant_core::protocol::{ChangeDetails, ChangeKind, RemotePath};
 
     /// Simple test reply that captures sent responses via a std mpsc channel
     struct TestReply(std::sync::mpsc::Sender<Response>);
@@ -432,7 +433,7 @@ mod tests {
             Change {
                 timestamp: 0,
                 kind,
-                path,
+                path: RemotePath::from(path),
                 details: ChangeDetails::default(),
             }
         }
@@ -462,7 +463,7 @@ mod tests {
             match response {
                 Response::Changed(c) => {
                     assert_eq!(c.kind, ChangeKind::Create);
-                    assert_eq!(c.path, child);
+                    assert_eq!(c.path, RemotePath::from(child));
                 }
                 other => panic!("Expected Response::Changed, got {:?}", other),
             }

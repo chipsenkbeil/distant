@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{fmt, io, thread};
 
 use anyhow::Context;
@@ -17,6 +17,7 @@ use log::*;
 use once_cell::sync::Lazy;
 use rstest::*;
 
+use crate::process::{kill_process_tree, set_process_group};
 use crate::utils::ci_path_to_string;
 
 #[derive(Deref, DerefMut)]
@@ -46,8 +47,6 @@ const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
 
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
-
-const MAX_DROP_WAIT_TIME: Duration = Duration::from_millis(500);
 
 /// Sets restrictive Windows ACLs on a file so that Windows OpenSSH accepts it.
 /// In admin contexts, removes inherited permissions and sets exact ACLs.
@@ -532,73 +531,29 @@ impl Sshd {
                 .with_context(|| format!("Port {port} already taken"))?,
         );
 
-        #[cfg(windows)]
-        {
-            warn!(
-                "Attempting to spawn sshd on Windows - this may require administrator privileges"
-            );
-
-            // Log the exact command being executed
-            error!(
-                "Spawning sshd with command: {:?} {:?}",
-                BIN_PATH.as_path(),
-                [
-                    "-D",
-                    "-p",
-                    &port.to_string(),
-                    "-f",
-                    config_path.as_ref().to_string_lossy().as_ref(),
-                    "-E",
-                    log_path.as_ref().to_string_lossy().as_ref()
-                ]
-            );
-
-            // Check if sshd binary exists and is accessible
-            if let Ok(metadata) = std::fs::metadata(&*BIN_PATH) {
-                error!(
-                    "sshd binary info: path={:?}, size={}, readonly={}",
-                    BIN_PATH.as_path(),
-                    metadata.len(),
-                    metadata.permissions().readonly()
-                );
-            } else {
-                error!(
-                    "sshd binary not found or not accessible at {:?}",
-                    BIN_PATH.as_path()
-                );
-            }
-        }
-
-        let mut child = Command::new(BIN_PATH.as_path())
-            .arg("-D")
+        let mut cmd = Command::new(BIN_PATH.as_path());
+        cmd.arg("-D")
             .arg("-p")
             .arg(port.to_string())
             .arg("-f")
             .arg(config_path.as_ref())
             .arg("-E")
-            .arg(log_path.as_ref())
-            .spawn()
-            .with_context(|| {
-                #[cfg(windows)]
-                {
-                    format!(
-                        "Failed to spawn {:?}. On Windows Server 2025, sshd requires:\n\
-                         1. Host key files owned by SYSTEM account\n\
-                         2. Proper ACL permissions (SYSTEM:F, Administrators:F)\n\
-                         3. No conflicting SSH services on the same port\n\
-                         4. Administrator privileges for the test process\n\
-                         \nTroubleshooting:\n\
-                         - Check if system SSH service is running on port 22\n\
-                         - Verify host key file permissions with 'icacls'\n\
-                         - Ensure OpenSSH is properly installed",
-                        BIN_PATH.as_path()
-                    )
-                }
-                #[cfg(not(windows))]
-                {
-                    format!("Failed to spawn {:?}", BIN_PATH.as_path())
-                }
-            })?;
+            .arg(log_path.as_ref());
+        set_process_group(&mut cmd);
+        let mut child = cmd.spawn().with_context(|| {
+            #[cfg(windows)]
+            {
+                format!(
+                    "Failed to spawn {:?}. Ensure the system sshd service is stopped \
+                     and the host key files have correct permissions.",
+                    BIN_PATH.as_path()
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                format!("Failed to spawn {:?}", BIN_PATH.as_path())
+            }
+        })?;
 
         // Check immediately for instant failures (like permission/config errors)
         if let Some(exit_status) = child
@@ -615,41 +570,20 @@ impl Sshd {
             error!("sshd stdout: {}", String::from_utf8_lossy(&output.stdout));
             error!("sshd stderr: {}", String::from_utf8_lossy(&output.stderr));
 
-            // Windows Server 2025 specific diagnostics on failure
             #[cfg(windows)]
             {
-                // Detect Windows version
-                if let Ok(output) = Command::new("ver").output()
-                    && let Ok(version) = String::from_utf8(output.stdout)
+                // Check if system SSH service is conflicting
+                if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output()
+                    && let Ok(status) = String::from_utf8(output.stdout)
+                    && status.contains("RUNNING")
                 {
-                    error!("Windows version: {}", version.trim());
-                    if version.contains("2025") || version.contains("26100") {
-                        error!(
-                            "Windows Server 2025 detected - requires SYSTEM file ownership for sshd"
-                        );
-                    }
+                    error!("System SSH service is RUNNING - may conflict with test sshd instances");
                 }
 
-                // Check system SSH service conflicts
-                if let Ok(output) = Command::new("sc").args(["query", "sshd"]).output() {
-                    if let Ok(status) = String::from_utf8(output.stdout) {
-                        if status.contains("RUNNING") {
-                            error!(
-                                "System SSH service is RUNNING - may conflict with test sshd instances"
-                            );
-                        } else if status.contains("STOPPED") {
-                            error!("System SSH service is STOPPED");
-                        }
-                    }
-                } else {
-                    error!("Could not check system SSH service status");
-                }
-
-                // Check Windows OpenSSH version
+                // Log OpenSSH version for diagnostics
                 if let Ok(output) = Command::new(BIN_PATH.as_path()).arg("-V").output()
                     && let Ok(version) = String::from_utf8(output.stderr)
                 {
-                    // SSH version goes to stderr
                     error!("OpenSSH version: {}", version.trim());
                 }
             }
@@ -727,37 +661,17 @@ impl Sshd {
                 out.push('\n');
                 out.push('\n');
 
-                // Add Windows-specific diagnostic information
+                // Check if system SSH service is conflicting
                 #[cfg(windows)]
+                if let Ok(output) = std::process::Command::new("sc")
+                    .args(["query", "sshd"])
+                    .output()
+                    && let Ok(status) = String::from_utf8(output.stdout)
+                    && status.contains("RUNNING")
                 {
-                    out.push_str("= WINDOWS DIAGNOSTICS\n");
-                    out.push_str("====================\n");
-
-                    // Check if this is Windows Server 2025 which has stricter requirements
-                    if let Ok(output) = std::process::Command::new("ver").output()
-                        && let Ok(version) = String::from_utf8(output.stdout)
-                    {
-                        out.push_str(&format!("Windows Version: {}\n", version.trim()));
-                        if version.contains("2025") || version.contains("26100") {
-                            out.push_str(
-                                "Detected Windows Server 2025 - requires SYSTEM file ownership\n",
-                            );
-                        }
-                    }
-
-                    // Check if system SSH service is running
-                    if let Ok(output) = std::process::Command::new("sc")
-                        .args(["query", "sshd"])
-                        .output()
-                        && let Ok(status) = String::from_utf8(output.stdout)
-                        && status.contains("RUNNING")
-                    {
-                        out.push_str(
-                            "System SSH service is RUNNING - may conflict with test instances\n",
-                        );
-                    }
-
-                    out.push('\n');
+                    out.push_str(
+                        "WARNING: System SSH service is RUNNING - may conflict with test instances\n",
+                    );
                 }
 
                 out.push_str("====================\n");
@@ -792,30 +706,25 @@ impl Sshd {
 }
 
 impl Drop for Sshd {
-    /// Kills server upon drop
+    /// Kills server and all descendant processes upon drop.
+    ///
+    /// Captures the sshd log file before cleanup so CI can inspect what
+    /// the sshd saw when channels went silent or tests timed out.
     fn drop(&mut self) {
-        debug!("Dropping sshd");
+        debug!("Dropping sshd on port {}", self.port);
+
+        // Kill sshd BEFORE reading the log file. On Windows, sshd holds an
+        // exclusive lock on its log file while running (os error 32).
+        // kill_process_tree() calls child.wait(), guaranteeing the process
+        // has exited and released the lock before we try to read.
         if let Some(mut child) = self.child.lock().unwrap().take() {
-            let _ = child.kill();
-
-            // Wait for a maximum period of time
-            let start = Instant::now();
-            while start.elapsed() < MAX_DROP_WAIT_TIME {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        debug!("Sshd finished");
-                        return;
-                    }
-                    Err(x) => {
-                        error!("Failed to wait for sshd to quit: {x}");
-                        return;
-                    }
-                    _ => thread::sleep(MAX_DROP_WAIT_TIME / 10),
-                }
-            }
-
-            error!("Timed out waiting for sshd to quit");
+            kill_process_tree(&mut child);
+            debug!("Sshd on port {} finished", self.port);
         }
+
+        // Log file is inside self.tmp (TempDir). Since we have a manual Drop
+        // impl, struct fields drop AFTER this method returns, so tmp still exists.
+        self.print_log_file();
     }
 }
 

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::common::{
-    ChangeKind, Cmd, Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions,
+    ChangeKind, Cmd, Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery,
+    SetPermissionsOptions,
 };
 use crate::protocol::utils;
 
@@ -19,21 +19,21 @@ pub enum Request {
     /// Reads a file from the specified path on the remote machine
     FileRead {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
     },
 
     /// Reads a file from the specified path on the remote machine
     /// and treats the contents as text
     FileReadText {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
     },
 
     /// Writes a file, creating it if it does not exist, and overwriting any existing content
     /// on the remote machine
     FileWrite {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Data for server-side writing of content
         #[serde(with = "serde_bytes")]
@@ -44,7 +44,7 @@ pub enum Request {
     /// and overwriting any existing content on the remote machine
     FileWriteText {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Data for server-side writing of content
         text: String,
@@ -53,7 +53,7 @@ pub enum Request {
     /// Appends to a file, creating it if it does not exist, on the remote machine
     FileAppend {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Data for server-side writing of content
         #[serde(with = "serde_bytes")]
@@ -63,7 +63,7 @@ pub enum Request {
     /// Appends text to a file, creating it if it does not exist, on the remote machine
     FileAppendText {
         /// The path to the file on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Data for server-side writing of content
         text: String,
@@ -72,7 +72,7 @@ pub enum Request {
     /// Reads a directory from the specified path on the remote machine
     DirRead {
         /// The path to the directory on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Maximum depth to traverse with 0 indicating there is no maximum
         /// depth and 1 indicating the most immediate children within the
@@ -105,7 +105,7 @@ pub enum Request {
     /// Creates a directory on the remote machine
     DirCreate {
         /// The path to the directory on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Whether or not to create all parent directories
         #[serde(default, skip_serializing_if = "utils::is_false")]
@@ -115,7 +115,7 @@ pub enum Request {
     /// Removes a file or directory on the remote machine
     Remove {
         /// The path to the file or directory on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Whether or not to remove all contents within directory if is a directory.
         /// Does nothing different for files
@@ -126,25 +126,25 @@ pub enum Request {
     /// Copies a file or directory on the remote machine
     Copy {
         /// The path to the file or directory on the remote machine
-        src: PathBuf,
+        src: RemotePath,
 
         /// New location on the remote machine for copy of file or directory
-        dst: PathBuf,
+        dst: RemotePath,
     },
 
     /// Moves/renames a file or directory on the remote machine
     Rename {
         /// The path to the file or directory on the remote machine
-        src: PathBuf,
+        src: RemotePath,
 
         /// New location on the remote machine for the file or directory
-        dst: PathBuf,
+        dst: RemotePath,
     },
 
     /// Watches a path for changes
     Watch {
         /// The path to the file, directory, or symlink on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// If true, will recursively watch for changes within directories, othewise
         /// will only watch for changes immediately within directories
@@ -163,19 +163,19 @@ pub enum Request {
     /// Unwatches a path for changes, meaning no additional changes will be reported
     Unwatch {
         /// The path to the file, directory, or symlink on the remote machine
-        path: PathBuf,
+        path: RemotePath,
     },
 
     /// Checks whether the given path exists
     Exists {
         /// The path to the file or directory on the remote machine
-        path: PathBuf,
+        path: RemotePath,
     },
 
     /// Retrieves filesystem metadata for the specified path on the remote machine
     Metadata {
         /// The path to the file, directory, or symlink on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// Whether or not to include a canonicalized version of the path, meaning
         /// returning the canonical, absolute form of a path with all
@@ -191,7 +191,7 @@ pub enum Request {
     /// Sets permissions on a file, directory, or symlink on the remote machine
     SetPermissions {
         /// The path to the file, directory, or symlink on the remote machine
-        path: PathBuf,
+        path: RemotePath,
 
         /// New permissions to apply to the file, directory, or symlink
         permissions: Permissions,
@@ -224,7 +224,7 @@ pub enum Request {
 
         /// Alternative current directory for the remote process
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
 
         /// If provided, will spawn process in a pty, otherwise spawns directly
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -273,7 +273,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -297,7 +297,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -305,7 +305,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -322,7 +322,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             })
             .unwrap();
 
@@ -330,7 +330,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -342,7 +342,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileReadText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -366,7 +366,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileReadText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -374,7 +374,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileReadText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -391,7 +391,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileReadText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             })
             .unwrap();
 
@@ -399,7 +399,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileReadText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -411,7 +411,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileWrite {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             };
 
@@ -438,7 +438,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileWrite {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
                 }
             );
@@ -447,7 +447,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileWrite {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             };
 
@@ -465,7 +465,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileWrite {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             })
             .unwrap();
@@ -474,7 +474,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileWrite {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
                 }
             );
@@ -487,7 +487,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileWriteText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             };
 
@@ -514,7 +514,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileWriteText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     text: String::from("text"),
                 }
             );
@@ -523,7 +523,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileWriteText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             };
 
@@ -541,7 +541,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileWriteText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             })
             .unwrap();
@@ -550,7 +550,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileWriteText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     text: String::from("text"),
                 }
             );
@@ -563,7 +563,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileAppend {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             };
 
@@ -590,7 +590,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileAppend {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
                 }
             );
@@ -599,7 +599,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileAppend {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             };
 
@@ -617,7 +617,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileAppend {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
             })
             .unwrap();
@@ -626,7 +626,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileAppend {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
                 }
             );
@@ -639,7 +639,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileAppendText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             };
 
@@ -666,7 +666,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileAppendText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     text: String::from("text"),
                 }
             );
@@ -675,7 +675,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileAppendText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             };
 
@@ -693,7 +693,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileAppendText {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 text: String::from("text"),
             })
             .unwrap();
@@ -702,7 +702,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::FileAppendText {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     text: String::from("text"),
                 }
             );
@@ -715,7 +715,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: 1,
                 absolute: false,
                 canonicalize: false,
@@ -735,7 +735,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: usize::MAX,
                 absolute: true,
                 canonicalize: true,
@@ -767,7 +767,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     depth: 1,
                     absolute: false,
                     canonicalize: false,
@@ -791,7 +791,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     depth: usize::MAX,
                     absolute: true,
                     canonicalize: true,
@@ -803,7 +803,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: 1,
                 absolute: false,
                 canonicalize: false,
@@ -820,7 +820,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: usize::MAX,
                 absolute: true,
                 canonicalize: true,
@@ -841,7 +841,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: 1,
                 absolute: false,
                 canonicalize: false,
@@ -853,7 +853,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     depth: 1,
                     absolute: false,
                     canonicalize: false,
@@ -869,7 +869,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::DirRead {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 depth: usize::MAX,
                 absolute: true,
                 canonicalize: true,
@@ -881,7 +881,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirRead {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     depth: usize::MAX,
                     absolute: true,
                     canonicalize: true,
@@ -897,7 +897,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: false,
             };
 
@@ -914,7 +914,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: true,
             };
 
@@ -940,7 +940,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirCreate {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     all: false,
                 }
             );
@@ -958,7 +958,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirCreate {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     all: true,
                 }
             );
@@ -967,7 +967,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: false,
             };
 
@@ -981,7 +981,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: true,
             };
 
@@ -999,7 +999,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: false,
             })
             .unwrap();
@@ -1008,7 +1008,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirCreate {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     all: false,
                 }
             );
@@ -1021,7 +1021,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::DirCreate {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 all: true,
             })
             .unwrap();
@@ -1030,7 +1030,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::DirCreate {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     all: true,
                 }
             );
@@ -1043,7 +1043,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: false,
             };
 
@@ -1060,7 +1060,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: true,
             };
 
@@ -1086,7 +1086,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Remove {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     force: false,
                 }
             );
@@ -1104,7 +1104,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Remove {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     force: true,
                 }
             );
@@ -1113,7 +1113,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: false,
             };
 
@@ -1127,7 +1127,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: true,
             };
 
@@ -1145,7 +1145,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: false,
             })
             .unwrap();
@@ -1154,7 +1154,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Remove {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     force: false,
                 }
             );
@@ -1167,7 +1167,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Remove {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 force: true,
             })
             .unwrap();
@@ -1176,7 +1176,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Remove {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     force: true,
                 }
             );
@@ -1189,8 +1189,8 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::Copy {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -1216,8 +1216,8 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Copy {
-                    src: PathBuf::from("src"),
-                    dst: PathBuf::from("dst"),
+                    src: RemotePath::new("src"),
+                    dst: RemotePath::new("dst"),
                 }
             );
         }
@@ -1225,8 +1225,8 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::Copy {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1243,8 +1243,8 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Copy {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             })
             .unwrap();
 
@@ -1252,8 +1252,8 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Copy {
-                    src: PathBuf::from("src"),
-                    dst: PathBuf::from("dst"),
+                    src: RemotePath::new("src"),
+                    dst: RemotePath::new("dst"),
                 }
             );
         }
@@ -1265,8 +1265,8 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::Rename {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -1292,8 +1292,8 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Rename {
-                    src: PathBuf::from("src"),
-                    dst: PathBuf::from("dst"),
+                    src: RemotePath::new("src"),
+                    dst: RemotePath::new("dst"),
                 }
             );
         }
@@ -1301,8 +1301,8 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::Rename {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1319,8 +1319,8 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Rename {
-                src: PathBuf::from("src"),
-                dst: PathBuf::from("dst"),
+                src: RemotePath::new("src"),
+                dst: RemotePath::new("dst"),
             })
             .unwrap();
 
@@ -1328,8 +1328,8 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Rename {
-                    src: PathBuf::from("src"),
-                    dst: PathBuf::from("dst"),
+                    src: RemotePath::new("src"),
+                    dst: RemotePath::new("dst"),
                 }
             );
         }
@@ -1341,7 +1341,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: false,
                 only: Vec::new(),
                 except: Vec::new(),
@@ -1360,7 +1360,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: true,
                 only: vec![ChangeKind::Access],
                 except: vec![ChangeKind::Modify],
@@ -1390,7 +1390,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Watch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     recursive: false,
                     only: Vec::new(),
                     except: Vec::new(),
@@ -1412,7 +1412,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Watch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     recursive: true,
                     only: vec![ChangeKind::Access],
                     except: vec![ChangeKind::Modify],
@@ -1423,7 +1423,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: false,
                 only: Vec::new(),
                 except: Vec::new(),
@@ -1439,7 +1439,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: true,
                 only: vec![ChangeKind::Access],
                 except: vec![ChangeKind::Modify],
@@ -1459,7 +1459,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: false,
                 only: Vec::new(),
                 except: Vec::new(),
@@ -1470,7 +1470,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Watch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     recursive: false,
                     only: Vec::new(),
                     except: Vec::new(),
@@ -1485,7 +1485,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Watch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 recursive: true,
                 only: vec![ChangeKind::Access],
                 except: vec![ChangeKind::Modify],
@@ -1496,7 +1496,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Watch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     recursive: true,
                     only: vec![ChangeKind::Access],
                     except: vec![ChangeKind::Modify],
@@ -1511,7 +1511,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::Unwatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -1535,7 +1535,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Unwatch {
-                    path: PathBuf::from("path")
+                    path: RemotePath::new("path")
                 }
             );
         }
@@ -1543,7 +1543,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::Unwatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1560,7 +1560,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Unwatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             })
             .unwrap();
 
@@ -1568,7 +1568,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Unwatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -1580,7 +1580,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::Exists {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -1604,7 +1604,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Exists {
-                    path: PathBuf::from("path")
+                    path: RemotePath::new("path")
                 }
             );
         }
@@ -1612,7 +1612,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::Exists {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -1629,7 +1629,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Exists {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
             })
             .unwrap();
 
@@ -1637,7 +1637,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Exists {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                 }
             );
         }
@@ -1649,7 +1649,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: false,
                 resolve_file_type: false,
             };
@@ -1667,7 +1667,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: true,
                 resolve_file_type: true,
             };
@@ -1695,7 +1695,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Metadata {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     canonicalize: false,
                     resolve_file_type: false,
                 }
@@ -1715,7 +1715,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Metadata {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     canonicalize: true,
                     resolve_file_type: true,
                 }
@@ -1725,7 +1725,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: false,
                 resolve_file_type: false,
             };
@@ -1740,7 +1740,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: true,
                 resolve_file_type: true,
             };
@@ -1759,7 +1759,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: false,
                 resolve_file_type: false,
             })
@@ -1769,7 +1769,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Metadata {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     canonicalize: false,
                     resolve_file_type: false,
                 }
@@ -1783,7 +1783,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::Metadata {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 canonicalize: true,
                 resolve_file_type: true,
             })
@@ -1793,7 +1793,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::Metadata {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     canonicalize: true,
                     resolve_file_type: true,
                 }
@@ -1829,7 +1829,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_json() {
             let payload = Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: Default::default(),
                 options: Default::default(),
             };
@@ -1849,7 +1849,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_json() {
             let payload = Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: full_permissions(),
                 options: full_options(),
             };
@@ -1893,7 +1893,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::SetPermissions {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     permissions: Default::default(),
                     options: Default::default(),
                 }
@@ -1927,7 +1927,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::SetPermissions {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     permissions: full_permissions(),
                     options: full_options(),
                 }
@@ -1937,7 +1937,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_minimal_payload_to_msgpack() {
             let payload = Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: Default::default(),
                 options: Default::default(),
             };
@@ -1952,7 +1952,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_full_payload_to_msgpack() {
             let payload = Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: full_permissions(),
                 options: full_options(),
             };
@@ -1971,7 +1971,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: Default::default(),
                 options: Default::default(),
             })
@@ -1981,7 +1981,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::SetPermissions {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     permissions: Default::default(),
                     options: Default::default(),
                 }
@@ -1995,7 +1995,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::SetPermissions {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 permissions: full_permissions(),
                 options: full_options(),
             })
@@ -2005,7 +2005,7 @@ mod tests {
             assert_eq!(
                 payload,
                 Request::SetPermissions {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     permissions: full_permissions(),
                     options: full_options(),
                 }
@@ -2025,7 +2025,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: Default::default(),
                 },
             };
@@ -2054,7 +2054,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: SearchQueryOptions {
                         allowed_file_types: [FileType::File].into_iter().collect(),
                         include: Some(SearchQueryCondition::Equals {
@@ -2138,7 +2138,7 @@ mod tests {
                     query: SearchQuery {
                         target: SearchQueryTarget::Contents,
                         condition: SearchQueryCondition::equals("hello world"),
-                        paths: vec![PathBuf::from("path")],
+                        paths: vec![RemotePath::new("path")],
                         options: Default::default(),
                     },
                 }
@@ -2188,7 +2188,7 @@ mod tests {
                     query: SearchQuery {
                         target: SearchQueryTarget::Contents,
                         condition: SearchQueryCondition::equals("hello world"),
-                        paths: vec![PathBuf::from("path")],
+                        paths: vec![RemotePath::new("path")],
                         options: SearchQueryOptions {
                             allowed_file_types: [FileType::File].into_iter().collect(),
                             include: Some(SearchQueryCondition::Equals {
@@ -2220,7 +2220,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: Default::default(),
                 },
             };
@@ -2238,7 +2238,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: SearchQueryOptions {
                         allowed_file_types: [FileType::File].into_iter().collect(),
                         include: Some(SearchQueryCondition::Equals {
@@ -2279,7 +2279,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: Default::default(),
                 },
             })
@@ -2292,7 +2292,7 @@ mod tests {
                     query: SearchQuery {
                         target: SearchQueryTarget::Contents,
                         condition: SearchQueryCondition::equals("hello world"),
-                        paths: vec![PathBuf::from("path")],
+                        paths: vec![RemotePath::new("path")],
                         options: Default::default(),
                     },
                 }
@@ -2309,7 +2309,7 @@ mod tests {
                 query: SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path")],
+                    paths: vec![RemotePath::new("path")],
                     options: SearchQueryOptions {
                         allowed_file_types: [FileType::File].into_iter().collect(),
                         include: Some(SearchQueryCondition::Equals {
@@ -2341,7 +2341,7 @@ mod tests {
                     query: SearchQuery {
                         target: SearchQueryTarget::Contents,
                         condition: SearchQueryCondition::equals("hello world"),
-                        paths: vec![PathBuf::from("path")],
+                        paths: vec![RemotePath::new("path")],
                         options: SearchQueryOptions {
                             allowed_file_types: [FileType::File].into_iter().collect(),
                             include: Some(SearchQueryCondition::Equals {
@@ -2450,7 +2450,7 @@ mod tests {
                 environment: [(String::from("hello"), String::from("world"))]
                     .into_iter()
                     .collect(),
-                current_dir: Some(PathBuf::from("current-dir")),
+                current_dir: Some(RemotePath::new("current-dir")),
                 pty: Some(PtySize {
                     rows: u16::MAX,
                     cols: u16::MAX,
@@ -2519,7 +2519,7 @@ mod tests {
                     environment: [(String::from("hello"), String::from("world"))]
                         .into_iter()
                         .collect(),
-                    current_dir: Some(PathBuf::from("current-dir")),
+                    current_dir: Some(RemotePath::new("current-dir")),
                     pty: Some(PtySize {
                         rows: u16::MAX,
                         cols: u16::MAX,
@@ -2553,7 +2553,7 @@ mod tests {
                 environment: [(String::from("hello"), String::from("world"))]
                     .into_iter()
                     .collect(),
-                current_dir: Some(PathBuf::from("current-dir")),
+                current_dir: Some(RemotePath::new("current-dir")),
                 pty: Some(PtySize {
                     rows: u16::MAX,
                     cols: u16::MAX,
@@ -2606,7 +2606,7 @@ mod tests {
                 environment: [(String::from("hello"), String::from("world"))]
                     .into_iter()
                     .collect(),
-                current_dir: Some(PathBuf::from("current-dir")),
+                current_dir: Some(RemotePath::new("current-dir")),
                 pty: Some(PtySize {
                     rows: u16::MAX,
                     cols: u16::MAX,
@@ -2624,7 +2624,7 @@ mod tests {
                     environment: [(String::from("hello"), String::from("world"))]
                         .into_iter()
                         .collect(),
-                    current_dir: Some(PathBuf::from("current-dir")),
+                    current_dir: Some(RemotePath::new("current-dir")),
                     pty: Some(PtySize {
                         rows: u16::MAX,
                         cols: u16::MAX,

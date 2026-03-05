@@ -1,6 +1,5 @@
 use std::io::{self, Cursor, Read};
 use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
 
 use futures::stream::{Stream, StreamExt};
 use tokio::sync::mpsc;
@@ -10,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::client::{
     Channel, RemoteCommand, RemoteProcess, RemoteStatus, RemoteStderr, RemoteStdin, RemoteStdout,
 };
-use crate::protocol::{Environment, PtySize};
+use crate::protocol::{Environment, PtySize, RemotePath};
 
 mod msg;
 pub use msg::*;
@@ -20,7 +19,7 @@ pub use msg::*;
 pub struct RemoteLspCommand {
     pty: Option<PtySize>,
     environment: Environment,
-    current_dir: Option<PathBuf>,
+    current_dir: Option<RemotePath>,
     scheme: Option<String>,
 }
 
@@ -54,7 +53,7 @@ impl RemoteLspCommand {
     }
 
     /// Configures the process with an alternative current directory
-    pub fn current_dir(&mut self, current_dir: Option<PathBuf>) -> &mut Self {
+    pub fn current_dir(&mut self, current_dir: Option<RemotePath>) -> &mut Self {
         self.current_dir = current_dir;
         self
     }
@@ -1164,14 +1163,14 @@ mod tests {
     #[test]
     fn remote_lsp_command_current_dir_should_set_current_dir() {
         let mut cmd = RemoteLspCommand::new();
-        cmd.current_dir(Some(PathBuf::from("/some/dir")));
-        assert_eq!(cmd.current_dir, Some(PathBuf::from("/some/dir")));
+        cmd.current_dir(Some(RemotePath::new("/some/dir")));
+        assert_eq!(cmd.current_dir, Some(RemotePath::new("/some/dir")));
     }
 
     #[test]
     fn remote_lsp_command_current_dir_should_clear_when_set_to_none() {
         let mut cmd = RemoteLspCommand::new();
-        cmd.current_dir(Some(PathBuf::from("/some/dir")));
+        cmd.current_dir(Some(RemotePath::new("/some/dir")));
         cmd.current_dir(None);
         assert!(cmd.current_dir.is_none());
     }

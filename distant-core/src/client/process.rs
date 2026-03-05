@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::net::client::Mailbox;
@@ -11,7 +10,7 @@ use tokio::task::JoinHandle;
 
 use crate::client::Channel;
 use crate::constants::CLIENT_PIPE_CAPACITY;
-use crate::protocol::{self, Cmd, Environment, ProcessId, PtySize};
+use crate::protocol::{self, Cmd, Environment, ProcessId, PtySize, RemotePath};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteOutput {
@@ -40,7 +39,7 @@ type StatusResult = io::Result<RemoteStatus>;
 pub struct RemoteCommand {
     pty: Option<PtySize>,
     environment: Environment,
-    current_dir: Option<PathBuf>,
+    current_dir: Option<RemotePath>,
 }
 
 impl Default for RemoteCommand {
@@ -72,7 +71,7 @@ impl RemoteCommand {
     }
 
     /// Configures the process with an alternative current directory
-    pub fn current_dir(&mut self, current_dir: Option<PathBuf>) -> &mut Self {
+    pub fn current_dir(&mut self, current_dir: Option<RemotePath>) -> &mut Self {
         self.current_dir = current_dir;
         self
     }

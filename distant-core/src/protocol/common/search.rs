@@ -1,11 +1,10 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::common::FileType;
+use crate::protocol::common::{FileType, RemotePath};
 use crate::protocol::utils;
 
 /// Id associated with a search
@@ -21,7 +20,7 @@ pub struct SearchQuery {
     pub condition: SearchQueryCondition,
 
     /// Paths in which to perform the query
-    pub paths: Vec<PathBuf>,
+    pub paths: Vec<RemotePath>,
 
     /// Options to apply to the query
     #[serde(default)]
@@ -37,7 +36,7 @@ impl SearchQuery {
     ) -> Self
     where
         I: IntoIterator<Item = T>,
-        T: Into<PathBuf>,
+        T: Into<RemotePath>,
     {
         Self {
             target: SearchQueryTarget::Contents,
@@ -55,7 +54,7 @@ impl SearchQuery {
     ) -> Self
     where
         I: IntoIterator<Item = T>,
-        T: Into<PathBuf>,
+        T: Into<RemotePath>,
     {
         Self {
             target: SearchQueryTarget::Path,
@@ -292,7 +291,7 @@ impl SearchQueryMatch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchQueryPathMatch {
     /// Path associated with the match
-    pub path: PathBuf,
+    pub path: RemotePath,
 
     /// Collection of matches tied to `path` where each submatch's byte offset is relative to
     /// `path`
@@ -303,7 +302,7 @@ pub struct SearchQueryPathMatch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchQueryContentsMatch {
     /// Path to file whose contents match
-    pub path: PathBuf,
+    pub path: RemotePath,
 
     /// Line(s) that matched
     pub lines: SearchQueryMatchData,
@@ -417,7 +416,7 @@ mod tests {
             let query = SearchQuery {
                 target: SearchQueryTarget::Contents,
                 condition: SearchQueryCondition::equals("hello world"),
-                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                paths: vec![RemotePath::new("path1"), RemotePath::new("path2")],
                 options: SearchQueryOptions::default(),
             };
 
@@ -453,7 +452,7 @@ mod tests {
                 SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                    paths: vec![RemotePath::new("path1"), RemotePath::new("path2")],
                     options: SearchQueryOptions::default(),
                 }
             );
@@ -464,7 +463,7 @@ mod tests {
             let query = SearchQuery {
                 target: SearchQueryTarget::Contents,
                 condition: SearchQueryCondition::equals("hello world"),
-                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                paths: vec![RemotePath::new("path1"), RemotePath::new("path2")],
                 options: SearchQueryOptions::default(),
             };
 
@@ -484,7 +483,7 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&SearchQuery {
                 target: SearchQueryTarget::Contents,
                 condition: SearchQueryCondition::equals("hello world"),
-                paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                paths: vec![RemotePath::new("path1"), RemotePath::new("path2")],
                 options: SearchQueryOptions::default(),
             })
             .unwrap();
@@ -495,7 +494,7 @@ mod tests {
                 SearchQuery {
                     target: SearchQueryTarget::Contents,
                     condition: SearchQueryCondition::equals("hello world"),
-                    paths: vec![PathBuf::from("path1"), PathBuf::from("path2")],
+                    paths: vec![RemotePath::new("path1"), RemotePath::new("path2")],
                     options: SearchQueryOptions::default(),
                 }
             );
@@ -1264,7 +1263,7 @@ mod tests {
             #[test]
             fn should_be_able_to_serialize_to_json() {
                 let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text(String::from("text")),
                         start: 8,
@@ -1303,7 +1302,7 @@ mod tests {
                 assert_eq!(
                     r#match,
                     SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text(String::from("text")),
                             start: 8,
@@ -1316,7 +1315,7 @@ mod tests {
             #[test]
             fn should_be_able_to_serialize_to_msgpack() {
                 let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text(String::from("text")),
                         start: 8,
@@ -1339,7 +1338,7 @@ mod tests {
                 // enough times with minor changes that we need tests to verify.
                 let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatch::Path(
                     SearchQueryPathMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text(String::from("text")),
                             start: 8,
@@ -1353,7 +1352,7 @@ mod tests {
                 assert_eq!(
                     r#match,
                     SearchQueryMatch::Path(SearchQueryPathMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         submatches: vec![SearchQuerySubmatch {
                             r#match: SearchQueryMatchData::Text(String::from("text")),
                             start: 8,
@@ -1370,7 +1369,7 @@ mod tests {
             #[test]
             fn should_be_able_to_serialize_to_json() {
                 let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: SearchQueryMatchData::Text(String::from("some text")),
                     line_number: 12,
                     absolute_offset: 24,
@@ -1418,7 +1417,7 @@ mod tests {
                 assert_eq!(
                     r#match,
                     SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         lines: SearchQueryMatchData::Text(String::from("some text")),
                         line_number: 12,
                         absolute_offset: 24,
@@ -1434,7 +1433,7 @@ mod tests {
             #[test]
             fn should_be_able_to_serialize_to_msgpack() {
                 let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: SearchQueryMatchData::Text(String::from("some text")),
                     line_number: 12,
                     absolute_offset: 24,
@@ -1460,7 +1459,7 @@ mod tests {
                 // enough times with minor changes that we need tests to verify.
                 let buf = rmp_serde::encode::to_vec_named(&SearchQueryMatch::Contents(
                     SearchQueryContentsMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         lines: SearchQueryMatchData::Text(String::from("some text")),
                         line_number: 12,
                         absolute_offset: 24,
@@ -1477,7 +1476,7 @@ mod tests {
                 assert_eq!(
                     r#match,
                     SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                        path: PathBuf::from("path"),
+                        path: RemotePath::new("path"),
                         lines: SearchQueryMatchData::Text(String::from("some text")),
                         line_number: 12,
                         absolute_offset: 24,
@@ -1498,7 +1497,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let r#match = SearchQueryPathMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text(String::from("text")),
                     start: 8,
@@ -1535,7 +1534,7 @@ mod tests {
             assert_eq!(
                 r#match,
                 SearchQueryPathMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text(String::from("text")),
                         start: 8,
@@ -1548,7 +1547,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let r#match = SearchQueryPathMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text(String::from("text")),
                     start: 8,
@@ -1570,7 +1569,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&SearchQueryPathMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 submatches: vec![SearchQuerySubmatch {
                     r#match: SearchQueryMatchData::Text(String::from("text")),
                     start: 8,
@@ -1583,7 +1582,7 @@ mod tests {
             assert_eq!(
                 r#match,
                 SearchQueryPathMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text(String::from("text")),
                         start: 8,
@@ -1600,7 +1599,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_json() {
             let r#match = SearchQueryContentsMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 lines: SearchQueryMatchData::Text(String::from("some text")),
                 line_number: 12,
                 absolute_offset: 24,
@@ -1646,7 +1645,7 @@ mod tests {
             assert_eq!(
                 r#match,
                 SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: SearchQueryMatchData::Text(String::from("some text")),
                     line_number: 12,
                     absolute_offset: 24,
@@ -1662,7 +1661,7 @@ mod tests {
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
             let r#match = SearchQueryContentsMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 lines: SearchQueryMatchData::Text(String::from("some text")),
                 line_number: 12,
                 absolute_offset: 24,
@@ -1687,7 +1686,7 @@ mod tests {
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&SearchQueryContentsMatch {
-                path: PathBuf::from("path"),
+                path: RemotePath::new("path"),
                 lines: SearchQueryMatchData::Text(String::from("some text")),
                 line_number: 12,
                 absolute_offset: 24,
@@ -1703,7 +1702,7 @@ mod tests {
             assert_eq!(
                 r#match,
                 SearchQueryContentsMatch {
-                    path: PathBuf::from("path"),
+                    path: RemotePath::new("path"),
                     lines: SearchQueryMatchData::Text(String::from("some text")),
                     line_number: 12,
                     absolute_offset: 24,

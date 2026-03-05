@@ -1,0 +1,732 @@
+//! Utility functions for Docker exec operations and tar-based file I/O.
+
+use std::io::{self, Read};
+use std::path::Path;
+
+use bollard::Docker;
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::query_parameters::{
+    DownloadFromContainerOptionsBuilder, UploadToContainerOptionsBuilder,
+};
+use bytes::Bytes;
+use futures::StreamExt;
+use log::*;
+
+/// Shell-quote a string for safe embedding in `sh -c` commands.
+///
+/// Uses POSIX-compatible quoting via the `shlex` crate. Falls back to
+/// the original string if it contains NUL bytes (which shells can't handle).
+pub fn shell_quote(s: &str) -> String {
+    shlex::try_quote(s)
+        .unwrap_or(std::borrow::Cow::Borrowed(s))
+        .into_owned()
+}
+
+/// Output from executing a command in a container.
+#[derive(Debug, Clone)]
+pub struct ExecOutput {
+    /// Standard output bytes.
+    pub stdout: Vec<u8>,
+
+    /// Standard error bytes.
+    pub stderr: Vec<u8>,
+
+    /// Exit code (0 for success).
+    pub exit_code: i64,
+}
+
+impl ExecOutput {
+    /// Returns true if the command exited successfully (exit code 0).
+    pub fn success(&self) -> bool {
+        self.exit_code == 0
+    }
+
+    /// Returns stdout as a UTF-8 string, lossy.
+    pub fn stdout_str(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).to_string()
+    }
+
+    /// Returns stderr as a UTF-8 string, lossy.
+    pub fn stderr_str(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).to_string()
+    }
+}
+
+/// Execute a command in a container and collect its output.
+///
+/// Returns the combined stdout, stderr, and exit code.
+///
+/// # Arguments
+///
+/// * `client` - Docker client handle
+/// * `container` - Container name or ID
+/// * `cmd` - Command and arguments to execute
+/// * `user` - Optional user to run as
+pub async fn execute_output(
+    client: &Docker,
+    container: &str,
+    cmd: &[&str],
+    user: Option<&str>,
+) -> io::Result<ExecOutput> {
+    let created = client
+        .create_exec(
+            container,
+            CreateExecOptions {
+                cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                user: user.map(|u| u.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to create exec: {}", e)))?;
+
+    let start_result = client
+        .start_exec(
+            &created.id,
+            Some(StartExecOptions {
+                detach: false,
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to start exec: {}", e)))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    match start_result {
+        StartExecResults::Attached { mut output, .. } => {
+            while let Some(msg) = output.next().await {
+                match msg {
+                    Ok(bollard::container::LogOutput::StdOut { message }) => {
+                        stdout.extend_from_slice(&message);
+                    }
+                    Ok(bollard::container::LogOutput::StdErr { message }) => {
+                        stderr.extend_from_slice(&message);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(io::Error::other(format!(
+                            "Error reading exec output: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+        }
+        StartExecResults::Detached => {
+            return Err(io::Error::other(
+                "Exec started in detached mode unexpectedly",
+            ));
+        }
+    }
+
+    // Get the exit code
+    let inspect = client
+        .inspect_exec(&created.id)
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to inspect exec: {}", e)))?;
+
+    let exit_code = inspect.exit_code.unwrap_or(-1);
+
+    Ok(ExecOutput {
+        stdout,
+        stderr,
+        exit_code,
+    })
+}
+
+/// Execute a command in a container with stdin data.
+pub async fn execute_with_stdin(
+    client: &Docker,
+    container: &str,
+    cmd: &[&str],
+    stdin_data: &[u8],
+    user: Option<&str>,
+) -> io::Result<ExecOutput> {
+    use tokio::io::AsyncWriteExt;
+
+    let created = client
+        .create_exec(
+            container,
+            CreateExecOptions {
+                cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
+                attach_stdin: Some(true),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                user: user.map(|u| u.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to create exec: {}", e)))?;
+
+    let start_result = client
+        .start_exec(
+            &created.id,
+            Some(StartExecOptions {
+                detach: false,
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to start exec: {}", e)))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    match start_result {
+        StartExecResults::Attached {
+            mut output,
+            mut input,
+        } => {
+            // Write stdin data
+            input
+                .write_all(stdin_data)
+                .await
+                .map_err(|e| io::Error::other(format!("Failed to write stdin: {}", e)))?;
+            input
+                .shutdown()
+                .await
+                .map_err(|e| io::Error::other(format!("Failed to close stdin: {}", e)))?;
+
+            // Read output
+            while let Some(msg) = output.next().await {
+                match msg {
+                    Ok(bollard::container::LogOutput::StdOut { message }) => {
+                        stdout.extend_from_slice(&message);
+                    }
+                    Ok(bollard::container::LogOutput::StdErr { message }) => {
+                        stderr.extend_from_slice(&message);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(io::Error::other(format!(
+                            "Error reading exec output: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+        }
+        StartExecResults::Detached => {
+            return Err(io::Error::other(
+                "Exec started in detached mode unexpectedly",
+            ));
+        }
+    }
+
+    let inspect = client
+        .inspect_exec(&created.id)
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to inspect exec: {}", e)))?;
+
+    let exit_code = inspect.exit_code.unwrap_or(-1);
+
+    Ok(ExecOutput {
+        stdout,
+        stderr,
+        exit_code,
+    })
+}
+
+/// Read a file from a container using the Docker archive (tar) API.
+///
+/// This works even in containers without a shell (distroless/scratch).
+pub async fn tar_read_file(client: &Docker, container: &str, path: &str) -> io::Result<Vec<u8>> {
+    let options = DownloadFromContainerOptionsBuilder::default()
+        .path(path)
+        .build();
+
+    let mut stream = client.download_from_container(container, Some(options));
+    let mut tar_data = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk
+            .map_err(|e| io::Error::other(format!("Failed to download from container: {}", e)))?;
+        tar_data.extend_from_slice(&chunk);
+    }
+
+    // Unpack the tar archive to get the file contents
+    let mut archive = tar::Archive::new(&tar_data[..]);
+    for (i, entry) in archive
+        .entries()
+        .map_err(|e| io::Error::other(format!("Failed to read tar: {}", e)))?
+        .enumerate()
+    {
+        let mut entry =
+            entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
+
+        if entry.header().entry_type() == tar::EntryType::Directory {
+            // If the first entry is a directory, the requested path is a directory
+            if i == 0 {
+                return Err(io::Error::other(format!(
+                    "Path is a directory, not a file: {}",
+                    path
+                )));
+            }
+            continue;
+        }
+
+        let mut contents = Vec::new();
+        entry
+            .read_to_end(&mut contents)
+            .map_err(|e| io::Error::other(format!("Failed to read entry data: {}", e)))?;
+        return Ok(contents);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("File not found in container: {}", path),
+    ))
+}
+
+/// Write a file to a container using the Docker archive (tar) API.
+///
+/// This works even in containers without a shell (distroless/scratch).
+pub async fn tar_write_file(
+    client: &Docker,
+    container: &str,
+    path: &str,
+    data: &[u8],
+) -> io::Result<()> {
+    let path_obj = Path::new(path);
+    let parent = path_obj
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_string_lossy()
+        .to_string();
+    let filename = path_obj
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Path has no filename"))?
+        .to_string_lossy()
+        .to_string();
+
+    let tar_data = build_tar_with_file(&filename, data)?;
+
+    let options = UploadToContainerOptionsBuilder::default()
+        .path(&parent)
+        .build();
+
+    client
+        .upload_to_container(
+            container,
+            Some(options),
+            bollard::body_full(Bytes::from(tar_data)),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to upload to container: {}", e)))
+}
+
+/// Build a tar archive containing a single file.
+fn build_tar_with_file(filename: &str, data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut tar_buf = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_buf);
+        let mut header = tar::Header::new_gnu();
+        header.set_path(filename)?;
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        header.set_cksum();
+        builder.append(&header, data)?;
+        builder.finish()?;
+    }
+    Ok(tar_buf)
+}
+
+/// Build a tar archive containing a directory entry and a zero-byte marker file.
+///
+/// A zero-byte `.distant` marker file is included to ensure the directory is materialized
+/// by Docker's archive API on all platforms.
+pub fn build_tar_with_dir(dirname: &str) -> io::Result<Vec<u8>> {
+    let mut tar_buf = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_buf);
+        let mtime = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let dir_path = if dirname.ends_with('/') {
+            dirname.to_string()
+        } else {
+            format!("{}/", dirname)
+        };
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path(&dir_path)?;
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_mtime(mtime);
+        header.set_cksum();
+        builder.append(&header, &[] as &[u8])?;
+
+        // Add a zero-byte marker file to force Docker to materialize the directory
+        let marker_path = format!("{}.distant", dir_path);
+        let mut marker_header = tar::Header::new_gnu();
+        marker_header.set_path(&marker_path)?;
+        marker_header.set_size(0);
+        marker_header.set_mode(0o644);
+        marker_header.set_entry_type(tar::EntryType::Regular);
+        marker_header.set_mtime(mtime);
+        marker_header.set_cksum();
+        builder.append(&marker_header, &[] as &[u8])?;
+
+        builder.finish()?;
+    }
+    Ok(tar_buf)
+}
+
+/// List entries in a directory by downloading it as a tar archive.
+///
+/// Returns a list of (entry_type, path, size, mtime) tuples.
+pub async fn tar_list_dir(
+    client: &Docker,
+    container: &str,
+    path: &str,
+) -> io::Result<Vec<(tar::EntryType, String, u64, u64)>> {
+    let options = DownloadFromContainerOptionsBuilder::default()
+        .path(path)
+        .build();
+
+    let mut stream = client.download_from_container(container, Some(options));
+    let mut tar_data = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            io::Error::other(format!(
+                "Failed to download directory from container: {}",
+                e
+            ))
+        })?;
+        tar_data.extend_from_slice(&chunk);
+    }
+
+    let mut entries = Vec::new();
+    let mut archive = tar::Archive::new(&tar_data[..]);
+
+    for entry in archive
+        .entries()
+        .map_err(|e| io::Error::other(format!("Failed to read tar: {}", e)))?
+    {
+        let entry =
+            entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
+
+        let entry_type = entry.header().entry_type();
+        let entry_path = entry
+            .path()
+            .map_err(|e| io::Error::other(format!("Failed to read entry path: {}", e)))?
+            .to_string_lossy()
+            .to_string();
+        let size = entry.header().size().unwrap_or(0);
+        let mtime = entry.header().mtime().unwrap_or(0);
+
+        entries.push((entry_type, entry_path, size, mtime));
+    }
+
+    Ok(entries)
+}
+
+/// Check if a path exists in a container using the tar download API.
+///
+/// Returns true if the download succeeds, false on 404-style errors.
+pub async fn tar_path_exists(client: &Docker, container: &str, path: &str) -> bool {
+    let options = DownloadFromContainerOptionsBuilder::default()
+        .path(path)
+        .build();
+    let mut stream = client.download_from_container(container, Some(options));
+
+    // Just check if we can get the first chunk
+    matches!(stream.next().await, Some(Ok(_)))
+}
+
+/// Available search tools detected in a container.
+#[derive(Debug, Clone, Default)]
+pub struct SearchTools {
+    /// Whether ripgrep is available.
+    pub has_rg: bool,
+
+    /// Whether GNU grep is available.
+    pub has_grep: bool,
+
+    /// Whether find is available.
+    pub has_find: bool,
+}
+
+impl SearchTools {
+    /// Returns true if at least basic search capability is available.
+    pub fn has_any(&self) -> bool {
+        self.has_rg || self.has_grep || self.has_find
+    }
+}
+
+/// Probe the container for available search tools.
+///
+/// Uses `which` to check for ripgrep, grep, and find.
+pub async fn probe_search_tools(client: &Docker, container: &str) -> SearchTools {
+    let mut tools = SearchTools::default();
+
+    // Check for ripgrep
+    if let Ok(output) = execute_output(client, container, &["which", "rg"], None).await {
+        tools.has_rg = output.success();
+    }
+
+    // Check for grep
+    if let Ok(output) = execute_output(client, container, &["which", "grep"], None).await {
+        tools.has_grep = output.success();
+    }
+
+    // Check for find
+    if let Ok(output) = execute_output(client, container, &["which", "find"], None).await {
+        tools.has_find = output.success();
+    }
+
+    debug!(
+        "Search tools: rg={}, grep={}, find={}",
+        tools.has_rg, tools.has_grep, tools.has_find
+    );
+
+    tools
+}
+
+/// Create a directory in a container using the tar upload API (fallback, no exec needed).
+///
+/// Uploads a tar archive containing the directory entry to the parent path.
+/// For nested directory creation, use [`tar_create_dir_all`] instead.
+pub async fn tar_create_dir(client: &Docker, container: &str, path: &str) -> io::Result<()> {
+    let path_obj = Path::new(path);
+    let parent = path_obj
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_string_lossy()
+        .to_string();
+    let dirname = path_obj
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Path has no directory name"))?
+        .to_string_lossy()
+        .to_string();
+
+    let tar_data = build_tar_with_dir(&dirname)?;
+
+    let options = UploadToContainerOptionsBuilder::default()
+        .path(&parent)
+        .build();
+
+    client
+        .upload_to_container(
+            container,
+            Some(options),
+            bollard::body_full(Bytes::from(tar_data)),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to create directory in container: {}", e)))
+}
+
+/// Create a directory and all ancestor directories using the tar upload API.
+///
+/// Builds a single tar archive containing directory entries for each path component
+/// relative to the root, then uploads it to the filesystem root. This is the tar-based
+/// equivalent of `mkdir -p`.
+pub async fn tar_create_dir_all(client: &Docker, container: &str, path: &str) -> io::Result<()> {
+    let path_obj = Path::new(path);
+
+    // Collect path components (skip RootDir, grab Normal components)
+    let mut components = Vec::new();
+    let mut root = String::new();
+
+    for component in path_obj.components() {
+        match component {
+            std::path::Component::RootDir => {
+                root = "/".to_string();
+            }
+            std::path::Component::Normal(c) => {
+                components.push(c.to_string_lossy().to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if components.is_empty() {
+        return Ok(());
+    }
+
+    if root.is_empty() {
+        root = "/".to_string();
+    }
+
+    // Build a tar archive with directory entries for each cumulative path.
+    // e.g. for components [a, b, c] -> entries "a/", "a/b/", "a/b/c/"
+    // A zero-byte marker file is added at the deepest directory to force
+    // Docker to materialize the directories.
+    let mut tar_buf = Vec::new();
+    {
+        let mut builder = tar::Builder::new(&mut tar_buf);
+        let mtime = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut cumulative = String::new();
+        for component in &components {
+            if !cumulative.is_empty() {
+                cumulative.push('/');
+            }
+            cumulative.push_str(component);
+
+            let dir_path = format!("{}/", cumulative);
+            let mut header = tar::Header::new_gnu();
+            header.set_path(&dir_path)?;
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_mtime(mtime);
+            header.set_cksum();
+            builder.append(&header, &[] as &[u8])?;
+        }
+
+        // Add a zero-byte marker file at the deepest directory
+        let marker_path = format!("{}/.distant", cumulative);
+        let mut marker_header = tar::Header::new_gnu();
+        marker_header.set_path(&marker_path)?;
+        marker_header.set_size(0);
+        marker_header.set_mode(0o644);
+        marker_header.set_entry_type(tar::EntryType::Regular);
+        marker_header.set_mtime(mtime);
+        marker_header.set_cksum();
+        builder.append(&marker_header, &[] as &[u8])?;
+
+        builder.finish()?;
+    }
+
+    let options = UploadToContainerOptionsBuilder::default()
+        .path(&root)
+        .build();
+
+    client
+        .upload_to_container(
+            container,
+            Some(options),
+            bollard::body_full(Bytes::from(tar_buf)),
+        )
+        .await
+        .map_err(|e| {
+            io::Error::other(format!(
+                "Failed to create directory tree in container: {}",
+                e
+            ))
+        })
+}
+
+/// Copy a path (file or directory) within a container using the tar API.
+///
+/// Downloads the source as a tar archive, rewrites entry paths to replace the source
+/// basename with the destination basename, then uploads to the destination's parent
+/// directory. Works for both files and directories.
+pub async fn tar_copy_path(
+    client: &Docker,
+    container: &str,
+    src: &str,
+    dst: &str,
+) -> io::Result<()> {
+    let src_path = Path::new(src);
+    let dst_path = Path::new(dst);
+
+    let src_name = src_path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Source has no filename"))?
+        .to_string_lossy();
+    let dst_name = dst_path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Destination has no filename"))?
+        .to_string_lossy();
+    let dst_parent = dst_path
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .to_string_lossy()
+        .to_string();
+
+    // Download source as tar
+    let options = DownloadFromContainerOptionsBuilder::default()
+        .path(src)
+        .build();
+
+    let mut stream = client.download_from_container(container, Some(options));
+    let mut tar_data = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk
+            .map_err(|e| io::Error::other(format!("Failed to download from container: {}", e)))?;
+        tar_data.extend_from_slice(&chunk);
+    }
+
+    // Rewrite entry paths: replace source basename prefix with destination basename
+    let mut out_buf = Vec::new();
+    {
+        let mut archive = tar::Archive::new(&tar_data[..]);
+        let mut builder = tar::Builder::new(&mut out_buf);
+
+        for entry in archive
+            .entries()
+            .map_err(|e| io::Error::other(format!("Failed to read tar: {}", e)))?
+        {
+            let mut entry =
+                entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
+
+            let original_path = entry
+                .path()
+                .map_err(|e| io::Error::other(format!("Failed to read entry path: {}", e)))?
+                .to_string_lossy()
+                .to_string();
+
+            // Replace leading source basename with destination basename
+            let new_path =
+                if original_path == *src_name || original_path == format!("{}/", src_name) {
+                    original_path.replacen(&*src_name, &dst_name, 1)
+                } else if let Some(rest) = original_path.strip_prefix(&format!("{}/", src_name)) {
+                    format!("{}/{}", dst_name, rest)
+                } else {
+                    // Entry doesn't start with source name (shouldn't happen), keep as-is
+                    original_path
+                };
+
+            let mut header = entry.header().clone();
+            header.set_path(&new_path)?;
+            header.set_cksum();
+
+            let size = entry.header().size().unwrap_or(0);
+            if size > 0 {
+                let mut data = Vec::new();
+                entry
+                    .read_to_end(&mut data)
+                    .map_err(|e| io::Error::other(format!("Failed to read entry data: {}", e)))?;
+                builder.append(&header, &data[..])?;
+            } else {
+                builder.append(&header, &[] as &[u8])?;
+            }
+        }
+
+        builder.finish()?;
+    }
+
+    // Upload rewritten tar to destination's parent
+    let upload_options = UploadToContainerOptionsBuilder::default()
+        .path(&dst_parent)
+        .build();
+
+    client
+        .upload_to_container(
+            container,
+            Some(upload_options),
+            bollard::body_full(Bytes::from(out_buf)),
+        )
+        .await
+        .map_err(|e| io::Error::other(format!("Failed to upload to container: {}", e)))
+}

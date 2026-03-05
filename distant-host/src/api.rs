@@ -4,8 +4,8 @@ use std::{env, io};
 
 use distant_core::protocol::{
     ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION,
-    Permissions, ProcessId, PtySize, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo,
-    Version, semver,
+    Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SetPermissionsOptions,
+    SystemInfo, Version, semver,
 };
 use distant_core::{Api as DistantApi, Ctx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
@@ -37,7 +37,8 @@ impl Api {
 }
 
 impl DistantApi for Api {
-    async fn read_file(&self, ctx: Ctx, path: PathBuf) -> io::Result<Vec<u8>> {
+    async fn read_file(&self, ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Reading bytes from file {:?}",
             ctx.connection_id, path
@@ -46,7 +47,8 @@ impl DistantApi for Api {
         tokio::fs::read(path).await
     }
 
-    async fn read_file_text(&self, ctx: Ctx, path: PathBuf) -> io::Result<String> {
+    async fn read_file_text(&self, ctx: Ctx, path: RemotePath) -> io::Result<String> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Reading text from file {:?}",
             ctx.connection_id, path
@@ -55,7 +57,8 @@ impl DistantApi for Api {
         tokio::fs::read_to_string(path).await
     }
 
-    async fn write_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn write_file(&self, ctx: Ctx, path: RemotePath, data: Vec<u8>) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Writing bytes to file {:?}",
             ctx.connection_id, path
@@ -64,7 +67,8 @@ impl DistantApi for Api {
         tokio::fs::write(path, data).await
     }
 
-    async fn write_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
+    async fn write_file_text(&self, ctx: Ctx, path: RemotePath, data: String) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Writing text to file {:?}",
             ctx.connection_id, path
@@ -73,7 +77,8 @@ impl DistantApi for Api {
         tokio::fs::write(path, data).await
     }
 
-    async fn append_file(&self, ctx: Ctx, path: PathBuf, data: Vec<u8>) -> io::Result<()> {
+    async fn append_file(&self, ctx: Ctx, path: RemotePath, data: Vec<u8>) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Appending bytes to file {:?}",
             ctx.connection_id, path
@@ -87,7 +92,8 @@ impl DistantApi for Api {
         file.write_all(data.as_ref()).await
     }
 
-    async fn append_file_text(&self, ctx: Ctx, path: PathBuf, data: String) -> io::Result<()> {
+    async fn append_file_text(&self, ctx: Ctx, path: RemotePath, data: String) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Appending text to file {:?}",
             ctx.connection_id, path
@@ -104,12 +110,13 @@ impl DistantApi for Api {
     async fn read_dir(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         depth: usize,
         absolute: bool,
         canonicalize: bool,
         include_root: bool,
     ) -> io::Result<(Vec<DirEntry>, Vec<io::Error>)> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Reading directory {:?} {{depth: {}, absolute: {}, canonicalize: {}, include_root: {}}}",
             ctx.connection_id, path, depth, absolute, canonicalize, include_root
@@ -174,7 +181,7 @@ impl DistantApi for Api {
                     };
 
                     entries.push(DirEntry {
-                        path,
+                        path: RemotePath::from(path),
                         file_type: map_file_type(e.file_type()),
                         depth: e.depth(),
                     });
@@ -183,7 +190,7 @@ impl DistantApi for Api {
                 // For the root, we just want to echo back the entry as is
                 Ok(e) => {
                     entries.push(DirEntry {
-                        path: e.path().to_path_buf(),
+                        path: RemotePath::from(e.path().to_path_buf()),
                         file_type: map_file_type(e.file_type()),
                         depth: e.depth(),
                     });
@@ -196,7 +203,8 @@ impl DistantApi for Api {
         Ok((entries, errors))
     }
 
-    async fn create_dir(&self, ctx: Ctx, path: PathBuf, all: bool) -> io::Result<()> {
+    async fn create_dir(&self, ctx: Ctx, path: RemotePath, all: bool) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Creating directory {:?} {{all: {}}}",
             ctx.connection_id, path, all
@@ -208,7 +216,8 @@ impl DistantApi for Api {
         }
     }
 
-    async fn remove(&self, ctx: Ctx, path: PathBuf, force: bool) -> io::Result<()> {
+    async fn remove(&self, ctx: Ctx, path: RemotePath, force: bool) -> io::Result<()> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Removing {:?} {{force: {}}}",
             ctx.connection_id, path, force
@@ -225,7 +234,9 @@ impl DistantApi for Api {
         }
     }
 
-    async fn copy(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn copy(&self, ctx: Ctx, src: RemotePath, dst: RemotePath) -> io::Result<()> {
+        let src = PathBuf::from(src);
+        let dst = PathBuf::from(dst);
         debug!(
             "[Conn {}] Copying {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -282,7 +293,9 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn rename(&self, ctx: Ctx, src: PathBuf, dst: PathBuf) -> io::Result<()> {
+    async fn rename(&self, ctx: Ctx, src: RemotePath, dst: RemotePath) -> io::Result<()> {
+        let src = PathBuf::from(src);
+        let dst = PathBuf::from(dst);
         debug!(
             "[Conn {}] Renaming {:?} to {:?}",
             ctx.connection_id, src, dst
@@ -293,11 +306,12 @@ impl DistantApi for Api {
     async fn watch(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         recursive: bool,
         only: Vec<ChangeKind>,
         except: Vec<ChangeKind>,
     ) -> io::Result<()> {
+        let path = PathBuf::from(path);
         let watcher = &self.state.watcher;
         let only = only.into_iter().collect::<ChangeKindSet>();
         let except = except.into_iter().collect::<ChangeKindSet>();
@@ -321,7 +335,8 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn unwatch(&self, ctx: Ctx, path: PathBuf) -> io::Result<()> {
+    async fn unwatch(&self, ctx: Ctx, path: RemotePath) -> io::Result<()> {
+        let path = PathBuf::from(path);
         let watcher = &self.state.watcher;
         debug!("[Conn {}] Unwatching {:?}", ctx.connection_id, path);
 
@@ -329,7 +344,8 @@ impl DistantApi for Api {
         Ok(())
     }
 
-    async fn exists(&self, ctx: Ctx, path: PathBuf) -> io::Result<bool> {
+    async fn exists(&self, ctx: Ctx, path: RemotePath) -> io::Result<bool> {
+        let path = PathBuf::from(path);
         debug!("[Conn {}] Checking if {:?} exists", ctx.connection_id, path);
 
         // Following experimental `std::fs::try_exists`, which checks the error kind of the
@@ -344,17 +360,20 @@ impl DistantApi for Api {
     async fn metadata(
         &self,
         ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         canonicalize: bool,
         resolve_file_type: bool,
     ) -> io::Result<Metadata> {
+        let path = PathBuf::from(path);
         debug!(
             "[Conn {}] Reading metadata for {:?} {{canonicalize: {}, resolve_file_type: {}}}",
             ctx.connection_id, path, canonicalize, resolve_file_type
         );
         let metadata = tokio::fs::symlink_metadata(path.as_path()).await?;
         let canonicalized_path = if canonicalize {
-            Some(tokio::fs::canonicalize(path.as_path()).await?)
+            Some(RemotePath::from(
+                tokio::fs::canonicalize(path.as_path()).await?,
+            ))
         } else {
             None
         };
@@ -417,10 +436,11 @@ impl DistantApi for Api {
     async fn set_permissions(
         &self,
         _ctx: Ctx,
-        path: PathBuf,
+        path: RemotePath,
         permissions: Permissions,
         options: SetPermissionsOptions,
     ) -> io::Result<()> {
+        let path = PathBuf::from(path);
         /// Builds permissions from the metadata of `entry`, failing if metadata was unavailable.
         fn build_permissions(
             entry: &WalkDirEntry,
@@ -566,9 +586,10 @@ impl DistantApi for Api {
         ctx: Ctx,
         cmd: String,
         environment: Environment,
-        current_dir: Option<PathBuf>,
+        current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> io::Result<ProcessId> {
+        let current_dir = current_dir.map(PathBuf::from);
         let process = &self.state.process;
         debug!(
             "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
@@ -609,7 +630,7 @@ impl DistantApi for Api {
             family: env::consts::FAMILY.to_string(),
             os: env::consts::OS.to_string(),
             arch: env::consts::ARCH.to_string(),
-            current_dir: env::current_dir().unwrap_or_default(),
+            current_dir: RemotePath::from(env::current_dir().unwrap_or_default()),
             main_separator: std::path::MAIN_SEPARATOR,
             username: whoami::username(),
             shell: if cfg!(windows) {
@@ -706,7 +727,10 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let _ = api.read_file(ctx, path).await.unwrap_err();
+        let _ = api
+            .read_file(ctx, RemotePath::from(path))
+            .await
+            .unwrap_err();
     }
 
     #[test(tokio::test)]
@@ -717,7 +741,10 @@ mod tests {
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        let bytes = api.read_file(ctx, file.path().to_path_buf()).await.unwrap();
+        let bytes = api
+            .read_file(ctx, RemotePath::from(file.path().to_path_buf()))
+            .await
+            .unwrap();
         assert_eq!(bytes, b"some file contents");
     }
 
@@ -728,7 +755,10 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let path = temp.child("missing-file").path().to_path_buf();
 
-        let _ = api.read_file_text(ctx, path).await.unwrap_err();
+        let _ = api
+            .read_file_text(ctx, RemotePath::from(path))
+            .await
+            .unwrap_err();
     }
 
     #[test(tokio::test)]
@@ -740,7 +770,7 @@ mod tests {
         file.write_str("some file contents").unwrap();
 
         let text = api
-            .read_file_text(ctx, file.path().to_path_buf())
+            .read_file_text(ctx, RemotePath::from(file.path().to_path_buf()))
             .await
             .unwrap();
         assert_eq!(text, "some file contents");
@@ -756,7 +786,11 @@ mod tests {
         let file = temp.child("dir").child("test-file");
 
         let _ = api
-            .write_file(ctx, file.path().to_path_buf(), b"some text".to_vec())
+            .write_file(
+                ctx,
+                RemotePath::from(file.path().to_path_buf()),
+                b"some text".to_vec(),
+            )
             .await
             .unwrap_err();
 
@@ -773,9 +807,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        api.write_file(ctx, file.path().to_path_buf(), b"some text".to_vec())
-            .await
-            .unwrap();
+        api.write_file(
+            ctx,
+            RemotePath::from(file.path().to_path_buf()),
+            b"some text".to_vec(),
+        )
+        .await
+        .unwrap();
 
         // Also verify that we actually did create the file
         // with the associated contents
@@ -791,9 +829,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        api.write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
-            .await
-            .unwrap_err();
+        api.write_file_text(
+            ctx,
+            RemotePath::from(file.path().to_path_buf()),
+            "some text".to_string(),
+        )
+        .await
+        .unwrap_err();
 
         // Also verify that we didn't actually create the file
         file.assert(predicate::path::missing());
@@ -808,9 +850,13 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        api.write_file_text(ctx, file.path().to_path_buf(), "some text".to_string())
-            .await
-            .unwrap();
+        api.write_file_text(
+            ctx,
+            RemotePath::from(file.path().to_path_buf()),
+            "some text".to_string(),
+        )
+        .await
+        .unwrap();
 
         // Also verify that we actually did create the file
         // with the associated contents
@@ -828,7 +874,7 @@ mod tests {
 
         api.append_file(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
         )
         .await
@@ -849,7 +895,7 @@ mod tests {
 
         api.append_file(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
         )
         .await
@@ -873,7 +919,7 @@ mod tests {
 
         api.append_file(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
         )
         .await
@@ -898,7 +944,7 @@ mod tests {
         let _ = api
             .append_file_text(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 "some extra contents".to_string(),
             )
             .await
@@ -919,7 +965,7 @@ mod tests {
 
         api.append_file_text(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             "some extra contents".to_string(),
         )
         .await
@@ -943,7 +989,7 @@ mod tests {
 
         api.append_file_text(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             "some extra contents".to_string(),
         )
         .await
@@ -966,7 +1012,7 @@ mod tests {
         let _ = api
             .read_dir(
                 ctx,
-                dir.path().to_path_buf(),
+                RemotePath::from(dir.path().to_path_buf()),
                 /* depth */ 0,
                 /* absolute */ false,
                 /* canonicalize */ false,
@@ -1007,7 +1053,7 @@ mod tests {
         let (entries, _) = api
             .read_dir(
                 ctx,
-                root_dir.path().to_path_buf(),
+                RemotePath::from(root_dir.path().to_path_buf()),
                 /* depth */ 1,
                 /* absolute */ false,
                 /* canonicalize */ false,
@@ -1019,15 +1065,15 @@ mod tests {
         assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
         assert_eq!(entries[0].file_type, FileType::File);
-        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].path, RemotePath::new("file1"));
         assert_eq!(entries[0].depth, 1);
 
         assert_eq!(entries[1].file_type, FileType::Symlink);
-        assert_eq!(entries[1].path, Path::new("link1"));
+        assert_eq!(entries[1].path, RemotePath::new("link1"));
         assert_eq!(entries[1].depth, 1);
 
         assert_eq!(entries[2].file_type, FileType::Dir);
-        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].path, RemotePath::new("sub1"));
         assert_eq!(entries[2].depth, 1);
     }
 
@@ -1041,7 +1087,7 @@ mod tests {
         let (entries, _) = api
             .read_dir(
                 ctx,
-                root_dir.path().to_path_buf(),
+                RemotePath::from(root_dir.path().to_path_buf()),
                 /* depth */ 0,
                 /* absolute */ false,
                 /* canonicalize */ false,
@@ -1053,19 +1099,22 @@ mod tests {
         assert_eq!(entries.len(), 4, "Wrong number of entries found");
 
         assert_eq!(entries[0].file_type, FileType::File);
-        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].path, RemotePath::new("file1"));
         assert_eq!(entries[0].depth, 1);
 
         assert_eq!(entries[1].file_type, FileType::Symlink);
-        assert_eq!(entries[1].path, Path::new("link1"));
+        assert_eq!(entries[1].path, RemotePath::new("link1"));
         assert_eq!(entries[1].depth, 1);
 
         assert_eq!(entries[2].file_type, FileType::Dir);
-        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].path, RemotePath::new("sub1"));
         assert_eq!(entries[2].depth, 1);
 
         assert_eq!(entries[3].file_type, FileType::File);
-        assert_eq!(entries[3].path, Path::new("sub1").join("file2"));
+        assert_eq!(
+            entries[3].path,
+            RemotePath::new(Path::new("sub1").join("file2").to_string_lossy().as_ref())
+        );
         assert_eq!(entries[3].depth, 2);
     }
 
@@ -1079,7 +1128,7 @@ mod tests {
         let (entries, _) = api
             .read_dir(
                 ctx,
-                root_dir.path().to_path_buf(),
+                RemotePath::from(root_dir.path().to_path_buf()),
                 /* depth */ 1,
                 /* absolute */ false,
                 /* canonicalize */ false,
@@ -1092,19 +1141,22 @@ mod tests {
 
         // NOTE: Root entry is always absolute, resolved path
         assert_eq!(entries[0].file_type, FileType::Dir);
-        assert_eq!(entries[0].path, root_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            entries[0].path,
+            RemotePath::from(root_dir.path().canonicalize().unwrap())
+        );
         assert_eq!(entries[0].depth, 0);
 
         assert_eq!(entries[1].file_type, FileType::File);
-        assert_eq!(entries[1].path, Path::new("file1"));
+        assert_eq!(entries[1].path, RemotePath::new("file1"));
         assert_eq!(entries[1].depth, 1);
 
         assert_eq!(entries[2].file_type, FileType::Symlink);
-        assert_eq!(entries[2].path, Path::new("link1"));
+        assert_eq!(entries[2].path, RemotePath::new("link1"));
         assert_eq!(entries[2].depth, 1);
 
         assert_eq!(entries[3].file_type, FileType::Dir);
-        assert_eq!(entries[3].path, Path::new("sub1"));
+        assert_eq!(entries[3].path, RemotePath::new("sub1"));
         assert_eq!(entries[3].depth, 1);
     }
 
@@ -1118,7 +1170,7 @@ mod tests {
         let (entries, _) = api
             .read_dir(
                 ctx,
-                root_dir.path().to_path_buf(),
+                RemotePath::from(root_dir.path().to_path_buf()),
                 /* depth */ 1,
                 /* absolute */ true,
                 /* canonicalize */ false,
@@ -1131,15 +1183,15 @@ mod tests {
         let root_path = root_dir.path().canonicalize().unwrap();
 
         assert_eq!(entries[0].file_type, FileType::File);
-        assert_eq!(entries[0].path, root_path.join("file1"));
+        assert_eq!(entries[0].path, RemotePath::from(root_path.join("file1")));
         assert_eq!(entries[0].depth, 1);
 
         assert_eq!(entries[1].file_type, FileType::Symlink);
-        assert_eq!(entries[1].path, root_path.join("link1"));
+        assert_eq!(entries[1].path, RemotePath::from(root_path.join("link1")));
         assert_eq!(entries[1].depth, 1);
 
         assert_eq!(entries[2].file_type, FileType::Dir);
-        assert_eq!(entries[2].path, root_path.join("sub1"));
+        assert_eq!(entries[2].path, RemotePath::from(root_path.join("sub1")));
         assert_eq!(entries[2].depth, 1);
     }
 
@@ -1153,7 +1205,7 @@ mod tests {
         let (entries, _) = api
             .read_dir(
                 ctx,
-                root_dir.path().to_path_buf(),
+                RemotePath::from(root_dir.path().to_path_buf()),
                 /* depth */ 1,
                 /* absolute */ false,
                 /* canonicalize */ true,
@@ -1165,16 +1217,19 @@ mod tests {
         assert_eq!(entries.len(), 3, "Wrong number of entries found");
 
         assert_eq!(entries[0].file_type, FileType::File);
-        assert_eq!(entries[0].path, Path::new("file1"));
+        assert_eq!(entries[0].path, RemotePath::new("file1"));
         assert_eq!(entries[0].depth, 1);
 
         // Symlink should be resolved from $ROOT/link1 -> $ROOT/sub1/file2
         assert_eq!(entries[1].file_type, FileType::Symlink);
-        assert_eq!(entries[1].path, Path::new("sub1").join("file2"));
+        assert_eq!(
+            entries[1].path,
+            RemotePath::new(Path::new("sub1").join("file2").to_string_lossy().as_ref())
+        );
         assert_eq!(entries[1].depth, 1);
 
         assert_eq!(entries[2].file_type, FileType::Dir);
-        assert_eq!(entries[2].path, Path::new("sub1"));
+        assert_eq!(entries[2].path, RemotePath::new("sub1"));
         assert_eq!(entries[2].depth, 1);
     }
 
@@ -1188,7 +1243,11 @@ mod tests {
         let path = root_dir.path().join("nested").join("new-dir");
 
         let _ = api
-            .create_dir(ctx, path.to_path_buf(), /* all */ false)
+            .create_dir(
+                ctx,
+                RemotePath::from(path.to_path_buf()),
+                /* all */ false,
+            )
             .await
             .unwrap_err();
 
@@ -1202,9 +1261,13 @@ mod tests {
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("new-dir");
 
-        api.create_dir(ctx, path.to_path_buf(), /* all */ false)
-            .await
-            .unwrap();
+        api.create_dir(
+            ctx,
+            RemotePath::from(path.to_path_buf()),
+            /* all */ false,
+        )
+        .await
+        .unwrap();
 
         // Also verify that the directory was actually created
         assert!(path.exists(), "Directory not created");
@@ -1216,9 +1279,13 @@ mod tests {
         let root_dir = setup_dir().await;
         let path = root_dir.path().join("nested").join("new-dir");
 
-        api.create_dir(ctx, path.to_path_buf(), /* all */ true)
-            .await
-            .unwrap();
+        api.create_dir(
+            ctx,
+            RemotePath::from(path.to_path_buf()),
+            /* all */ true,
+        )
+        .await
+        .unwrap();
 
         // Also verify that the directory was actually created
         assert!(path.exists(), "Directory not created");
@@ -1231,7 +1298,11 @@ mod tests {
         let file = temp.child("missing-file");
 
         let _ = api
-            .remove(ctx, file.path().to_path_buf(), /* false */ false)
+            .remove(
+                ctx,
+                RemotePath::from(file.path().to_path_buf()),
+                /* false */ false,
+            )
             .await
             .unwrap_err();
 
@@ -1246,9 +1317,13 @@ mod tests {
         let dir = temp.child("dir");
         dir.create_dir_all().unwrap();
 
-        api.remove(ctx, dir.path().to_path_buf(), /* false */ false)
-            .await
-            .unwrap();
+        api.remove(
+            ctx,
+            RemotePath::from(dir.path().to_path_buf()),
+            /* false */ false,
+        )
+        .await
+        .unwrap();
 
         // Also, verify that path does not exist
         dir.assert(predicate::path::missing());
@@ -1262,9 +1337,13 @@ mod tests {
         dir.create_dir_all().unwrap();
         dir.child("file").touch().unwrap();
 
-        api.remove(ctx, dir.path().to_path_buf(), /* false */ true)
-            .await
-            .unwrap();
+        api.remove(
+            ctx,
+            RemotePath::from(dir.path().to_path_buf()),
+            /* false */ true,
+        )
+        .await
+        .unwrap();
 
         // Also, verify that path does not exist
         dir.assert(predicate::path::missing());
@@ -1277,9 +1356,13 @@ mod tests {
         let file = temp.child("some-file");
         file.touch().unwrap();
 
-        api.remove(ctx, file.path().to_path_buf(), /* false */ false)
-            .await
-            .unwrap();
+        api.remove(
+            ctx,
+            RemotePath::from(file.path().to_path_buf()),
+            /* false */ false,
+        )
+        .await
+        .unwrap();
 
         // Also, verify that path does not exist
         file.assert(predicate::path::missing());
@@ -1293,7 +1376,11 @@ mod tests {
         let dst = temp.child("dst");
 
         let _ = api
-            .copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .copy(
+                ctx,
+                RemotePath::from(src.path().to_path_buf()),
+                RemotePath::from(dst.path().to_path_buf()),
+            )
             .await
             .unwrap_err();
 
@@ -1314,9 +1401,13 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.copy(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we have source and destination directories and associated contents
         src.assert(predicate::path::is_dir());
@@ -1333,9 +1424,13 @@ mod tests {
         src.create_dir_all().unwrap();
         let dst = temp.child("dst");
 
-        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.copy(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we still have source and destination directories
         src.assert(predicate::path::is_dir());
@@ -1355,9 +1450,13 @@ mod tests {
         let dst = temp.child("dst");
         let dst_dir = dst.child("dir");
 
-        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.copy(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we have source and destination directories and associated contents
         src.assert(predicate::path::is_dir().name("src"));
@@ -1374,9 +1473,13 @@ mod tests {
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.copy(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we still have source and that destination has source's contents
         src.assert(predicate::path::is_file());
@@ -1391,7 +1494,11 @@ mod tests {
         let dst = temp.child("dst");
 
         let _ = api
-            .rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
+            .rename(
+                ctx,
+                RemotePath::from(src.path().to_path_buf()),
+                RemotePath::from(dst.path().to_path_buf()),
+            )
             .await
             .unwrap_err();
 
@@ -1412,9 +1519,13 @@ mod tests {
         let dst = temp.child("dst");
         let dst_file = dst.child("file");
 
-        api.rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.rename(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we moved the contents
         src.assert(predicate::path::missing());
@@ -1431,9 +1542,13 @@ mod tests {
         src.write_str("some text").unwrap();
         let dst = temp.child("dst");
 
-        api.rename(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.rename(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         // Verify that we moved the file
         src.assert(predicate::path::missing());
@@ -1444,13 +1559,13 @@ mod tests {
     fn validate_changed_path(data: &Response, expected_path: &Path, should_panic: bool) -> bool {
         match data {
             Response::Changed(change) if should_panic => {
-                let path = change.path.canonicalize().unwrap();
+                let path = PathBuf::from(change.path.clone()).canonicalize().unwrap();
                 assert_eq!(path, expected_path, "Wrong path reported: {:?}", change);
 
                 true
             }
             Response::Changed(change) => {
-                let path = change.path.canonicalize().unwrap();
+                let path = PathBuf::from(change.path.clone()).canonicalize().unwrap();
                 path == expected_path
             }
             x if should_panic => panic!("Unexpected response: {:?}", x),
@@ -1469,7 +1584,7 @@ mod tests {
 
         api.watch(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             /* recursive */ false,
             /* only */ Default::default(),
             /* except */ Default::default(),
@@ -1505,7 +1620,7 @@ mod tests {
 
         api.watch(
             ctx,
-            temp.path().to_path_buf(),
+            RemotePath::from(temp.path().to_path_buf()),
             /* recursive */ true,
             /* only */ Default::default(),
             /* except */ Default::default(),
@@ -1596,7 +1711,7 @@ mod tests {
         // Initialize watch on file 1
         api.watch(
             ctx_1,
-            file_1.path().to_path_buf(),
+            RemotePath::from(file_1.path().to_path_buf()),
             /* recursive */ false,
             /* only */ Default::default(),
             /* except */ Default::default(),
@@ -1607,7 +1722,7 @@ mod tests {
         // Initialize watch on file 2
         api.watch(
             ctx_2,
-            file_2.path().to_path_buf(),
+            RemotePath::from(file_2.path().to_path_buf()),
             /* recursive */ false,
             /* only */ Default::default(),
             /* except */ Default::default(),
@@ -1647,7 +1762,10 @@ mod tests {
         let file = temp.child("file");
         file.touch().unwrap();
 
-        let exists = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        let exists = api
+            .exists(ctx, RemotePath::from(file.path().to_path_buf()))
+            .await
+            .unwrap();
         assert!(exists, "Expected exists to be true, but was false");
     }
 
@@ -1657,7 +1775,10 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("file");
 
-        let exists = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        let exists = api
+            .exists(ctx, RemotePath::from(file.path().to_path_buf()))
+            .await
+            .unwrap();
         assert!(!exists, "Expected exists to be false, but was true");
     }
 
@@ -1670,7 +1791,7 @@ mod tests {
         let _ = api
             .metadata(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1688,7 +1809,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1722,7 +1843,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1752,7 +1873,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1781,7 +1902,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                dir.path().to_path_buf(),
+                RemotePath::from(dir.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1816,7 +1937,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                symlink.path().to_path_buf(),
+                RemotePath::from(symlink.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ false,
             )
@@ -1851,7 +1972,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                symlink.path().to_path_buf(),
+                RemotePath::from(symlink.path().to_path_buf()),
                 /* canonicalize */ true,
                 /* resolve_file_type */ false,
             )
@@ -1866,7 +1987,7 @@ mod tests {
                 ..
             } => assert_eq!(
                 path,
-                file.path().canonicalize().unwrap(),
+                RemotePath::from(file.path().canonicalize().unwrap()),
                 "Symlink canonicalized path does not match referenced file"
             ),
             x => panic!("Unexpected response: {:?}", x),
@@ -1886,7 +2007,7 @@ mod tests {
         let metadata = api
             .metadata(
                 ctx,
-                symlink.path().to_path_buf(),
+                RemotePath::from(symlink.path().to_path_buf()),
                 /* canonicalize */ false,
                 /* resolve_file_type */ true,
             )
@@ -1923,7 +2044,7 @@ mod tests {
         // Change the file permissions
         api.set_permissions(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             Permissions::readonly(),
             Default::default(),
         )
@@ -1961,7 +2082,7 @@ mod tests {
             // Change the file permissions
             api.set_permissions(
                 ctx,
-                file.path().to_path_buf(),
+                RemotePath::from(file.path().to_path_buf()),
                 Permissions::from_unix_mode(0o400),
                 Default::default(),
             )
@@ -2003,7 +2124,7 @@ mod tests {
         // Change the file permissions to be readonly (in general)
         api.set_permissions(
             ctx,
-            file.path().to_path_buf(),
+            RemotePath::from(file.path().to_path_buf()),
             Permissions::from_unix_mode(0o400),
             Default::default(),
         )
@@ -2066,7 +2187,7 @@ mod tests {
         // Change the permissions of the directory and not the contents underneath
         api.set_permissions(
             ctx,
-            temp.path().to_path_buf(),
+            RemotePath::from(temp.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 recursive: false,
@@ -2124,7 +2245,7 @@ mod tests {
         // Change the main directory permissions
         api.set_permissions(
             ctx,
-            temp.path().to_path_buf(),
+            RemotePath::from(temp.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 follow_symlinks: true,
@@ -2168,7 +2289,7 @@ mod tests {
         // Change the main directory permissions
         api.set_permissions(
             ctx,
-            temp.path().to_path_buf(),
+            RemotePath::from(temp.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 follow_symlinks: false,
@@ -2213,7 +2334,7 @@ mod tests {
         // Change the symlink permissions
         api.set_permissions(
             ctx,
-            symlink.path().to_path_buf(),
+            RemotePath::from(symlink.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 exclude_symlinks: true,
@@ -2261,7 +2382,7 @@ mod tests {
         // Change the permissions of the file pointed to by the symlink
         api.set_permissions(
             ctx,
-            temp.path().to_path_buf(),
+            RemotePath::from(temp.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 recursive: true,
@@ -2315,7 +2436,7 @@ mod tests {
         // Change the permissions of the file pointed to by the symlink
         api.set_permissions(
             ctx,
-            symlink.path().to_path_buf(),
+            RemotePath::from(symlink.path().to_path_buf()),
             Permissions::readonly(),
             SetPermissionsOptions {
                 follow_symlinks: true,
@@ -2663,7 +2784,7 @@ mod tests {
                 family: std::env::consts::FAMILY.to_string(),
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
-                current_dir: std::env::current_dir().unwrap_or_default(),
+                current_dir: RemotePath::from(std::env::current_dir().unwrap_or_default()),
                 main_separator: std::path::MAIN_SEPARATOR,
                 username: whoami::username(),
                 shell: if cfg!(windows) {
@@ -2712,7 +2833,10 @@ mod tests {
         file.touch().unwrap();
 
         // File that does exist
-        let result = api.exists(ctx, file.path().to_path_buf()).await.unwrap();
+        let result = api
+            .exists(ctx, RemotePath::from(file.path().to_path_buf()))
+            .await
+            .unwrap();
         assert!(result);
     }
 
@@ -2730,9 +2854,13 @@ mod tests {
 
         let dst = temp.child("dst-dir");
 
-        api.copy(ctx, src.path().to_path_buf(), dst.path().to_path_buf())
-            .await
-            .unwrap();
+        api.copy(
+            ctx,
+            RemotePath::from(src.path().to_path_buf()),
+            RemotePath::from(dst.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
 
         let dst_nested = dst.child("sub").child("nested.txt");
         dst_nested.assert("nested content");

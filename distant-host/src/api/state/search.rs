@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{cmp, io};
 
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
-    Response, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
+    RemotePath, Response, SearchId, SearchQuery, SearchQueryContentsMatch, SearchQueryMatch,
     SearchQueryMatchData, SearchQueryOptions, SearchQueryPathMatch, SearchQuerySubmatch,
     SearchQueryTarget,
 };
@@ -292,9 +292,16 @@ impl SearchQueryExecutor {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "missing paths"));
         }
 
+        // Convert RemotePaths to native PathBufs for filesystem operations
+        let native_paths: Vec<PathBuf> = query
+            .paths
+            .iter()
+            .map(|p| PathBuf::from(p.as_str()))
+            .collect();
+
         // Build our list of paths so we can ensure we weed out duplicates
-        let mut target_paths = Vec::new();
-        for mut path in query.paths.iter().map(Deref::deref) {
+        let mut target_paths: Vec<&Path> = Vec::new();
+        for mut path in native_paths.iter().map(PathBuf::as_path) {
             // For each explicit path, we will add it directly UNLESS we
             // are searching upward and have a max depth > 0 to avoid
             // searching this path twice
@@ -723,7 +730,7 @@ where
         // If we have at least one submatch, then we have a match
         let should_continue = if !submatches.is_empty() {
             let r#match = SearchQueryMatch::Path(SearchQueryPathMatch {
-                path: self.path.to_path_buf(),
+                path: RemotePath::from(self.path.to_path_buf()),
                 submatches,
             });
 
@@ -783,7 +790,7 @@ where
         // If we have at least one submatch, then we have a match
         let should_continue = if !submatches.is_empty() {
             let r#match = SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: self.path.to_path_buf(),
+                path: RemotePath::from(self.path.to_path_buf()),
                 lines: match std::str::from_utf8(mat.bytes()) {
                     Ok(s) => SearchQueryMatchData::Text(s.to_string()),
                     Err(_) => SearchQueryMatchData::Bytes(mat.bytes().to_vec()),
@@ -856,7 +863,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::equals(""),
             options: Default::default(),
@@ -883,7 +890,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex("other"),
             options: Default::default(),
@@ -896,7 +903,7 @@ mod tests {
             .filter_map(|m| m.into_path_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         // Root path len (including trailing separator) + 1 to be at start of child path
         let child_start = (root.path().to_string_lossy().len() + 1) as u64;
@@ -905,7 +912,7 @@ mod tests {
             matches,
             vec![
                 SearchQueryPathMatch {
-                    path: root.child(make_path("dir/other")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("dir/other")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("other".to_string()),
                         start: child_start + 4,
@@ -913,7 +920,7 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("dir/other/bin")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("dir/other/bin")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("other".to_string()),
                         start: child_start + 4,
@@ -921,7 +928,7 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("other")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("other")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("other".to_string()),
                         start: child_start,
@@ -929,7 +936,7 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("other".to_string()),
                         start: child_start,
@@ -960,7 +967,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex("path"),
             options: Default::default(),
@@ -973,7 +980,7 @@ mod tests {
             .filter_map(|m| m.into_path_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         // Root path len (including trailing separator) + 1 to be at start of child path
         let child_start = (root.path().to_string_lossy().len() + 1) as u64;
@@ -982,7 +989,7 @@ mod tests {
             matches,
             vec![
                 SearchQueryPathMatch {
-                    path: root.child(make_path("path")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("path")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("path".to_string()),
                         start: child_start,
@@ -990,7 +997,7 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("path/to")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("path/to")).to_path_buf()),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("path".to_string()),
                         start: child_start,
@@ -998,7 +1005,9 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file1.txt")).to_path_buf()
+                    ),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("path".to_string()),
                         start: child_start,
@@ -1006,7 +1015,9 @@ mod tests {
                     }]
                 },
                 SearchQueryPathMatch {
-                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file2.txt")).to_path_buf()
+                    ),
                     submatches: vec![SearchQuerySubmatch {
                         r#match: SearchQueryMatchData::Text("path".to_string()),
                         start: child_start,
@@ -1035,7 +1046,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: Default::default(),
@@ -1048,13 +1059,13 @@ mod tests {
             .filter_map(|m| m.into_contents_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         assert_eq!(
             matches,
             vec![
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
                     lines: SearchQueryMatchData::text("some other file with text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1065,7 +1076,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file1.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("lines of text in\n"),
                     line_number: 2,
                     absolute_offset: 5,
@@ -1076,7 +1089,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file2.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("more text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1103,7 +1118,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex(r"[abc][ab]"),
             options: Default::default(),
@@ -1122,7 +1137,7 @@ mod tests {
             matches,
             vec![
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("path/to/file.txt")).to_path_buf()),
                     lines: SearchQueryMatchData::text("aa ab ac\n"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1140,7 +1155,7 @@ mod tests {
                     ]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("path/to/file.txt")).to_path_buf()),
                     lines: SearchQueryMatchData::text("ba bb bc\n"),
                     line_number: 2,
                     absolute_offset: 9,
@@ -1158,7 +1173,7 @@ mod tests {
                     ]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("path/to/file.txt")).to_path_buf()),
                     lines: SearchQueryMatchData::text("ca cb cc"),
                     line_number: 3,
                     absolute_offset: 18,
@@ -1197,7 +1212,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1230,13 +1245,13 @@ mod tests {
         matches.extend(paginated_matches);
 
         // Sort our matches so we can check them all
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         assert_eq!(
             matches,
             vec![
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("other/file.txt")).to_path_buf(),
+                    path: RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
                     lines: SearchQueryMatchData::text("some other file with text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1247,7 +1262,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file1.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("lines of text in\n"),
                     line_number: 2,
                     absolute_offset: 5,
@@ -1258,7 +1275,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file2.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("more text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1290,7 +1309,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1324,7 +1343,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1361,12 +1380,12 @@ mod tests {
         async fn test_max_depth(
             root: &assert_fs::TempDir,
             depth: u64,
-            expected_paths: Vec<PathBuf>,
+            expected_paths: Vec<RemotePath>,
         ) {
             let state = SearchState::new();
             let (reply, mut rx) = mpsc::unbounded_channel();
             let query = SearchQuery {
-                paths: vec![root.path().to_path_buf()],
+                paths: vec![RemotePath::from(root.path().to_path_buf())],
                 target: SearchQueryTarget::Path,
                 condition: SearchQueryCondition::regex(".*"),
                 options: SearchQueryOptions {
@@ -1394,16 +1413,16 @@ mod tests {
         }
 
         // Maximum depth of 0 should only include root
-        test_max_depth(&root, 0, vec![root.to_path_buf()]).await;
+        test_max_depth(&root, 0, vec![RemotePath::from(root.to_path_buf())]).await;
 
         // Maximum depth of 1 should only include root and children
         test_max_depth(
             &root,
             1,
             vec![
-                root.to_path_buf(),
-                root.child(make_path("other")).to_path_buf(),
-                root.child(make_path("path")).to_path_buf(),
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child(make_path("other")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path")).to_path_buf()),
             ],
         )
         .await;
@@ -1413,12 +1432,12 @@ mod tests {
             &root,
             2,
             vec![
-                root.to_path_buf(),
-                root.child(make_path("other")).to_path_buf(),
-                root.child(make_path("other/dir")).to_path_buf(),
-                root.child(make_path("other/file.txt")).to_path_buf(),
-                root.child(make_path("path")).to_path_buf(),
-                root.child(make_path("path/to")).to_path_buf(),
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child(make_path("other")).to_path_buf()),
+                RemotePath::from(root.child(make_path("other/dir")).to_path_buf()),
+                RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path/to")).to_path_buf()),
             ],
         )
         .await;
@@ -1428,15 +1447,15 @@ mod tests {
             &root,
             3,
             vec![
-                root.to_path_buf(),
-                root.child(make_path("other")).to_path_buf(),
-                root.child(make_path("other/dir")).to_path_buf(),
-                root.child(make_path("other/dir/bin")).to_path_buf(),
-                root.child(make_path("other/file.txt")).to_path_buf(),
-                root.child(make_path("path")).to_path_buf(),
-                root.child(make_path("path/to")).to_path_buf(),
-                root.child(make_path("path/to/file1.txt")).to_path_buf(),
-                root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child(make_path("other")).to_path_buf()),
+                RemotePath::from(root.child(make_path("other/dir")).to_path_buf()),
+                RemotePath::from(root.child(make_path("other/dir/bin")).to_path_buf()),
+                RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path/to")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path/to/file1.txt")).to_path_buf()),
+                RemotePath::from(root.child(make_path("path/to/file2.txt")).to_path_buf()),
             ],
         )
         .await;
@@ -1455,7 +1474,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1471,12 +1490,12 @@ mod tests {
             .filter_map(|m| m.into_contents_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         assert_eq!(
             matches,
             vec![SearchQueryContentsMatch {
-                path: root.child(make_path("other/file.txt")).to_path_buf(),
+                path: RemotePath::from(root.child(make_path("other/file.txt")).to_path_buf()),
                 lines: SearchQueryMatchData::text("some other file with text"),
                 line_number: 1,
                 absolute_offset: 0,
@@ -1507,7 +1526,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
             options: SearchQueryOptions {
@@ -1523,13 +1542,15 @@ mod tests {
             .filter_map(|m| m.into_contents_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         assert_eq!(
             matches,
             vec![
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file1.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("lines of text in\n"),
                     line_number: 2,
                     absolute_offset: 5,
@@ -1540,7 +1561,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file2.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("more text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1575,7 +1598,7 @@ mod tests {
         // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
         //       and checking for 0x9F (159)
         let query = SearchQuery {
-            paths: vec![bin_file.path().to_path_buf()],
+            paths: vec![RemotePath::from(bin_file.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
             options: Default::default(),
@@ -1593,7 +1616,7 @@ mod tests {
         assert_eq!(
             matches,
             vec![SearchQueryContentsMatch {
-                path: root.child(make_path("file.bin")).to_path_buf(),
+                path: RemotePath::from(root.child(make_path("file.bin")).to_path_buf()),
                 lines: SearchQueryMatchData::bytes([159, 146, 150, 10]),
                 line_number: 2,
                 absolute_offset: 1,
@@ -1627,7 +1650,7 @@ mod tests {
         // NOTE: We provide regex that matches an invalid UTF-8 character by disabling the u flag
         //       and checking for 0x9F (159)
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex(r"(?-u:\x9F)"),
             options: Default::default(),
@@ -1655,13 +1678,13 @@ mod tests {
         async fn test_allowed_file_types(
             root: &assert_fs::TempDir,
             allowed_file_types: Vec<FileType>,
-            expected_paths: Vec<PathBuf>,
+            expected_paths: Vec<RemotePath>,
         ) {
             let state = SearchState::new();
             let (reply, mut rx) = mpsc::unbounded_channel();
 
             let query = SearchQuery {
-                paths: vec![root.path().to_path_buf()],
+                paths: vec![RemotePath::from(root.path().to_path_buf())],
                 target: SearchQueryTarget::Path,
                 condition: SearchQueryCondition::regex(".*"),
                 options: SearchQueryOptions {
@@ -1696,10 +1719,10 @@ mod tests {
             &root,
             vec![],
             vec![
-                root.to_path_buf(),
-                root.child("dir").to_path_buf(),
-                root.child("file").to_path_buf(),
-                root.child("symlink").to_path_buf(),
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child("dir").to_path_buf()),
+                RemotePath::from(root.child("file").to_path_buf()),
+                RemotePath::from(root.child("symlink").to_path_buf()),
             ],
         )
         .await;
@@ -1707,21 +1730,24 @@ mod tests {
         test_allowed_file_types(
             &root,
             vec![FileType::File],
-            vec![root.child("file").to_path_buf()],
+            vec![RemotePath::from(root.child("file").to_path_buf())],
         )
         .await;
 
         test_allowed_file_types(
             &root,
             vec![FileType::Dir],
-            vec![root.to_path_buf(), root.child("dir").to_path_buf()],
+            vec![
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child("dir").to_path_buf()),
+            ],
         )
         .await;
 
         test_allowed_file_types(
             &root,
             vec![FileType::Symlink],
-            vec![root.child("symlink").to_path_buf()],
+            vec![RemotePath::from(root.child("symlink").to_path_buf())],
         )
         .await;
     }
@@ -1745,7 +1771,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: SearchQueryOptions {
@@ -1767,11 +1793,11 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                root.to_path_buf(),
-                root.child("dir").to_path_buf(),
-                root.child("dir_symlink").to_path_buf(),
-                root.child("file").to_path_buf(),
-                root.child("file_symlink").to_path_buf(),
+                RemotePath::from(root.to_path_buf()),
+                RemotePath::from(root.child("dir").to_path_buf()),
+                RemotePath::from(root.child("dir_symlink").to_path_buf()),
+                RemotePath::from(root.child("file").to_path_buf()),
+                RemotePath::from(root.child("file_symlink").to_path_buf()),
             ]
         );
 
@@ -1803,7 +1829,7 @@ mod tests {
         //       type filter, it will evaluate the underlying type of symbolic links and filter
         //       based on that instead of the the symbolic link
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: SearchQueryOptions {
@@ -1826,8 +1852,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                root.child("file").to_path_buf(),
-                root.child("file_symlink").to_path_buf(),
+                RemotePath::from(root.child("file").to_path_buf()),
+                RemotePath::from(root.child("file_symlink").to_path_buf()),
             ]
         );
 
@@ -1849,12 +1875,16 @@ mod tests {
 
         let query = SearchQuery {
             paths: vec![
-                root.child(make_path("path/to/file1.txt"))
-                    .path()
-                    .to_path_buf(),
-                root.child(make_path("path/to/file2.txt"))
-                    .path()
-                    .to_path_buf(),
+                RemotePath::from(
+                    root.child(make_path("path/to/file1.txt"))
+                        .path()
+                        .to_path_buf(),
+                ),
+                RemotePath::from(
+                    root.child(make_path("path/to/file2.txt"))
+                        .path()
+                        .to_path_buf(),
+                ),
             ],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("text"),
@@ -1868,13 +1898,15 @@ mod tests {
             .filter_map(|m| m.into_contents_match())
             .collect::<Vec<_>>();
 
-        matches.sort_unstable_by_key(|m| m.path.to_path_buf());
+        matches.sort_unstable_by_key(|m| m.path.clone());
 
         assert_eq!(
             matches,
             vec![
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file1.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file1.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("lines of text in\n"),
                     line_number: 2,
                     absolute_offset: 5,
@@ -1885,7 +1917,9 @@ mod tests {
                     }]
                 },
                 SearchQueryContentsMatch {
-                    path: root.child(make_path("path/to/file2.txt")).to_path_buf(),
+                    path: RemotePath::from(
+                        root.child(make_path("path/to/file2.txt")).to_path_buf()
+                    ),
                     lines: SearchQueryMatchData::text("more text"),
                     line_number: 1,
                     absolute_offset: 0,
@@ -1920,13 +1954,13 @@ mod tests {
         ]);
 
         // Make a path within root path
-        let p = |path: &str| root.child(make_path(path)).to_path_buf();
+        let p = |path: &str| RemotePath::from(root.child(make_path(path)).to_path_buf());
 
         async fn test_max_depth(
-            path: PathBuf,
+            path: RemotePath,
             regex: &str,
             depth: impl Into<Option<u64>>,
-            expected_paths: Vec<PathBuf>,
+            expected_paths: Vec<RemotePath>,
         ) {
             let state = SearchState::new();
             let (reply, mut rx) = mpsc::unbounded_channel();
@@ -2037,7 +2071,7 @@ mod tests {
 
         let root = setup_dir(Vec::new());
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: Default::default(),
@@ -2079,7 +2113,7 @@ mod tests {
         let (reply, _rx) = mpsc::unbounded_channel();
         let root = setup_dir(Vec::new());
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex(".*"),
             options: Default::default(),
@@ -2097,7 +2131,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
         let root = setup_dir(Vec::new());
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::equals(""),
             options: Default::default(),
@@ -2137,7 +2171,7 @@ mod tests {
 
         // Start a search
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("match"),
             options: Default::default(),
@@ -2186,7 +2220,7 @@ mod tests {
         let root = setup_dir(Vec::new());
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::regex("[invalid"),
             options: Default::default(),
@@ -2240,7 +2274,7 @@ mod tests {
         let (reply, mut rx) = mpsc::unbounded_channel();
 
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf()],
+            paths: vec![RemotePath::from(root.path().to_path_buf())],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("match"),
             options: Default::default(),
@@ -2255,7 +2289,7 @@ mod tests {
 
         // Only the file should match, not the directory
         assert_eq!(matches.len(), 1);
-        assert!(matches[0].path.to_string_lossy().contains("file.txt"));
+        assert!(matches[0].path.as_str().contains("file.txt"));
 
         let data = rx.recv().await;
         assert_eq!(data, Some(Response::SearchDone { id: search_id }));
@@ -2272,7 +2306,10 @@ mod tests {
 
         // Provide the same path twice
         let query = SearchQuery {
-            paths: vec![root.path().to_path_buf(), root.path().to_path_buf()],
+            paths: vec![
+                RemotePath::from(root.path().to_path_buf()),
+                RemotePath::from(root.path().to_path_buf()),
+            ],
             target: SearchQueryTarget::Contents,
             condition: SearchQueryCondition::regex("unique"),
             options: Default::default(),

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use distant_core::net::common::ConnectionId;
-use distant_core::protocol::{Change, ChangeDetails, ChangeDetailsAttribute, ChangeKind};
+use distant_core::protocol::{
+    Change, ChangeDetails, ChangeDetailsAttribute, ChangeKind, RemotePath,
+};
 use log::*;
 use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind, RenameMode};
 use notify::{
@@ -384,10 +386,10 @@ async fn watcher_task<W>(
                         let change = Change {
                             timestamp,
                             kind,
-                            path: path.to_path_buf(),
+                            path: RemotePath::from(path.to_path_buf()),
                             details: ChangeDetails {
                                 attribute,
-                                renamed: renamed.clone(),
+                                renamed: renamed.as_ref().map(|p| RemotePath::from(p.clone())),
                                 timestamp: details_timestamp,
                                 extra: ev.info().map(ToString::to_string),
                             },
@@ -825,7 +827,7 @@ mod tests {
         let response = result.unwrap().unwrap();
         match response {
             distant_core::protocol::Response::Changed(change) => {
-                assert!(!change.path.as_os_str().is_empty());
+                assert!(!change.path.as_str().is_empty());
             }
             distant_core::protocol::Response::Error(_) => {
                 // Some platforms may report errors instead of changes; that's ok

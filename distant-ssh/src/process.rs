@@ -3,9 +3,9 @@ use std::io;
 use std::sync::Arc;
 
 use distant_core::net::server::Reply;
-use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
-use russh::ChannelMsg;
+use distant_core::protocol::{Environment, ProcessId, PtySize, RemotePath, Response};
 use russh::client::Handle;
+use russh::{ChannelMsg, Sig};
 use tokio::sync::mpsc;
 
 use crate::ClientHandler;
@@ -31,7 +31,7 @@ pub async fn spawn_simple<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
     environment: Environment,
-    current_dir: Option<std::path::PathBuf>,
+    current_dir: Option<RemotePath>,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
@@ -79,19 +79,30 @@ where
     let stderr_reply = reply.clone_reply();
     let exit_reply = reply.clone_reply();
     let msg_id = id;
+    let cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut _got_eof = false;
 
+        log::debug!(
+            "spawn_simple reader: waiting for channel messages (pid={msg_id}, cmd={cmd_for_log})"
+        );
         while let Some(msg) = read_half.wait().await {
             match msg {
                 ChannelMsg::Data { ref data } => {
+                    log::debug!(
+                        "spawn_simple reader: Data ({} bytes) for pid={msg_id}",
+                        data.len()
+                    );
                     let _ = stdout_reply.send(Response::ProcStdout {
                         id: msg_id,
                         data: data.to_vec(),
                     });
                 }
                 ChannelMsg::ExtendedData { ref data, ext } => {
+                    log::debug!(
+                        "spawn_simple reader: ExtendedData (ext={ext}, {} bytes) for pid={msg_id}",
+                        data.len()
+                    );
                     if ext == 1 {
                         let _ = stderr_reply.send(Response::ProcStderr {
                             id: msg_id,
@@ -100,16 +111,33 @@ where
                     }
                 }
                 ChannelMsg::Eof => {
-                    _got_eof = true;
+                    log::debug!("spawn_simple reader: Eof for pid={msg_id}");
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
+                    log::debug!("spawn_simple reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
+                    // On Windows, sshd may not send Eof after ExitStatus.
+                    // Break immediately — ExitStatus arrives after all data
+                    // has been flushed, so no output will be lost.
+                    break;
                 }
-                _ => {}
+                ChannelMsg::ExitSignal { signal_name, .. } => {
+                    log::debug!(
+                        "spawn_simple reader: ExitSignal({signal_name:?}) for pid={msg_id}"
+                    );
+                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
+                _ => {
+                    log::debug!("spawn_simple reader: other ChannelMsg for pid={msg_id}");
+                }
             }
         }
+        log::debug!(
+            "spawn_simple reader: channel closed for pid={msg_id}, exit_status={exit_status:?}"
+        );
 
         // Send final exit status
         let killed = *was_killed_clone.lock().await;
@@ -136,7 +164,9 @@ where
                 }
                 Some(()) = kill_rx.recv() => {
                     *was_killed.lock().await = true;
+                    let _ = write_half.signal(Sig::KILL).await;
                     let _ = write_half.eof().await;
+                    let _ = write_half.close().await;
                     break;
                 }
                 else => break,
@@ -160,7 +190,7 @@ pub async fn spawn_pty<F, Fut>(
     handle: &Handle<ClientHandler>,
     cmd: &str,
     environment: Environment,
-    current_dir: Option<std::path::PathBuf>,
+    current_dir: Option<RemotePath>,
     size: PtySize,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
@@ -235,29 +265,51 @@ where
     let stdout_reply = reply.clone_reply();
     let exit_reply = reply.clone_reply();
     let msg_id = id;
+    let pty_cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
-        let mut _got_eof = false;
 
+        log::debug!(
+            "spawn_pty reader: waiting for channel messages (pid={msg_id}, cmd={pty_cmd_for_log})"
+        );
         while let Some(msg) = read_half.wait().await {
             match msg {
                 ChannelMsg::Data { ref data } => {
+                    log::debug!(
+                        "spawn_pty reader: Data ({} bytes) for pid={msg_id}",
+                        data.len()
+                    );
                     let _ = stdout_reply.send(Response::ProcStdout {
                         id: msg_id,
                         data: data.to_vec(),
                     });
                 }
                 ChannelMsg::Eof => {
-                    _got_eof = true;
+                    log::debug!("spawn_pty reader: Eof for pid={msg_id}");
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
+                    log::debug!("spawn_pty reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
+                    // On Windows, sshd may not send Eof after ExitStatus.
+                    // Break immediately — ExitStatus arrives after all data
+                    // has been flushed, so no output will be lost.
+                    break;
                 }
-                _ => {}
+                ChannelMsg::ExitSignal { signal_name, .. } => {
+                    log::debug!("spawn_pty reader: ExitSignal({signal_name:?}) for pid={msg_id}");
+                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
+                _ => {
+                    log::debug!("spawn_pty reader: other ChannelMsg for pid={msg_id}");
+                }
             }
         }
+        log::debug!(
+            "spawn_pty reader: channel closed for pid={msg_id}, exit_status={exit_status:?}"
+        );
 
         // Send final exit status
         let killed = *was_killed_clone.lock().await;
@@ -284,7 +336,9 @@ where
                 }
                 Some(()) = kill_rx.recv() => {
                     *was_killed.lock().await = true;
+                    let _ = write_half.signal(Sig::KILL).await;
                     let _ = write_half.eof().await;
+                    let _ = write_half.close().await;
                     break;
                 }
                 Some(new_size) = resize_rx.recv() => {
