@@ -155,3 +155,36 @@ jobs:
         run: cargo nextest run --profile ci --release --all-features --workspace
       - name: Run all doc tests (all features)
         run: cargo test --release --all-features --workspace --doc
+
+  freebsd:
+    name: "Test Rust stable on FreeBSD x86_64"
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: --cfg ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download cargo-nextest for FreeBSD
+        run: |
+          curl -LsSf https://get.nexte.st/latest/freebsd | tar xzf - -C .
+          chmod +x ./cargo-nextest
+      - name: Cache FreeBSD build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: freebsd-14.2-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            freebsd-14.2-target-
+      - name: Test in FreeBSD VM
+        uses: cross-platform-actions/action@v0.32.0
+        with:
+          operating_system: freebsd
+          version: '14.2'
+          environment_variables: RUSTFLAGS
+          run: |
+            sudo pkg install -y curl ca_root_nss gmake
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+            mv ./cargo-nextest "$HOME/.cargo/bin/"
+            sudo mkdir -p /var/run/sshd
+            cargo nextest run --profile ci --release --all-features --workspace --retries 7
+            cargo test --release --all-features --workspace --doc
