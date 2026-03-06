@@ -39,6 +39,7 @@ opt-level = 'z'
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"
 
 [features]
 default = ["docker", "host", "ssh"]
@@ -106,6 +107,19 @@ rstest = "0.26.1"
 serde_json = "1"
 test-log = "0.2.19"
 toml = "0.7"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/distant-{ target }{ binary-ext }"
+bin-dir = "distant-{ target }{ binary-ext }"
+pkg-fmt = "bin"
+
+[package.metadata.binstall.overrides.x86_64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/distant-universal-apple-darwin"
+bin-dir = "distant-universal-apple-darwin"
+
+[package.metadata.binstall.overrides.aarch64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/distant-universal-apple-darwin"
+bin-dir = "distant-universal-apple-darwin"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
