@@ -8,7 +8,7 @@ edition = "2024"
 homepage = "https://github.com/chipsenkbeil/distant"
 repository = "https://github.com/chipsenkbeil/distant"
 readme = "README.md"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 
 [features]
 default = ["macos-fsevent"]
