@@ -119,7 +119,13 @@ async fn should_support_json_watching_directory_recursively(
     // Linux and Windows emit a directory change before the file change;
     // macOS (FSEvents) only emits the file change.
     let mut expected: Vec<serde_json::Value> = Vec::new();
-    if cfg!(not(target_os = "macos")) {
+    if cfg!(not(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd",
+    ))) {
         expected.push(json!(dir.to_path_buf().canonicalize().unwrap()));
     }
     expected.push(json!(file.to_path_buf().canonicalize().unwrap()));

@@ -77,7 +77,20 @@ where
 fn should_run_single_command_via_shell(ctx: ManagerCtx) {
     #[cfg(unix)]
     {
-        let cmd = build_shell_command(&ctx, &["--", "echo", "hello"]);
+        // On BSDs (kqueue-based), PTY slave output can be discarded before the
+        // master reads it when the process exits quickly.  Wrap the command in
+        // `sh -c '...; sleep 1'` to keep the process alive long enough.
+        let args: &[&str] = if cfg!(any(
+            target_os = "freebsd",
+            target_os = "dragonfly",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        )) {
+            &["--", "sh", "-c", "echo hello; sleep 1"]
+        } else {
+            &["--", "echo", "hello"]
+        };
+        let cmd = build_shell_command(&ctx, args);
         let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
         session.set_expect_timeout(Some(Duration::from_secs(30)));
 
@@ -149,7 +162,19 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
     #[cfg(unix)]
     {
-        let pwd_args = vec!["--current-dir", temp_str, "--", "pwd"];
+        // On BSDs (kqueue-based), PTY slave output can be discarded before the
+        // master reads it when the process exits quickly.  Wrap the command in
+        // `sh -c '...; sleep 1'` to keep the process alive long enough.
+        let pwd_args: Vec<&str> = if cfg!(any(
+            target_os = "freebsd",
+            target_os = "dragonfly",
+            target_os = "openbsd",
+            target_os = "netbsd",
+        )) {
+            vec!["--current-dir", temp_str, "--", "sh", "-c", "pwd; sleep 1"]
+        } else {
+            vec!["--current-dir", temp_str, "--", "pwd"]
+        };
         let cmd = build_shell_command(&ctx, &pwd_args);
         let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
         session.set_expect_timeout(Some(Duration::from_secs(30)));

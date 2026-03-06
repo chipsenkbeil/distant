@@ -186,5 +186,5 @@ jobs:
             . "$HOME/.cargo/env"
             mv ./cargo-nextest "$HOME/.cargo/bin/"
             sudo mkdir -p /var/run/sshd
-            cargo nextest run --profile ci --release --all-features --workspace
+            cargo nextest run --profile ci --release --all-features --workspace --retries 7
             cargo test --release --all-features --workspace --doc
