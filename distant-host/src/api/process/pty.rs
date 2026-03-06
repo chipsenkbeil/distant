@@ -15,6 +15,25 @@ use super::{
 };
 use crate::constants::{MAX_PIPE_CHUNK_SIZE, READ_PAUSE_DURATION};
 
+/// Scan PTY output for ConPTY terminal queries and return responses.
+///
+/// portable-pty >= 0.9.0 creates ConPTY with `PSEUDOCONSOLE_INHERIT_CURSOR`,
+/// which sends a cursor position request (`\x1b[6n`) and blocks all child I/O
+/// until the host responds. Since distant is a PTY intermediary (not a terminal
+/// emulator), we must explicitly detect and respond to these queries.
+///
+/// See: <https://github.com/wez/wezterm/issues/6783>
+#[cfg(windows)]
+fn conpty_query_responses(data: &[u8]) -> Option<Vec<u8>> {
+    // CSI 6 n — Device Status Report (cursor position)
+    // Response: CSI row ; col R
+    if data.windows(4).any(|w| w == b"\x1b[6n") {
+        return Some(b"\x1b[1;1R".to_vec());
+    }
+    // Future queries (DA1, DA2, etc.) can be added here.
+    None
+}
+
 /// Represents a process that is associated with a pty
 pub struct PtyProcess {
     id: ProcessId,
@@ -82,6 +101,10 @@ impl PtyProcess {
             }
         });
 
+        // Clone stdin_tx so the stdout task can respond to ConPTY terminal queries
+        #[cfg(windows)]
+        let conpty_tx = stdin_tx.clone();
+
         // Spawn a blocking task to process receiving stdout async
         let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(1);
         let mut stdout_reader = pty_master.try_clone_reader().map_err(io::Error::other)?;
@@ -90,6 +113,10 @@ impl PtyProcess {
             loop {
                 match stdout_reader.read(&mut buf) {
                     Ok(n) if n > 0 => {
+                        #[cfg(windows)]
+                        if let Some(response) = conpty_query_responses(&buf[..n]) {
+                            let _ = conpty_tx.try_send(response);
+                        }
                         stdout_tx.blocking_send(buf[..n].to_vec()).map_err(|_| {
                             io::Error::new(io::ErrorKind::BrokenPipe, "Output channel closed")
                         })?;

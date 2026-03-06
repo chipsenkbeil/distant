@@ -243,6 +243,7 @@ jobs:
             rust_setup: |
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               . "$HOME/.cargo/env"
+            build_env: ''
           - target: aarch64-unknown-freebsd
             name: FreeBSD aarch64
             os: freebsd
@@ -250,6 +251,7 @@ jobs:
             arch: arm64
             pkg_cmd: sudo pkg install -y curl ca_root_nss gmake rust
             rust_setup: ''
+            build_env: ''
           - target: x86_64-unknown-netbsd
             name: NetBSD x86_64
             os: netbsd
@@ -259,6 +261,7 @@ jobs:
             rust_setup: |
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               . "$HOME/.cargo/env"
+            build_env: ''
           - target: aarch64-unknown-netbsd
             name: NetBSD aarch64
             os: netbsd
@@ -266,6 +269,7 @@ jobs:
             arch: arm64
             pkg_cmd: sudo pkgin -y install curl gmake rust
             rust_setup: ''
+            build_env: ''
           - target: x86_64-unknown-openbsd
             name: OpenBSD x86_64
             os: openbsd
@@ -273,6 +277,7 @@ jobs:
             arch: x86-64
             pkg_cmd: sudo pkg_add curl gmake rust
             rust_setup: ''
+            build_env: ''
           - target: aarch64-unknown-openbsd
             name: OpenBSD aarch64
             os: openbsd
@@ -280,6 +285,7 @@ jobs:
             arch: arm64
             pkg_cmd: sudo pkg_add curl gmake rust
             rust_setup: ''
+            build_env: CARGO_PROFILE_RELEASE_LTO=thin
     steps:
       - uses: actions/checkout@v4
       - name: Stamp nightly version
@@ -302,7 +308,7 @@ jobs:
           run: |
             ${{ matrix.pkg_cmd }}
             ${{ matrix.rust_setup }}
-            cargo build --release --all-features
+            ${{ matrix.build_env }} cargo build --release --all-features
             mv ./target/release/distant ./distant-${{ matrix.target }}
             chmod +x ./distant-${{ matrix.target }}
       - name: Upload
