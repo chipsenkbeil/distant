@@ -162,6 +162,7 @@ jobs:
     if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -247,10 +248,8 @@ jobs:
             os: freebsd
             version: '14.2'
             arch: arm64
-            pkg_cmd: sudo pkg install -y curl ca_root_nss gmake
-            rust_setup: |
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-              . "$HOME/.cargo/env"
+            pkg_cmd: sudo pkg install -y curl ca_root_nss gmake rust
+            rust_setup: ''
           - target: x86_64-unknown-netbsd
             name: NetBSD x86_64
             os: netbsd
@@ -265,10 +264,8 @@ jobs:
             os: netbsd
             version: '10.1'
             arch: arm64
-            pkg_cmd: sudo pkgin -y install curl gmake
-            rust_setup: |
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-              . "$HOME/.cargo/env"
+            pkg_cmd: sudo pkgin -y install curl gmake rust
+            rust_setup: ''
           - target: x86_64-unknown-openbsd
             name: OpenBSD x86_64
             os: openbsd
