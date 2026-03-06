@@ -239,14 +239,25 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           for i in $(find . -name "distant-*" -type f); do
-            echo "Generating checksum for ${i}"
-            sha256sum "${i}" > "${i}.sha256sum"
+            echo "Generating SHA256 checksum for ${i}"
+            sha256sum "${i}" > "${i}.sha256"
           done
-      - name: Generate consolidated checksums
+      - name: Generate BLAKE2 checksums
         run: |
-          find . -name "distant-*" -type f ! -name "*.sha256sum" | sort | while read f; do
+          for i in $(find . -name "distant-*" -type f ! -name "*.sha256" ! -name "*.b2"); do
+            echo "Generating BLAKE2 checksum for ${i}"
+            b2sum "${i}" > "${i}.b2"
+          done
+      - name: Generate consolidated SHA256 checksums
+        run: |
+          find . -name "distant-*" -type f ! -name "*.sha256" ! -name "*.b2" | sort | while read f; do
             sha256sum "$f"
           done > SHA256SUMS
+      - name: Generate consolidated BLAKE2 checksums
+        run: |
+          find . -name "distant-*" -type f ! -name "*.sha256" ! -name "*.b2" | sort | while read f; do
+            b2sum "$f"
+          done > B2SUMS
       - name: Determine git tag
         if: github.event_name == 'push'
         run: |
@@ -284,6 +295,7 @@ jobs:
           files: |
             **/distant-*
             SHA256SUMS
+            B2SUMS
           body: |
             Nightly build from master (${{ github.sha }}).
             This is not guaranteed to pass all tests or even function properly.
@@ -299,6 +311,7 @@ jobs:
           files: |
             **/distant-*
             SHA256SUMS
+            B2SUMS
           body: |
             ## Release Notes
             ${{ steps.changelog.outputs.changes }}
