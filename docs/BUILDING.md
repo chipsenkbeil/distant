@@ -71,11 +71,3 @@ The CI release workflow builds for the following targets:
 | Linux (musl) | `x86_64-unknown-linux-musl` | Needs `musl-tools` |
 | Linux (musl) | `aarch64-unknown-linux-musl` | Uses `cross` |
 | FreeBSD | `x86_64-unknown-freebsd` | Uses `cross` |
-
-## Using Docker
-
-From the root of the repository:
-
-```bash
-docker build -t chipsenkbeil/distant:latest .
-```
