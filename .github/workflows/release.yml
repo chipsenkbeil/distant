@@ -28,7 +28,7 @@ concurrency:
 #
 # ✅ x86_64-unknown-linux-gnu
 # ✅ aarch64-unknown-linux-gnu
-# ✅ aarch64-linux-android (cross Docker image)
+# ✅ aarch64-linux-android (runner NDK)
 # ✅ armv7-unknown-linux-gnueabihf
 #
 # ✅ x86_64-unknown-linux-musl
@@ -166,26 +166,20 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             build: --all-features
-            cargo: cargo
           - target: aarch64-unknown-linux-gnu
             build: --all-features
             deps: gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-            cargo: cargo
           - target: armv7-unknown-linux-gnueabihf
             build: --all-features
             deps: gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
-            cargo: cargo
           - target: x86_64-unknown-linux-musl
             build: --all-features
             deps: musl-tools
-            cargo: cargo
           - target: aarch64-unknown-linux-musl
             build: --all-features
-            deps: musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-            cargo: cross
+            deps: musl-tools
           - target: aarch64-linux-android
             build: --all-features
-            cargo: cross
     steps:
       - uses: actions/checkout@v4
       - name: Stamp nightly version
@@ -203,14 +197,23 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.deps }}
-      - name: Install cross
-        if: matrix.cargo == 'cross'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross@0.2.5
+      - name: Install aarch64 musl toolchain
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          curl -L https://musl.cc/aarch64-linux-musl-cross.tgz | tar xz -C /opt
+          echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
+          echo "AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar" >> $GITHUB_ENV
+      - name: Configure Android NDK
+        if: matrix.target == 'aarch64-linux-android'
+        run: |
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
       - name: Build binary (${{ matrix.target }})
         run: |
-          ${{ matrix.cargo }} build --release ${{ matrix.build }} --target ${{ matrix.target }}
+          cargo build --release ${{ matrix.build }} --target ${{ matrix.target }}
           mv ./target/${{ matrix.target }}/release/distant ./distant-${{ matrix.target }}
           chmod +x ./distant-${{ matrix.target }}
       - name: Upload
@@ -227,6 +230,7 @@ jobs:
     if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-freebsd
@@ -235,42 +239,63 @@ jobs:
             version: '14.2'
             arch: x86-64
             pkg_cmd: sudo pkg install -y curl ca_root_nss gmake
+            rust_setup: |
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              . "$HOME/.cargo/env"
           - target: aarch64-unknown-freebsd
             name: FreeBSD aarch64
             os: freebsd
             version: '14.2'
             arch: arm64
             pkg_cmd: sudo pkg install -y curl ca_root_nss gmake
+            rust_setup: |
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              . "$HOME/.cargo/env"
           - target: x86_64-unknown-netbsd
             name: NetBSD x86_64
             os: netbsd
             version: '10.1'
             arch: x86-64
             pkg_cmd: sudo pkgin -y install curl gmake
+            rust_setup: |
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              . "$HOME/.cargo/env"
           - target: aarch64-unknown-netbsd
             name: NetBSD aarch64
             os: netbsd
             version: '10.1'
             arch: arm64
             pkg_cmd: sudo pkgin -y install curl gmake
+            rust_setup: |
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              . "$HOME/.cargo/env"
           - target: x86_64-unknown-openbsd
             name: OpenBSD x86_64
             os: openbsd
             version: '7.8'
             arch: x86-64
-            pkg_cmd: sudo pkg_add curl gmake
+            pkg_cmd: sudo pkg_add curl gmake rust
+            rust_setup: ''
           - target: aarch64-unknown-openbsd
             name: OpenBSD aarch64
             os: openbsd
             version: '7.8'
             arch: arm64
-            pkg_cmd: sudo pkg_add curl gmake
+            pkg_cmd: sudo pkg_add curl gmake rust
+            rust_setup: ''
     steps:
       - uses: actions/checkout@v4
       - name: Stamp nightly version
         if: inputs.nightly == true
         shell: bash
         run: bash scripts/stamp-nightly.sh
+      - name: Cache ${{ matrix.name }} build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: release-${{ matrix.target }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            release-${{ matrix.target }}-target-
       - name: Build in ${{ matrix.name }} VM
         uses: cross-platform-actions/action@v0.32.0
         with:
@@ -279,8 +304,7 @@ jobs:
           architecture: ${{ matrix.arch }}
           run: |
             ${{ matrix.pkg_cmd }}
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            . "$HOME/.cargo/env"
+            ${{ matrix.rust_setup }}
             cargo build --release --all-features
             mv ./target/release/distant ./distant-${{ matrix.target }}
             chmod +x ./distant-${{ matrix.target }}
