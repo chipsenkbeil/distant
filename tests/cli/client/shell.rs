@@ -86,7 +86,7 @@ fn should_run_single_command_via_shell(ctx: ManagerCtx) {
             target_os = "openbsd",
             target_os = "netbsd",
         )) {
-            &["--", "sh", "-c", "echo hello; sleep 1"]
+            &["--", "sh", "-c", "'echo hello; sleep 1'"]
         } else {
             &["--", "echo", "hello"]
         };
@@ -171,7 +171,14 @@ fn should_support_current_dir(ctx: ManagerCtx) {
             target_os = "openbsd",
             target_os = "netbsd",
         )) {
-            vec!["--current-dir", temp_str, "--", "sh", "-c", "pwd; sleep 1"]
+            vec![
+                "--current-dir",
+                temp_str,
+                "--",
+                "sh",
+                "-c",
+                "'pwd; sleep 1'",
+            ]
         } else {
             vec!["--current-dir", temp_str, "--", "pwd"]
         };
