@@ -42,9 +42,10 @@ strip = true
 panic = "abort"
 
 [features]
-default = ["docker", "host", "ssh"]
+default = ["docker", "host", "ssh", "pty"]
 docker = ["dep:distant-docker"]
 host = ["dep:distant-host"]
+pty = ["distant-host/pty"]
 ssh = ["dep:distant-ssh"]
 
 [dependencies]

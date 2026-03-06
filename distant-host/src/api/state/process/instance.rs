@@ -7,8 +7,10 @@ use distant_core::protocol::{Environment, ProcessId, PtySize, Response};
 use log::*;
 use tokio::task::JoinHandle;
 
+#[cfg(feature = "pty")]
+use crate::api::process::PtyProcess;
 use crate::api::process::{
-    InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, PtyProcess, SimpleProcess,
+    InputChannel, OutputChannel, Process, ProcessKiller, ProcessPty, SimpleProcess,
 };
 use crate::constants::OUTPUT_DRAIN_TIMEOUT;
 
@@ -91,6 +93,7 @@ impl ProcessInstance {
 
         debug!("Spawning process: {cmd} {args:?}");
         let mut child: Box<dyn Process> = match pty {
+            #[cfg(feature = "pty")]
             Some(size) => Box::new(PtyProcess::spawn(
                 cmd.clone(),
                 args.clone(),
@@ -98,6 +101,12 @@ impl ProcessInstance {
                 current_dir,
                 size,
             )?),
+            #[cfg(not(feature = "pty"))]
+            Some(_) => {
+                return Err(io::Error::other(
+                    "PTY support is not available (built without `pty` feature)",
+                ));
+            }
             None => Box::new(SimpleProcess::spawn(
                 cmd.clone(),
                 args.clone(),
@@ -661,7 +670,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "pty"))]
     #[test(tokio::test)]
     async fn spawn_should_succeed_with_pty() {
         let (reply, mut rx) = make_reply();
