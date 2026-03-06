@@ -181,7 +181,7 @@ jobs:
           version: '14.2'
           environment_variables: RUSTFLAGS
           run: |
-            sudo pkg install -y curl
+            sudo pkg install -y curl ca_root_nss gmake
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             . "$HOME/.cargo/env"
             mv ./cargo-nextest "$HOME/.cargo/bin/"
