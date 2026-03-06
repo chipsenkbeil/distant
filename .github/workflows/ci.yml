@@ -157,7 +157,7 @@ jobs:
         run: cargo test --release --all-features --workspace --doc
 
   freebsd:
-    name: "Test on FreeBSD x86_64"
+    name: "Test Rust stable on FreeBSD x86_64"
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: --cfg ci
