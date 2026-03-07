@@ -178,7 +178,8 @@ mod tests {
 
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
+
     use test_log::test;
 
     use super::*;
@@ -187,21 +188,21 @@ mod tests {
     const PORT: u16 = 12345;
 
     const USER: &str = "testuser";
-    static KEY: Lazy<String> = Lazy::new(|| SecretKey32::default().to_string());
+    static KEY: LazyLock<String> = LazyLock::new(|| SecretKey32::default().to_string());
 
-    static CREDENTIALS_STR_NO_USER: Lazy<String> = Lazy::new(|| {
+    static CREDENTIALS_STR_NO_USER: LazyLock<String> = LazyLock::new(|| {
         let key = KEY.as_str();
         format!("distant://:{key}@{HOST}:{PORT}")
     });
-    static CREDENTIALS_STR_USER: Lazy<String> = Lazy::new(|| {
+    static CREDENTIALS_STR_USER: LazyLock<String> = LazyLock::new(|| {
         let key = KEY.as_str();
         format!("distant://{USER}:{key}@{HOST}:{PORT}")
     });
 
-    static CREDENTIALS_NO_USER: Lazy<Credentials> =
-        Lazy::new(|| CREDENTIALS_STR_NO_USER.parse().unwrap());
-    static CREDENTIALS_USER: Lazy<Credentials> =
-        Lazy::new(|| CREDENTIALS_STR_USER.parse().unwrap());
+    static CREDENTIALS_NO_USER: LazyLock<Credentials> =
+        LazyLock::new(|| CREDENTIALS_STR_NO_USER.parse().unwrap());
+    static CREDENTIALS_USER: LazyLock<Credentials> =
+        LazyLock::new(|| CREDENTIALS_STR_USER.parse().unwrap());
 
     #[test]
     fn find_should_return_some_key_if_string_is_exact_match() {

@@ -114,6 +114,27 @@ Each item is tagged with a category:
    logs require `--log-level info` and go to the log file. Need a progress
    callback mechanism (e.g. `ManagerResponse::Progress`) for real-time spinner
    updates during long plugin operations like image pulls.
+5. **(Bug)** Running `distant ssh` or `distant shell` after removing termwiz has
+   resulted in programs like `nvim` (neovim) hanging and not displaying anything
+   other than the cursor, or `ntop` (top on windows) hanging after the first
+   visual display of the processes (no refresh, no time tick displayed).
+6. **(Bug)** Config from ssh is not respected, at least when it comes to
+   HostName. Performing `distant ssh windows-vm` fails to connect to
+   ssh://windows-vm caused by, "SSH connection to windows-vm:22 failed: failed
+   to lookup address information: nodename nor servname provided, or not known"
+
+   An example of the config where regular `ssh windows-vm` would work:
+   ```
+   Include /Users/senkwich/.colima/ssh_config
+   Host windows-vm
+       HostName 10.211.55.3
+       User senkwich
+       IdentityFile ~/.ssh/id_windows_vm
+       StrictHostKeyChecking no
+       UserKnownHostsFile /dev/null
+       ServerAliveInterval 60
+       ServerAliveCountMax 3
+    ```
 
 ## Tooling & Command Reference
 

@@ -2,8 +2,9 @@
 
 use std::path::PathBuf;
 
+use std::sync::LazyLock;
+
 use directories::ProjectDirs;
-use once_cell::sync::Lazy;
 
 /// Represents the maximum size (in bytes) that data will be read from pipes
 /// per individual `read` call
@@ -19,44 +20,44 @@ pub mod user {
     use super::*;
 
     /// Root project directory used to calculate other paths
-    static PROJECT_DIR: Lazy<ProjectDirs> = Lazy::new(|| {
+    static PROJECT_DIR: LazyLock<ProjectDirs> = LazyLock::new(|| {
         ProjectDirs::from("", "", "distant").expect("Could not determine valid $HOME path")
     });
 
     /// Path to configuration settings for distant client/manager/server
-    pub static CONFIG_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.config_dir().join("config.toml"));
+    pub static CONFIG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.config_dir().join("config.toml"));
 
     /// Path to cache file used for arbitrary CLI data
-    pub static CACHE_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("cache.toml"));
+    pub static CACHE_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.cache_dir().join("cache.toml"));
 
-    pub static CACHE_FILE_PATH_STR: Lazy<String> =
-        Lazy::new(|| CACHE_FILE_PATH.to_string_lossy().to_string());
+    pub static CACHE_FILE_PATH_STR: LazyLock<String> =
+        LazyLock::new(|| CACHE_FILE_PATH.to_string_lossy().to_string());
 
     /// Path to log file for distant client
-    pub static CLIENT_LOG_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("client.log"));
+    pub static CLIENT_LOG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.cache_dir().join("client.log"));
 
     /// Path to log file for distant manager
-    pub static MANAGER_LOG_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("manager.log"));
+    pub static MANAGER_LOG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.cache_dir().join("manager.log"));
 
     /// Path to log file for distant server
     #[cfg(feature = "host")]
-    pub static SERVER_LOG_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("server.log"));
+    pub static SERVER_LOG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.cache_dir().join("server.log"));
 
     /// Path to log file for distant generate
-    pub static GENERATE_LOG_FILE_PATH: Lazy<PathBuf> =
-        Lazy::new(|| PROJECT_DIR.cache_dir().join("generate.log"));
+    pub static GENERATE_LOG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| PROJECT_DIR.cache_dir().join("generate.log"));
 
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
     ///
     /// * `/run/user/1001/distant/{user}.distant.sock` on Linux
     /// * `/var/run/{user}.distant.sock` on BSD
     /// * `/tmp/{user}.distant.dock` on MacOS
-    pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
+    pub static UNIX_SOCKET_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
         // Form of {user}.distant.sock
         let mut file_name = whoami::username_os().unwrap_or_else(|_| "unknown".into());
         file_name.push(".");
@@ -70,7 +71,7 @@ pub mod user {
     });
 
     /// Name of the pipe used by Windows in the form of `{user}.distant`
-    pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| {
+    pub static WINDOWS_PIPE_NAME: LazyLock<String> = LazyLock::new(|| {
         format!(
             "{}.distant",
             whoami::username().unwrap_or_else(|_| String::from("unknown"))
@@ -84,20 +85,21 @@ pub mod global {
 
     /// Windows ProgramData directory from from the %ProgramData% environment variable
     #[cfg(windows)]
-    static PROGRAM_DATA_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    static PROGRAM_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         PathBuf::from(std::env::var("ProgramData").expect("Could not determine %ProgramData%"))
     });
 
     /// Configuration directory for windows: `%ProgramData%\distant`.
     #[cfg(windows)]
-    static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PROGRAM_DATA_DIR.join("distant"));
+    static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| PROGRAM_DATA_DIR.join("distant"));
 
     /// Configuration directory for unix: `/etc/distant`.
     #[cfg(unix)]
-    static CONFIG_DIR: Lazy<PathBuf> = Lazy::new(|| PathBuf::from("/etc").join("distant"));
+    static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("/etc").join("distant"));
 
     /// Path to configuration settings for distant client/manager/server.
-    pub static CONFIG_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| CONFIG_DIR.join("config.toml"));
+    pub static CONFIG_FILE_PATH: LazyLock<PathBuf> =
+        LazyLock::new(|| CONFIG_DIR.join("config.toml"));
 
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
     ///
@@ -105,7 +107,7 @@ pub mod global {
     /// * `/var/run/distant.sock` on BSD
     /// * `/tmp/distant.dock` on MacOS
     /// * `@TERMUX_PREFIX@/var/run/distant.sock` on Android (Termux)
-    pub static UNIX_SOCKET_PATH: Lazy<PathBuf> = Lazy::new(|| {
+    pub static UNIX_SOCKET_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
         if cfg!(target_os = "macos") {
             std::env::temp_dir().join(SOCKET_FILE_STR)
         } else if cfg!(any(
@@ -125,13 +127,13 @@ pub mod global {
     });
 
     /// Name of the pipe used by Windows.
-    pub static WINDOWS_PIPE_NAME: Lazy<String> = Lazy::new(|| "distant".to_string());
+    pub static WINDOWS_PIPE_NAME: LazyLock<String> = LazyLock::new(|| "distant".to_string());
 }
 
 #[cfg(test)]
 mod tests {
     //! Tests for module-level constants (`MAX_PIPE_CHUNK_SIZE`, `SOCKET_FILE_STR`)
-    //! and the `Lazy`-initialized path/name constants in `user` and `global` sub-modules.
+    //! and the `LazyLock`-initialized path/name constants in `user` and `global` sub-modules.
 
     use test_log::test;
 

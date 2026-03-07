@@ -8,10 +8,9 @@ use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
 use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
-use indicatif::ProgressBar;
 use log::*;
 
-use crate::cli::common::ui::Ui;
+use crate::cli::common::ui::{Spinner, Ui};
 use crate::cli::common::{MsgReceiver, MsgSender};
 use crate::options::{Format, NetworkSettings};
 
@@ -263,26 +262,38 @@ impl AuthMethodHandler for JsonAuthHandler {
 }
 
 /// Implementation of [`AuthHandler`] that uses prompts to perform authentication requests and
-/// notification of different information. Optionally holds a [`ProgressBar`] to suspend the
+/// notification of different information. Optionally holds a suspend handle to pause the
 /// spinner while prompting, preventing visual conflicts on stderr.
 pub struct PromptAuthHandler {
-    pb: Option<ProgressBar>,
+    suspend: Option<super::ui::SuspendHandle>,
 }
 
 impl PromptAuthHandler {
     pub fn new() -> Self {
-        Self { pb: None }
+        Self { suspend: None }
     }
 
-    pub fn with_progress_bar(pb: Option<ProgressBar>) -> Self {
-        Self { pb }
+    pub fn with_spinner(spinner: &Spinner) -> Self {
+        let suspend = spinner.suspend_handle();
+        Self { suspend }
+    }
+
+    /// Run a closure, suspending the spinner if one is attached.
+    fn run_suspended<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        match &self.suspend {
+            Some(handle) => handle.suspend(f),
+            None => f(),
+        }
     }
 }
 
 impl Clone for PromptAuthHandler {
     fn clone(&self) -> Self {
         Self {
-            pb: self.pb.clone(),
+            suspend: self.suspend.clone(),
         }
     }
 }
@@ -300,20 +311,12 @@ impl AuthMethodHandler for PromptAuthHandler {
                 let mut lines = question.text.split('\n').collect::<Vec<_>>();
                 let line = lines.pop().unwrap();
 
-                let answer = match &self.pb {
-                    Some(pb) => pb.suspend(|| {
-                        for l in &lines {
-                            eprintln!("{l}");
-                        }
-                        rpassword::prompt_password(line).unwrap_or_default()
-                    }),
-                    None => {
-                        for l in &lines {
-                            eprintln!("{l}");
-                        }
-                        rpassword::prompt_password(line).unwrap_or_default()
+                let answer = self.run_suspended(|| {
+                    for l in &lines {
+                        eprintln!("{l}");
                     }
-                };
+                    rpassword::prompt_password(line).unwrap_or_default()
+                });
                 answers.push(answer);
             }
             Ok(ChallengeResponse { answers })
@@ -327,22 +330,13 @@ impl AuthMethodHandler for PromptAuthHandler {
         Box::pin(async move {
             match verification.kind {
                 VerificationKind::Host => {
-                    let answer = match &self.pb {
-                        Some(pb) => pb.suspend(|| {
-                            eprintln!("{}", verification.text);
-                            let mut line = String::new();
-                            eprint!("Enter [y/N]> ");
-                            std::io::stdin().read_line(&mut line).ok();
-                            line
-                        }),
-                        None => {
-                            eprintln!("{}", verification.text);
-                            let mut line = String::new();
-                            eprint!("Enter [y/N]> ");
-                            std::io::stdin().read_line(&mut line).ok();
-                            line
-                        }
-                    };
+                    let answer = self.run_suspended(|| {
+                        eprintln!("{}", verification.text);
+                        let mut line = String::new();
+                        eprint!("Enter [y/N]> ");
+                        std::io::stdin().read_line(&mut line).ok();
+                        line
+                    });
                     Ok(VerificationResponse {
                         valid: matches!(answer.trim(), "y" | "Y" | "yes" | "YES"),
                     })
@@ -360,10 +354,7 @@ impl AuthMethodHandler for PromptAuthHandler {
         info: Info,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            match &self.pb {
-                Some(pb) => pb.suspend(|| eprintln!("{}", info.text)),
-                None => eprintln!("{}", info.text),
-            }
+            self.run_suspended(|| eprintln!("{}", info.text));
             Ok(())
         })
     }
@@ -373,10 +364,7 @@ impl AuthMethodHandler for PromptAuthHandler {
         error: Error,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            match &self.pb {
-                Some(pb) => pb.suspend(|| eprintln!("{}: {}", error.kind, error.text)),
-                None => eprintln!("{}: {}", error.kind, error.text),
-            }
+            self.run_suspended(|| eprintln!("{}: {}", error.kind, error.text));
             Ok(())
         })
     }
@@ -849,16 +837,12 @@ mod tests {
     }
 
     #[test]
-    fn prompt_auth_handler_with_progress_bar_none() {
-        let handler = PromptAuthHandler::with_progress_bar(None);
-        assert!(handler.pb.is_none());
-    }
-
-    #[test]
-    fn prompt_auth_handler_with_progress_bar_some() {
-        let pb = ProgressBar::new(100);
-        let handler = PromptAuthHandler::with_progress_bar(Some(pb));
-        assert!(handler.pb.is_some());
+    fn prompt_auth_handler_with_spinner_non_interactive() {
+        let ui = crate::cli::common::ui::Ui::new(false);
+        let spinner = ui.spinner("test");
+        let handler = PromptAuthHandler::with_spinner(&spinner);
+        // In non-interactive mode (tests), suspend handle is None
+        assert!(handler.suspend.is_none());
     }
 
     // -------------------------------------------------------
@@ -868,7 +852,7 @@ mod tests {
     fn prompt_auth_handler_clone() {
         let handler = PromptAuthHandler::new();
         let cloned = handler.clone();
-        assert!(cloned.pb.is_none());
+        assert!(cloned.suspend.is_none());
     }
 
     // -------------------------------------------------------

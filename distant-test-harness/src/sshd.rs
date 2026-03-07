@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 use std::{fmt, io, thread};
 
@@ -14,7 +14,6 @@ use derive_more::{Deref, DerefMut, Display};
 use distant_core::Client;
 use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
 use log::*;
-use once_cell::sync::Lazy;
 use rstest::*;
 
 use crate::process::{kill_process_tree, set_process_group};
@@ -34,13 +33,13 @@ pub struct Ctx<T> {
 //
 // Unix should be something like /usr/sbin/sshd
 // Windows should be something like C:\Windows\System32\OpenSSH\sshd.exe
-static BIN_PATH: Lazy<PathBuf> =
-    Lazy::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
+static BIN_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
-pub static USERNAME: Lazy<String> = Lazy::new(|| whoami::username().unwrap_or_default());
+pub static USERNAME: LazyLock<String> = LazyLock::new(|| whoami::username().unwrap_or_default());
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
 const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);

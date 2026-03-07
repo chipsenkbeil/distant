@@ -10,15 +10,16 @@ use crate::process::{kill_process_tree, set_process_group};
 
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
+use std::sync::LazyLock;
+
 use distant_core::Credentials;
 use distant_core::net::common::Host;
-use once_cell::sync::Lazy;
 use rstest::*;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-static ROOT_LOG_DIR: Lazy<PathBuf> = Lazy::new(|| std::env::temp_dir().join("distant"));
-static SESSION_RANDOM: Lazy<u16> = Lazy::new(rand::random);
+static ROOT_LOG_DIR: LazyLock<PathBuf> = LazyLock::new(|| std::env::temp_dir().join("distant"));
+static SESSION_RANDOM: LazyLock<u16> = LazyLock::new(rand::random);
 pub const TIMEOUT: Duration = Duration::from_secs(3);
 
 const MAX_RETRY_ATTEMPTS: usize = 3;

@@ -10,8 +10,9 @@ use distant_core::protocol::{
     ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, RemotePath, SearchQuery,
     SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
 };
+use std::sync::LazyLock;
+
 use distant_core::{ChannelExt, Client};
-use once_cell::sync::Lazy;
 use predicates::prelude::*;
 use rstest::*;
 use test_log::test;
@@ -30,10 +31,10 @@ fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
 
 use distant_test_harness::utils::normalize_path;
 
-static TEMP_SCRIPT_DIR: Lazy<TempDir> = Lazy::new(|| TempDir::new().unwrap());
+static TEMP_SCRIPT_DIR: LazyLock<TempDir> = LazyLock::new(|| TempDir::new().unwrap());
 
-static DOES_NOT_EXIST_BIN: Lazy<assert_fs::fixture::ChildPath> =
-    Lazy::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
+static DOES_NOT_EXIST_BIN: LazyLock<assert_fs::fixture::ChildPath> =
+    LazyLock::new(|| TEMP_SCRIPT_DIR.child("does_not_exist_bin"));
 
 #[rstest]
 #[test(tokio::test)]

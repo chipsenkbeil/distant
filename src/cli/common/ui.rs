@@ -1,8 +1,9 @@
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use console::{Term, style};
-use indicatif::{ProgressBar, ProgressStyle};
 
 /// Terminal UI abstraction for all visual feedback.
 ///
@@ -39,30 +40,22 @@ impl Ui {
     pub fn spinner(&self, msg: &str) -> Spinner {
         if self.quiet {
             return Spinner {
-                pb: None,
+                inner: None,
                 interactive: false,
                 term: self.term.clone(),
             };
         }
         if self.interactive {
-            let pb = ProgressBar::new_spinner();
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "])
-                    .template("{spinner} {msg}")
-                    .expect("invalid spinner template"),
-            );
-            pb.set_message(msg.to_string());
-            pb.enable_steady_tick(Duration::from_millis(80));
+            let inner = SpinnerInner::start(msg, self.term.clone());
             Spinner {
-                pb: Some(pb),
+                inner: Some(inner),
                 interactive: true,
                 term: self.term.clone(),
             }
         } else {
             let _ = self.term.write_line(msg);
             Spinner {
-                pb: None,
+                inner: None,
                 interactive: false,
                 term: self.term.clone(),
             }
@@ -198,10 +191,70 @@ pub enum StatusColor {
     Yellow,
 }
 
-/// A spinner that wraps `indicatif::ProgressBar` in interactive mode,
+/// Braille spinner frames (same sequence as the former indicatif config).
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Internal state shared between the spinner thread and the `Spinner` handle.
+struct SpinnerInner {
+    message: Arc<Mutex<String>>,
+    running: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SpinnerInner {
+    /// Starts the background animation thread.
+    fn start(msg: &str, term: Term) -> Self {
+        let message = Arc::new(Mutex::new(msg.to_string()));
+        let running = Arc::new(AtomicBool::new(true));
+        let paused = Arc::new(AtomicBool::new(false));
+
+        let msg_clone = Arc::clone(&message);
+        let running_clone = Arc::clone(&running);
+        let paused_clone = Arc::clone(&paused);
+
+        let thread = std::thread::spawn(move || {
+            let mut frame = 0usize;
+            while running_clone.load(Ordering::Relaxed) {
+                if !paused_clone.load(Ordering::Relaxed) {
+                    let symbol = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
+                    let msg = msg_clone.lock().unwrap().clone();
+                    let _ = term.clear_line();
+                    let _ = term.write_str(&format!("{symbol} {msg}"));
+                    frame += 1;
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            let _ = term.clear_line();
+        });
+
+        Self {
+            message,
+            running,
+            paused,
+            thread: Some(thread),
+        }
+    }
+
+    /// Stops the animation thread.
+    fn stop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for SpinnerInner {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A spinner that shows an animated braille pattern in interactive mode,
 /// or is a no-op in non-interactive mode.
 pub struct Spinner {
-    pb: Option<ProgressBar>,
+    inner: Option<SpinnerInner>,
     interactive: bool,
     term: Term,
 }
@@ -209,15 +262,15 @@ pub struct Spinner {
 impl Spinner {
     /// Update the spinner message.
     pub fn set_message(&self, msg: impl Into<Cow<'static, str>>) {
-        if let Some(ref pb) = self.pb {
-            pb.set_message(msg);
+        if let Some(ref inner) = self.inner {
+            *inner.message.lock().unwrap() = msg.into().into_owned();
         }
     }
 
     /// Stop the spinner with a success message: "✓ msg" (green).
-    pub fn done(self, msg: &str) {
-        if let Some(pb) = self.pb {
-            pb.finish_and_clear();
+    pub fn done(mut self, msg: &str) {
+        if let Some(ref mut inner) = self.inner {
+            inner.stop();
             if self.interactive {
                 let _ = self
                     .term
@@ -228,17 +281,40 @@ impl Spinner {
         }
     }
 
-    /// Get the underlying `ProgressBar`, if interactive.
+    /// Pause the spinner, run the closure, and resume.
     ///
-    /// This is useful for coordinating I/O with the spinner via `ProgressBar::suspend()`.
-    pub fn progress_bar(&self) -> Option<ProgressBar> {
-        self.pb.clone()
+    /// This prevents visual conflicts when prompting for user input on stderr
+    /// while the spinner is animating.
+    pub fn suspend<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        if let Some(ref inner) = self.inner {
+            inner.paused.store(true, Ordering::Relaxed);
+            // Small sleep to let the animation thread finish its current frame
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = self.term.clear_line();
+            let result = f();
+            inner.paused.store(false, Ordering::Relaxed);
+            result
+        } else {
+            f()
+        }
+    }
+
+    /// Returns a suspend handle that can be shared with other code (e.g. auth handlers)
+    /// to pause the spinner during prompts. Returns `None` in non-interactive mode.
+    pub fn suspend_handle(&self) -> Option<SuspendHandle> {
+        self.inner.as_ref().map(|inner| SuspendHandle {
+            paused: Arc::clone(&inner.paused),
+            term: self.term.clone(),
+        })
     }
 
     /// Stop the spinner with a failure message: "✗ msg" (red).
-    pub fn fail(self, msg: &str) {
-        if let Some(pb) = self.pb {
-            pb.finish_and_clear();
+    pub fn fail(mut self, msg: &str) {
+        if let Some(ref mut inner) = self.inner {
+            inner.stop();
             if self.interactive {
                 let _ = self
                     .term
@@ -247,6 +323,31 @@ impl Spinner {
                 let _ = self.term.write_line(&format!("error: {msg}"));
             }
         }
+    }
+}
+
+/// Shared suspend handle that can pause a spinner while prompting for input.
+///
+/// Wraps the spinner's `paused` flag and terminal handle, allowing the
+/// `PromptAuthHandler` to temporarily stop spinner animation during user prompts.
+#[derive(Clone)]
+pub struct SuspendHandle {
+    paused: Arc<AtomicBool>,
+    term: Term,
+}
+
+impl SuspendHandle {
+    /// Pause the spinner, run the closure, and resume.
+    pub fn suspend<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        self.paused.store(true, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = self.term.clear_line();
+        let result = f();
+        self.paused.store(false, Ordering::Relaxed);
+        result
     }
 }
 
@@ -351,7 +452,7 @@ mod tests {
         // When not interactive, spinner methods are no-ops
         let spinner = ui.spinner("loading...");
         spinner.set_message("still loading...");
-        // done/fail won't have a pb in non-interactive mode
+        // done/fail won't have an inner in non-interactive mode
         // but should not panic regardless
     }
 
@@ -370,13 +471,11 @@ mod tests {
     }
 
     #[test]
-    fn spinner_progress_bar_reflects_interactivity() {
+    fn spinner_suspend_runs_closure() {
         let ui = Ui::new(false);
         let spinner = ui.spinner("loading...");
-        // In non-interactive mode (typical for tests), pb should be None
-        if !ui.is_interactive() {
-            assert!(spinner.progress_bar().is_none());
-        }
+        let result = spinner.suspend(|| 42);
+        assert_eq!(result, 42);
     }
 
     // -------------------------------------------------------

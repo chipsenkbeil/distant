@@ -19,11 +19,6 @@ use distant_core::protocol::{
 use distant_core::{Channel, ChannelExt, RemoteCommand, Searcher, Watcher};
 use log::*;
 use serde_json::json;
-use tabled::settings::disable::Remove;
-use tabled::settings::object::Rows;
-use tabled::settings::style::Style;
-use tabled::settings::{Alignment, Modify};
-use tabled::{Table, Tabled};
 use tokio::sync::mpsc;
 
 use dialoguer::Select;
@@ -103,7 +98,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                                 .connect(
                                     destination.to_string(),
                                     options,
-                                    PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                                    PromptAuthHandler::with_spinner(&sp),
                                 )
                                 .await
                         }
@@ -134,7 +129,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                             .connect(
                                 destination.to_string(),
                                 options,
-                                PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                                PromptAuthHandler::with_spinner(&sp),
                             )
                             .await
                     }
@@ -221,7 +216,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         .launch(
                             destination.clone(),
                             options,
-                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                            PromptAuthHandler::with_spinner(&sp),
                         )
                         .await
                 }
@@ -266,7 +261,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         .connect(
                             new_destination.to_string(),
                             Map::new(),
-                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                            PromptAuthHandler::with_spinner(&sp),
                         )
                         .await
                 }
@@ -1147,7 +1142,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         .connect(
                             destination.to_string(),
                             options,
-                            PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                            PromptAuthHandler::with_spinner(&sp),
                         )
                         .await;
                     match &result {
@@ -1165,7 +1160,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     .connect(
                         destination.to_string(),
                         options,
-                        PromptAuthHandler::with_progress_bar(sp.progress_bar()),
+                        PromptAuthHandler::with_spinner(&sp),
                     )
                     .await;
                 match &result {
@@ -1604,29 +1599,22 @@ fn parse_permissions_mode(mode: &str) -> anyhow::Result<Permissions> {
 
     // Attempt to parse an octal number (chmod absolute), falling back to
     // parsing the mode string similar to chmod's symbolic mode
-    match u32::from_str_radix(mode, 8) {
-        Ok(absolute) => Ok(Permissions::from_unix_mode(
-            file_mode::Mode::from(absolute).mode(),
-        )),
-        Err(_) => {
-            // The way parsing works, we need to parse and apply to two different
-            // situations
-            //
-            // 1. A mode that is all 1s so we can see if the mask would remove
-            //    permission to some of the bits
-            // 2. A mode that is all 0s so we can see if the mask would add
-            //    permission to some of the bits
-            let mut removals = file_mode::Mode::from(0o777);
-            removals
-                .set_str(mode)
-                .context("Failed to parse mode string")?;
-            let removals_mask = !removals.mode();
+    use crate::cli::common::chmod::apply_symbolic_mode;
 
-            let mut additions = file_mode::Mode::empty();
-            additions
-                .set_str(mode)
+    match u32::from_str_radix(mode, 8) {
+        Ok(absolute) => Ok(Permissions::from_unix_mode(absolute)),
+        Err(_) => {
+            // Apply to two base values to determine which bits are added vs removed:
+            // 1. All-1s base reveals removals (bits cleared by the symbolic mode)
+            // 2. All-0s base reveals additions (bits set by the symbolic mode)
+            let removals = apply_symbolic_mode(0o777, mode)
+                .map_err(|e| anyhow::anyhow!(e))
                 .context("Failed to parse mode string")?;
-            let additions_mask = additions.mode();
+            let removals_mask = !removals & 0o777;
+
+            let additions_mask = apply_symbolic_mode(0o000, mode)
+                .map_err(|e| anyhow::anyhow!(e))
+                .context("Failed to parse mode string")?;
 
             macro_rules! get_mode {
                 ($mask:expr) => {{
@@ -1768,28 +1756,19 @@ fn process_read_response(results: protocol::Msg<protocol::Response>) -> anyhow::
     {
         match response {
             protocol::Response::DirEntries { entries, .. } => {
-                #[derive(Tabled)]
-                struct EntryRow {
-                    ty: String,
-                    path: String,
-                }
+                use std::fmt::Write;
 
-                let mut data = Table::new(entries.into_iter().map(|entry| EntryRow {
-                    ty: String::from(match entry.file_type {
+                let mut buf = String::new();
+                for entry in &entries {
+                    let ty = match entry.file_type {
                         FileType::Dir => "<DIR>",
                         FileType::File => "",
                         FileType::Symlink => "<SYMLINK>",
-                    }),
-                    path: entry.path.to_string(),
-                }))
-                .with(Style::blank())
-                .with(Remove::row(Rows::new(..1)))
-                .with(Modify::new(Rows::new(..)).with(Alignment::left()))
-                .to_string()
-                .into_bytes();
-                data.push(b'\n');
+                    };
+                    let _ = writeln!(buf, "{:<10}{}", ty, entry.path);
+                }
 
-                return Ok(data);
+                return Ok(buf.into_bytes());
             }
             protocol::Response::Blob { data } => {
                 return Ok(data);

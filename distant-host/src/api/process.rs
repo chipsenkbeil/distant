@@ -5,7 +5,9 @@ use distant_core::protocol::{ProcessId, PtySize};
 use tokio::io;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "pty")]
 mod pty;
+#[cfg(feature = "pty")]
 pub use pty::*;
 
 mod simple;

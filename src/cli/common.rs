@@ -1,6 +1,8 @@
 mod cache;
+pub(crate) mod chmod;
 mod client;
 mod format;
+pub(crate) mod logger;
 mod manager;
 mod msg;
 mod spawner;
