@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
+use crate::cli::common::terminal::terminal_size;
 use anyhow::Context;
 use distant_core::protocol::{PtySize, RemotePath};
 use distant_core::{Channel, RemoteLspCommand};
-use terminal_size::{Height, Width, terminal_size};
 
 use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
@@ -27,9 +27,7 @@ impl Lsp {
         let cmd = cmd.into();
         let mut proc = RemoteLspCommand::new()
             .pty(if pty {
-                terminal_size().map(|(Width(width), Height(height))| {
-                    PtySize::from_rows_and_cols(height, width)
-                })
+                terminal_size().map(|(cols, rows)| PtySize::from_rows_and_cols(rows, cols))
             } else {
                 None
             })

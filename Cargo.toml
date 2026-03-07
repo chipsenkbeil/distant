@@ -53,16 +53,14 @@ anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5.66"
 console = "0.16.2"
-config = { version = "0.15.19", default-features = false, features = ["toml"] }
 derive_more = { version = "2.1.1", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.12.0", default-features = false }
 distant-core = { workspace = true }
 distant-host = { workspace = true, optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 directories = "5.0.1"
-flexi_logger = "0.31.8"
-indicatif = "0.17"
 indoc = "2.0.7"
-log = "0.4.29"
+log = { version = "0.4.29", features = ["std"] }
 rand = "0.8.5"
 rpassword = "7.4.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -71,8 +69,6 @@ shell-words = "1.1.1"
 service-manager = { version = "0.11.0", features = ["clap", "serde"] }
 tokio = { version = "1.50.0", features = ["full"] }
 toml_edit = { version = "0.25.4", features = ["serde"] }
-terminal_size = "0.2.6"
-termwiz = "0.23.3"
 typed-path = "0.12.3"
 which = "8.0.0"
 winsplit = "0.1.0"
@@ -86,10 +82,12 @@ distant-ssh = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 fork = "0.1.23"
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 sysinfo = "0.33.0"
 windows-service = "0.8.0"
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 assert_cmd = "2.1"
@@ -124,6 +122,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
 [patch.crates-io]
 # Patched nix 0.29.0: removes IFF_NOTRAILERS for NetBSD (removed upstream
 # in libc 0.2.180). Backport of nix-rust/nix#2724 (landed in nix 0.31.0).
-# Remove this patch when upstream crates (termwiz, russh, mac_address)
-# update to nix >= 0.31.
+# Remove this patch when upstream crate (russh-cryptovec) updates to nix >= 0.31.
 nix = { path = "patches/nix-0.29.0" }

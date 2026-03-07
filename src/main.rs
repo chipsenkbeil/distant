@@ -243,7 +243,7 @@ fn main() -> MainResult {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),
     };
-    let _logger = cli.init_logger();
+    cli.init_logger();
 
     let format = cli.options.command.format();
     let result = MainResult::from(cli.run());
@@ -271,7 +271,7 @@ fn windows_main() -> MainResult {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),
     };
-    let _logger = cli.init_logger();
+    cli.init_logger();
     let format = cli.options.command.format();
 
     // If we are trying to listen as a manager, try as a service first

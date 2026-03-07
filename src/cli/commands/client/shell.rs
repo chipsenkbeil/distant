@@ -1,17 +1,13 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Context;
 use distant_core::protocol::{Environment, PtySize, RemotePath};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use log::*;
-use terminal_size::{Height, Width, terminal_size};
-use termwiz::caps::Capabilities;
-use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
-use termwiz::terminal::{Terminal, new_terminal};
 
 use super::super::common::RemoteProcessLink;
 use super::{CliError, CliResult};
+use crate::cli::common::terminal::{RawMode, terminal_size, wait_for_resize};
 
 /// Inserts `TERM=xterm-256color` into the environment if no `TERM` key is present.
 fn ensure_term_env(env: &mut Environment) {
@@ -28,6 +24,87 @@ fn select_default_shell(shell: &str, family: &str) -> String {
         "cmd.exe".to_string()
     } else {
         "/bin/sh".to_string()
+    }
+}
+
+/// Forwards raw stdin bytes to the remote process stdin.
+///
+/// On Unix, uses `AsyncFd` with non-blocking I/O so the task can be cleanly
+/// cancelled when the remote process exits. On Windows, uses `tokio::io::stdin()`
+/// which blocks a thread internally — the caller must handle process exit separately.
+#[cfg(unix)]
+async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
+    use std::os::fd::AsRawFd;
+    use tokio::io::unix::AsyncFd;
+
+    let raw_fd = std::io::stdin().as_raw_fd();
+
+    // Set stdin to non-blocking so we can use AsyncFd
+    let original_flags = unsafe { libc::fcntl(raw_fd, libc::F_GETFL) };
+    unsafe {
+        libc::fcntl(raw_fd, libc::F_SETFL, original_flags | libc::O_NONBLOCK);
+    }
+
+    // Safety: StdinFd is a trivial wrapper that implements AsRawFd
+    struct StdinFd(std::os::fd::RawFd);
+    impl AsRawFd for StdinFd {
+        fn as_raw_fd(&self) -> std::os::fd::RawFd {
+            self.0
+        }
+    }
+
+    let Ok(async_fd) = AsyncFd::new(StdinFd(raw_fd)) else {
+        return;
+    };
+    let mut buf = [0u8; 4096];
+
+    loop {
+        let mut guard = match async_fd.readable().await {
+            Ok(g) => g,
+            Err(_) => break,
+        };
+        match guard.try_io(|inner| {
+            let fd = inner.get_ref().as_raw_fd();
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if n < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
+        }) {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                if writer.write(&buf[..n]).await.is_err() {
+                    break;
+                }
+            }
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Ok(Err(_)) => break,
+            Err(_would_block) => continue,
+        }
+    }
+
+    // Restore blocking mode
+    unsafe {
+        libc::fcntl(raw_fd, libc::F_SETFL, original_flags);
+    }
+}
+
+/// Forwards raw stdin bytes to the remote process stdin (Windows version).
+#[cfg(windows)]
+async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
+    let mut buf = [0u8; 4096];
+    let mut reader = tokio::io::stdin();
+    loop {
+        match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                if writer.write(&buf[..n]).await.is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
     }
 }
 
@@ -64,60 +141,34 @@ impl Shell {
 
         let mut proc = RemoteCommand::new()
             .environment(environment)
-            .pty(
-                terminal_size()
-                    .map(|(Width(cols), Height(rows))| PtySize::from_rows_and_cols(rows, cols)),
-            )
+            .pty(terminal_size().map(|(cols, rows)| PtySize::from_rows_and_cols(rows, cols)))
             .current_dir(current_dir.map(RemotePath::from))
             .spawn(self.0, &cmd)
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;
 
-        // Create a new terminal in raw mode
-        let mut terminal = new_terminal(
-            Capabilities::new_from_env().context("Failed to load terminal capabilities")?,
-        )
-        .context("Failed to create terminal")?;
-        terminal.set_raw_mode().context("Failed to set raw mode")?;
+        // Enter raw mode — restored automatically when _raw_mode guard is dropped
+        let _raw_mode = RawMode::enter().context("Failed to set raw mode")?;
 
-        let mut stdin = proc.stdin.take().unwrap();
+        // Forward raw stdin bytes to the remote process
+        let stdin = proc.stdin.take().unwrap();
+        let stdin_task = tokio::spawn(forward_stdin(stdin));
+
+        // Detect terminal resize events and forward to the remote PTY
         let resizer = proc.clone_resizer();
-        tokio::spawn(async move {
-            while let Ok(input) = terminal.poll_input(Some(Duration::new(0, 0))) {
-                match input {
-                    Some(InputEvent::Key(ev)) => {
-                        if let Ok(input) = ev.key.encode(
-                            ev.modifiers,
-                            KeyCodeEncodeModes {
-                                encoding: KeyboardEncoding::Xterm,
-                                application_cursor_keys: false,
-                                newline_mode: false,
-                                modify_other_keys: None,
-                            },
-                            /* is_down */ true,
-                        ) && let Err(x) = stdin.write_str(input).await
-                        {
-                            error!("Failed to write to stdin of remote process: {}", x);
-                            break;
-                        }
-                    }
-                    Some(InputEvent::Resized { cols, rows }) => {
-                        if let Err(x) = resizer
-                            .resize(PtySize::from_rows_and_cols(rows as u16, cols as u16))
-                            .await
-                        {
-                            error!("Failed to resize remote process: {}", x);
-                            break;
-                        }
-                    }
-                    Some(_) => continue,
-                    None => tokio::time::sleep(Duration::from_millis(1)).await,
+        let resize_task = tokio::spawn(async move {
+            while let Some((cols, rows)) = wait_for_resize().await {
+                if let Err(x) = resizer
+                    .resize(PtySize::from_rows_and_cols(rows, cols))
+                    .await
+                {
+                    error!("Failed to resize remote process: {}", x);
+                    break;
                 }
             }
         });
 
-        // Now, map the remote shell's stdout/stderr to our own process,
-        // while stdin is handled by the task above
+        // Map the remote shell's stdout/stderr to our own process
         let link = RemoteProcessLink::from_remote_pipes(
             None,
             proc.stdout.take().unwrap(),
@@ -125,11 +176,16 @@ impl Shell {
             max_chunk_size,
         );
 
-        // Continually loop to check for terminal resize changes while the process is still running
         let status = proc.wait().await.context("Failed to wait for process")?;
+
+        // Abort background tasks so the process can exit cleanly
+        stdin_task.abort();
+        resize_task.abort();
 
         // Shut down our link
         link.shutdown().await;
+
+        // _raw_mode dropped here, restoring terminal state
 
         if !status.success {
             if let Some(code) = status.code {

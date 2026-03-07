@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use toml_edit::{DocumentMut, Item, Table};
 
 use super::common;
 use crate::constants;
@@ -56,13 +57,26 @@ impl Config {
                 match (paths[0].exists(), paths[1].exists()) {
                     // At least one standard path exists, so load it
                     (exists_1, exists_2) if exists_1 || exists_2 => {
-                        use config::{Config, File};
-                        let config = Config::builder()
-                            .add_source(File::from(paths[0]).required(exists_1))
-                            .add_source(File::from(paths[1]).required(exists_2))
-                            .build()
-                            .context("Failed to build config from paths")?;
-                        config.try_deserialize().context("Failed to parse config")
+                        let mut merged: Option<DocumentMut> = None;
+
+                        for (path, exists) in paths.iter().zip([exists_1, exists_2]) {
+                            if !exists {
+                                continue;
+                            }
+                            let content = std::fs::read_to_string(path)
+                                .with_context(|| format!("Failed to read config {path:?}"))?;
+                            let doc: DocumentMut = content
+                                .parse()
+                                .with_context(|| format!("Failed to parse config {path:?}"))?;
+                            merged = Some(match merged {
+                                Some(base) => merge_toml_documents(base, doc),
+                                None => doc,
+                            });
+                        }
+
+                        let doc = merged.expect("at least one path exists");
+                        toml_edit::de::from_str(&doc.to_string())
+                            .context("Failed to deserialize merged config")
                     }
 
                     // None of our standard paths exist, so use the default value instead
@@ -79,6 +93,31 @@ impl Config {
             .await
             .with_context(|| format!("Failed to read config file {:?}", path.as_ref()))?;
         toml_edit::de::from_slice(&bytes).context("Failed to parse config")
+    }
+}
+
+/// Recursively merges `override_doc` into `base`, with override values winning.
+///
+/// For table entries, merging recurses into sub-tables. For all other value types,
+/// the override replaces the base.
+fn merge_toml_documents(mut base: DocumentMut, override_doc: DocumentMut) -> DocumentMut {
+    merge_tables(base.as_table_mut(), override_doc.into_table());
+    base
+}
+
+/// Recursively merges entries from `src` into `dst`.
+fn merge_tables(dst: &mut Table, src: Table) {
+    for (key, value) in src {
+        if let Item::Table(src_table) = value {
+            // If both sides are tables, recurse; otherwise replace
+            if let Some(Item::Table(dst_table)) = dst.get_mut(&key) {
+                merge_tables(dst_table, src_table);
+            } else {
+                dst.insert(&key, Item::Table(src_table));
+            }
+        } else {
+            dst.insert(&key, value);
+        }
     }
 }
 
@@ -206,6 +245,65 @@ mod tests {
             Config::default(),
             "Expected default config when no config files are present"
         );
+    }
+
+    #[test]
+    fn load_multi_merges_two_config_files() {
+        use assert_fs::prelude::*;
+
+        let dir = assert_fs::TempDir::new().unwrap();
+
+        // File 1: base values
+        let file1 = dir.child("base.toml");
+        file1
+            .write_str(
+                r#"
+[client]
+log_level = "info"
+
+[client.api]
+timeout = 10
+
+[server.listen]
+use_ipv6 = false
+"#,
+            )
+            .unwrap();
+
+        // File 2: overrides log_level and adds a new field
+        let file2 = dir.child("override.toml");
+        file2
+            .write_str(
+                r#"
+[client]
+log_level = "debug"
+
+[server.listen]
+use_ipv6 = true
+"#,
+            )
+            .unwrap();
+
+        let doc1: toml_edit::DocumentMut = std::fs::read_to_string(file1.path())
+            .unwrap()
+            .parse()
+            .unwrap();
+        let doc2: toml_edit::DocumentMut = std::fs::read_to_string(file2.path())
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let merged = merge_toml_documents(doc1, doc2);
+        let merged_str = merged.to_string();
+
+        // Parse the merged result to verify values
+        let table: toml::Value = toml::from_str(&merged_str).unwrap();
+        // Override: log_level should be "debug" (from file 2)
+        assert_eq!(table["client"]["log_level"].as_str().unwrap(), "debug");
+        // Preserved: timeout should still be 10 (from file 1, not overridden)
+        assert_eq!(table["client"]["api"]["timeout"].as_integer().unwrap(), 10);
+        // Override: use_ipv6 should be true (from file 2)
+        assert!(table["server"]["listen"]["use_ipv6"].as_bool().unwrap());
     }
 
     #[test(tokio::test)]

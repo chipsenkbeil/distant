@@ -33,46 +33,28 @@ impl Cli {
         })
     }
 
-    /// Initializes a logger for the CLI, returning a handle to the logger
-    pub fn init_logger(&self) -> flexi_logger::LoggerHandle {
-        use flexi_logger::{FileSpec, LevelFilter, LogSpecification, Logger};
+    /// Initializes the global file logger for the CLI.
+    pub fn init_logger(&self) {
         #[allow(unused_mut)]
-        let mut modules = vec!["distant", "distant_core"];
+        let mut modules = vec!["distant".to_string(), "distant_core".to_string()];
         #[cfg(feature = "ssh")]
-        modules.push("distant_ssh");
+        modules.push("distant_ssh".to_string());
         #[cfg(feature = "docker")]
-        modules.push("distant_docker");
+        modules.push("distant_docker".to_string());
         #[cfg(feature = "host")]
-        modules.push("distant_host");
-        let modules = modules;
+        modules.push("distant_host".to_string());
 
-        // Disable logging for everything but our binary, which is based on verbosity
-        let mut builder = LogSpecification::builder();
-        builder.default(LevelFilter::Off);
+        let level = self
+            .options
+            .logging
+            .log_level
+            .unwrap_or_default()
+            .to_log_level_filter();
 
-        // For each module, configure logging
-        for module in modules {
-            builder.module(
-                module,
-                self.options
-                    .logging
-                    .log_level
-                    .unwrap_or_default()
-                    .to_log_level_filter(),
-            );
-        }
-
-        // Create our logger, but don't initialize yet
-        let logger = Logger::with(builder.build()).format_for_files(flexi_logger::opt_format);
-
-        // Assign our log output to a file
         // NOTE: We can unwrap here as we assign the log file earlier
-        let logger = logger.log_to_file(
-            FileSpec::try_from(self.options.logging.log_file.as_ref().unwrap())
-                .expect("Failed to create log file spec"),
-        );
+        let path = self.options.logging.log_file.as_ref().unwrap();
 
-        logger.start().expect("Failed to initialize logger")
+        common::logger::FileLogger::init(modules, level, path);
     }
 
     #[cfg(windows)]
