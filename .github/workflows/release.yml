@@ -104,6 +104,7 @@ jobs:
   macos_unify:
     name: "Build universal binary on MacOS"
     needs: [macos]
+    if: always() && needs.macos.result == 'success'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -321,6 +322,13 @@ jobs:
 
   publish:
     needs: [macos, macos_unify, windows, linux, bsd]
+    if: >-
+      always() &&
+      needs.macos.result == 'success' &&
+      needs.macos_unify.result == 'success' &&
+      needs.windows.result == 'success' &&
+      needs.linux.result == 'success' &&
+      needs.bsd.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
