@@ -181,7 +181,7 @@ jobs:
             build: --all-features
             deps: musl-tools
           - target: aarch64-linux-android
-            build: --features docker,host,ssh
+            build: --no-default-features --features docker,host,ssh
     steps:
       - uses: actions/checkout@v4
       - name: Stamp nightly version
