@@ -344,7 +344,10 @@ impl SearchQueryExecutor {
         // Apply common configuration options to our walker
         walker_builder
             .follow_links(query.options.follow_symbolic_links)
-            .threads(cmp::min(MAXIMUM_SEARCH_THREADS, num_cpus::get()))
+            .threads(cmp::min(
+                MAXIMUM_SEARCH_THREADS,
+                std::thread::available_parallelism().map_or(1, |n| n.get()),
+            ))
             .types(
                 TypesBuilder::new()
                     .add_defaults()

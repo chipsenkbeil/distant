@@ -3,11 +3,12 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use std::sync::LazyLock;
+
 use anyhow::Context;
 use distant_core::Plugin;
 use distant_core::net::manager::Config as NetManagerConfig;
 use log::*;
-use once_cell::sync::Lazy;
 use service_manager::{
     ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
     ServiceUninstallCtx,
@@ -21,7 +22,7 @@ use crate::cli::common::{Ui, connect_to_manager};
 use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
 
 /// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
-static SERVICE_LABEL: Lazy<ServiceLabel> = Lazy::new(|| ServiceLabel {
+static SERVICE_LABEL: LazyLock<ServiceLabel> = LazyLock::new(|| ServiceLabel {
     qualifier: Some(String::from("rocks")),
     organization: Some(String::from("distant")),
     application: String::from("manager"),

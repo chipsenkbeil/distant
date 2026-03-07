@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
+use std::sync::LazyLock;
+
 use anyhow::Context;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use super::common;
@@ -83,7 +84,7 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        static DEFAULT_CONFIG: Lazy<Config> = Lazy::new(|| {
+        static DEFAULT_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             toml_edit::de::from_str(Config::default_raw_str())
                 .expect("Default config failed to parse")
         });

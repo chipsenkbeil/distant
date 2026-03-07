@@ -13,8 +13,9 @@ use assert_fs::prelude::*;
 use derive_more::{Deref, DerefMut, Display};
 use distant_core::Client;
 use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use std::sync::LazyLock;
+
 use log::*;
-use once_cell::sync::Lazy;
 use rstest::*;
 
 use crate::utils::ci_path_to_string;
@@ -33,13 +34,13 @@ pub struct Ctx<T> {
 //
 // Unix should be something like /usr/sbin/sshd
 // Windows should be something like C:\Windows\System32\OpenSSH\sshd.exe
-static BIN_PATH: Lazy<PathBuf> =
-    Lazy::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
+static BIN_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| which::which(if cfg!(windows) { "sshd.exe" } else { "sshd" }).unwrap());
 
 /// Port range to use when finding a port to bind to (using IANA guidance)
 const PORT_RANGE: (u16, u16) = (49152, 65535);
 
-pub static USERNAME: Lazy<String> = Lazy::new(whoami::username);
+pub static USERNAME: LazyLock<String> = LazyLock::new(whoami::username);
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
 const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);

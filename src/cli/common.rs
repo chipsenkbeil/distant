@@ -1,4 +1,5 @@
 mod cache;
+pub(crate) mod chmod;
 mod client;
 mod format;
 mod manager;

@@ -414,12 +414,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
-name = "bytecount"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
-
-[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1128,13 +1122,11 @@ dependencies = [
  "distant-test-harness",
  "env_logger",
  "expectrl",
- "file-mode",
  "flexi_logger",
  "fork",
  "indicatif",
  "indoc",
  "log",
- "once_cell",
  "predicates",
  "rand 0.8.5",
  "regex",
@@ -1145,7 +1137,6 @@ dependencies = [
  "service-manager",
  "shell-words",
  "sysinfo",
- "tabled",
  "terminal_size",
  "termwiz",
  "test-log",
@@ -1175,10 +1166,7 @@ dependencies = [
  "hex",
  "hkdf",
  "log",
- "num_cpus",
- "once_cell",
  "p256",
- "paste",
  "rand 0.8.5",
  "regex",
  "rmp",
@@ -1209,7 +1197,6 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
- "once_cell",
  "predicates",
  "rand 0.8.5",
  "rstest",
@@ -1235,8 +1222,6 @@ dependencies = [
  "log",
  "notify",
  "notify-debouncer-full",
- "num_cpus",
- "once_cell",
  "portable-pty",
  "predicates",
  "rand 0.8.5",
@@ -1268,7 +1253,6 @@ dependencies = [
  "hex",
  "indoc",
  "log",
- "once_cell",
  "predicates",
  "rand 0.8.5",
  "rpassword",
@@ -1303,7 +1287,6 @@ dependencies = [
  "indoc",
  "libc",
  "log",
- "once_cell",
  "predicates",
  "rand 0.8.5",
  "rstest",
@@ -1565,15 +1548,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
 dependencies = [
  "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "file-mode"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773ea145485772b8d354624b32adbe20e776353d3e48c7b03ef44e3455e9815c"
-dependencies = [
- "libc",
 ]
 
 [[package]]
@@ -4011,17 +3985,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "papergrid"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6978128c8b51d8f4080631ceb2302ab51e32cc6e8615f735ee2f83fd269ae3f1"
-dependencies = [
- "bytecount",
- "fnv",
- "unicode-width",
-]
-
-[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4054,12 +4017,6 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pastey"
@@ -5666,30 +5623,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabled"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e39a2ee1fbcd360805a771e1b300f78cc88fec7b8d3e2f71cd37bbf23e725c7d"
-dependencies = [
- "papergrid",
- "tabled_derive",
- "testing_table",
-]
-
-[[package]]
-name = "tabled_derive"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ea5d1b13ca6cff1f9231ffd62f15eefd72543dab5e468735f1a456728a02846"
-dependencies = [
- "heck",
- "proc-macro-error2",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "tar"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5821,15 +5754,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "testing_table"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f8daae29995a24f65619e19d8d31dea5b389f3d853d8bf297bbf607cd0014cc"
-dependencies = [
- "unicode-width",
 ]
 
 [[package]]
