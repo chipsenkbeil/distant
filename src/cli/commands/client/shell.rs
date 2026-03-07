@@ -27,11 +27,117 @@ fn select_default_shell(shell: &str, family: &str) -> String {
     }
 }
 
+/// Strips terminal query response sequences from a byte buffer.
+///
+/// When the terminal is in raw mode, programs like nvim send escape sequences
+/// to query the terminal (e.g. cursor position via DSR, device attributes via
+/// DA1/DA2). The terminal emulator responds by writing the answer back on stdin.
+/// These responses must NOT be forwarded to the remote process — they would
+/// confuse the remote program's input parser.
+///
+/// The old termwiz-based code parsed stdin into structured events and silently
+/// dropped non-key, non-resize events (which included these responses). This
+/// function restores that behavior for raw byte forwarding.
+///
+/// Response patterns filtered:
+/// - `\x1b[...R`     — DSR (Cursor Position Report)
+/// - `\x1b[?...c`    — DA1 (Primary Device Attributes)
+/// - `\x1b[>...c`    — DA2 (Secondary Device Attributes)
+/// - `\x1b[?...;...$y` — DECRPM (Mode Report)
+///
+/// Returns the number of bytes written to `out` after filtering.
+fn filter_terminal_responses(input: &[u8], out: &mut Vec<u8>) {
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == 0x1b && i + 1 < input.len() && input[i + 1] == b'[' {
+            // Potential CSI sequence — scan for the terminator
+            if let Some(seq_len) = scan_csi_response(&input[i..]) {
+                trace!(
+                    "Filtered terminal response: {:02x?}",
+                    &input[i..i + seq_len]
+                );
+                i += seq_len;
+                continue;
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+}
+
+/// Scans a CSI sequence starting at `buf[0] == ESC, buf[1] == '['` and returns
+/// its length if it matches a terminal query response pattern. Returns `None` if
+/// it's not a recognized response (i.e. should be forwarded as user input).
+fn scan_csi_response(buf: &[u8]) -> Option<usize> {
+    // Minimum: ESC [ <something> <terminator> = 3 bytes
+    if buf.len() < 3 || buf[0] != 0x1b || buf[1] != b'[' {
+        return None;
+    }
+
+    let mut j = 2;
+
+    // Check for '?' or '>' prefix (DA1: `ESC[?...c`, DA2: `ESC[>...c`)
+    let has_question = buf.get(j) == Some(&b'?');
+    let has_gt = buf.get(j) == Some(&b'>');
+    if has_question || has_gt {
+        j += 1;
+    }
+
+    // Scan parameter bytes (digits and semicolons)
+    while j < buf.len() && (buf[j].is_ascii_digit() || buf[j] == b';') {
+        j += 1;
+    }
+
+    if j >= buf.len() {
+        // Incomplete sequence — don't consume, let it accumulate
+        return None;
+    }
+
+    let terminator = buf[j];
+
+    // DSR response: ESC [ <digits> ; <digits> R
+    if terminator == b'R' && !has_question && !has_gt {
+        return Some(j + 1);
+    }
+
+    // DA1 response: ESC [ ? <params> c
+    // DA2 response: ESC [ > <params> c
+    if terminator == b'c' && (has_question || has_gt) {
+        return Some(j + 1);
+    }
+
+    // DECRPM response: ESC [ ? <params> $ y
+    if terminator == b'$' && has_question && j + 1 < buf.len() && buf[j + 1] == b'y' {
+        return Some(j + 2);
+    }
+
+    None
+}
+
+/// RAII guard that restores the original `fcntl` flags on stdin when dropped.
+#[cfg(unix)]
+struct NonBlockGuard {
+    fd: std::os::fd::RawFd,
+    original_flags: libc::c_int,
+}
+
+#[cfg(unix)]
+impl Drop for NonBlockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::fcntl(self.fd, libc::F_SETFL, self.original_flags);
+        }
+    }
+}
+
 /// Forwards raw stdin bytes to the remote process stdin.
 ///
 /// On Unix, uses `AsyncFd` with non-blocking I/O so the task can be cleanly
-/// cancelled when the remote process exits. On Windows, uses `tokio::io::stdin()`
-/// which blocks a thread internally — the caller must handle process exit separately.
+/// cancelled when the remote process exits. Terminal query responses (DSR, DA1,
+/// DA2, DECRPM) are filtered out before forwarding — see [`filter_terminal_responses`].
+///
+/// On Windows, uses `tokio::io::stdin()` which blocks a thread internally —
+/// the caller must handle process exit separately.
 #[cfg(unix)]
 async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
     use std::os::fd::AsRawFd;
@@ -44,6 +150,10 @@ async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
     unsafe {
         libc::fcntl(raw_fd, libc::F_SETFL, original_flags | libc::O_NONBLOCK);
     }
+    let _guard = NonBlockGuard {
+        fd: raw_fd,
+        original_flags,
+    };
 
     // Safety: StdinFd is a trivial wrapper that implements AsRawFd
     struct StdinFd(std::os::fd::RawFd);
@@ -57,6 +167,7 @@ async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
         return;
     };
     let mut buf = [0u8; 4096];
+    let mut filtered = Vec::with_capacity(4096);
 
     loop {
         let mut guard = match async_fd.readable().await {
@@ -74,7 +185,10 @@ async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
         }) {
             Ok(Ok(0)) => break,
             Ok(Ok(n)) => {
-                if writer.write(&buf[..n]).await.is_err() {
+                trace!("stdin: {} bytes: {:02x?}", n, &buf[..n.min(64)]);
+                filtered.clear();
+                filter_terminal_responses(&buf[..n], &mut filtered);
+                if !filtered.is_empty() && writer.write(filtered.as_slice()).await.is_err() {
                     break;
                 }
             }
@@ -83,23 +197,24 @@ async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
             Err(_would_block) => continue,
         }
     }
-
-    // Restore blocking mode
-    unsafe {
-        libc::fcntl(raw_fd, libc::F_SETFL, original_flags);
-    }
 }
 
 /// Forwards raw stdin bytes to the remote process stdin (Windows version).
+///
+/// Terminal query responses are filtered out before forwarding.
 #[cfg(windows)]
 async fn forward_stdin(mut writer: distant_core::RemoteStdin) {
     let mut buf = [0u8; 4096];
+    let mut filtered = Vec::with_capacity(4096);
     let mut reader = tokio::io::stdin();
     loop {
         match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                if writer.write(&buf[..n]).await.is_err() {
+                trace!("stdin: {} bytes: {:02x?}", n, &buf[..n.min(64)]);
+                filtered.clear();
+                filter_terminal_responses(&buf[..n], &mut filtered);
+                if !filtered.is_empty() && writer.write(filtered.as_slice()).await.is_err() {
                     break;
                 }
             }
@@ -264,5 +379,139 @@ mod tests {
             select_default_shell("powershell.exe", "windows"),
             "powershell.exe"
         );
+    }
+
+    // ─── filter_terminal_responses tests ───
+
+    #[test]
+    fn filter_passes_through_normal_text() {
+        let input = b"hello world";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert_eq!(out, b"hello world");
+    }
+
+    #[test]
+    fn filter_passes_through_normal_key_escapes() {
+        // Arrow keys: ESC [ A/B/C/D — not terminal responses
+        let input = b"\x1b[A\x1b[B";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert_eq!(out, input.to_vec());
+    }
+
+    #[test]
+    fn filter_strips_dsr_cursor_position_report() {
+        // DSR response: ESC [ 24 ; 80 R
+        let input = b"\x1b[24;80R";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert!(out.is_empty(), "DSR response should be filtered: {:?}", out);
+    }
+
+    #[test]
+    fn filter_strips_da1_response() {
+        // DA1 response: ESC [ ? 6 4 ; 1 ; 2 c
+        let input = b"\x1b[?64;1;2c";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert!(out.is_empty(), "DA1 response should be filtered: {:?}", out);
+    }
+
+    #[test]
+    fn filter_strips_da2_response() {
+        // DA2 response: ESC [ > 1 ; 1 0 ; 0 c
+        let input = b"\x1b[>1;10;0c";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert!(out.is_empty(), "DA2 response should be filtered: {:?}", out);
+    }
+
+    #[test]
+    fn filter_strips_decrpm_response() {
+        // DECRPM response: ESC [ ? 25 ; 1 $ y
+        let input = b"\x1b[?25;1$y";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert!(
+            out.is_empty(),
+            "DECRPM response should be filtered: {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn filter_preserves_text_around_responses() {
+        // Normal text, then DSR, then more text
+        let mut input = Vec::new();
+        input.extend_from_slice(b"hello");
+        input.extend_from_slice(b"\x1b[24;80R");
+        input.extend_from_slice(b"world");
+
+        let mut out = Vec::new();
+        filter_terminal_responses(&input, &mut out);
+        assert_eq!(out, b"helloworld");
+    }
+
+    #[test]
+    fn filter_handles_multiple_responses_in_sequence() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"\x1b[24;80R"); // DSR
+        input.extend_from_slice(b"\x1b[?64;1c"); // DA1
+        input.extend_from_slice(b"x"); // regular byte
+
+        let mut out = Vec::new();
+        filter_terminal_responses(&input, &mut out);
+        assert_eq!(out, b"x");
+    }
+
+    #[test]
+    fn filter_passes_through_csi_sequences_that_are_not_responses() {
+        // SGR (color): ESC [ 3 1 m — not a response
+        let input = b"\x1b[31m";
+        let mut out = Vec::new();
+        filter_terminal_responses(input, &mut out);
+        assert_eq!(out, input.to_vec());
+    }
+
+    // ─── scan_csi_response tests ───
+
+    #[test]
+    fn scan_csi_returns_none_for_non_csi() {
+        assert!(scan_csi_response(b"hello").is_none());
+        assert!(scan_csi_response(b"\x1bO").is_none());
+    }
+
+    #[test]
+    fn scan_csi_returns_none_for_incomplete_sequence() {
+        assert!(scan_csi_response(b"\x1b[").is_none());
+        assert!(scan_csi_response(b"\x1b[24;").is_none());
+    }
+
+    #[test]
+    fn scan_csi_returns_length_for_dsr() {
+        assert_eq!(scan_csi_response(b"\x1b[24;80R"), Some(8));
+        assert_eq!(scan_csi_response(b"\x1b[1;1R"), Some(6));
+    }
+
+    #[test]
+    fn scan_csi_returns_length_for_da1() {
+        assert_eq!(scan_csi_response(b"\x1b[?64;1;2c"), Some(10));
+    }
+
+    #[test]
+    fn scan_csi_returns_length_for_da2() {
+        assert_eq!(scan_csi_response(b"\x1b[>1;10;0c"), Some(10));
+    }
+
+    #[test]
+    fn scan_csi_returns_length_for_decrpm() {
+        assert_eq!(scan_csi_response(b"\x1b[?25;1$y"), Some(9));
+    }
+
+    #[test]
+    fn scan_csi_returns_none_for_arrow_keys() {
+        // Arrow up: ESC [ A
+        assert!(scan_csi_response(b"\x1b[A").is_none());
     }
 }

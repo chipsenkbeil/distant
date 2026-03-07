@@ -48,6 +48,11 @@ macro_rules! from_pipes {
             loop {
                 match $stdout.read().await {
                     Ok(output) => {
+                        trace!(
+                            "stdout: {} bytes: {:02x?}",
+                            output.len(),
+                            &output[..output.len().min(64)]
+                        );
                         let mut out = handle.lock();
                         out.write_all(&output)?;
                         out.flush()?;
@@ -61,6 +66,11 @@ macro_rules! from_pipes {
             loop {
                 match $stderr.read().await {
                     Ok(output) => {
+                        trace!(
+                            "stderr: {} bytes: {:02x?}",
+                            output.len(),
+                            &output[..output.len().min(64)]
+                        );
                         let mut out = handle.lock();
                         out.write_all(&output)?;
                         out.flush()?;

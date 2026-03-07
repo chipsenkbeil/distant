@@ -1189,6 +1189,7 @@ dependencies = [
  "serde",
  "shell-words",
  "ssh2-config-rs",
+ "tempfile",
  "test-log",
  "tokio",
  "typed-path",

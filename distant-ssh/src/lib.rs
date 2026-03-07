@@ -325,6 +325,8 @@ pub struct Ssh {
     cached_family: Mutex<Option<SshFamily>>,
     /// The server's SSH identification string, captured during key exchange.
     remote_sshid: Arc<Mutex<Option<String>>>,
+    /// Identity files from SSH config, used as fallback if opts.identity_files is empty.
+    ssh_config_identity_files: Option<Vec<PathBuf>>,
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
@@ -350,6 +352,9 @@ impl Ssh {
         // Parse SSH config first
         let ssh_config = Self::parse_ssh_config(host.as_ref())?;
 
+        // Resolve the actual hostname to connect to (SSH config HostName directive)
+        let connect_host = ssh_config.host_name.as_deref().unwrap_or(host.as_ref());
+
         // Determine connection parameters
         let port = opts.port.or(ssh_config.port).unwrap_or(22);
         let user = opts
@@ -360,14 +365,12 @@ impl Ssh {
 
         info!(
             "SSH connection attempt: {}:{} as user '{}'",
-            host.as_ref(),
-            port,
-            user
+            connect_host, port, user
         );
         debug!("SSH options: {:?}", opts);
         debug!(
-            "SSH config: port={:?}, user={:?}",
-            ssh_config.port, ssh_config.user
+            "SSH config: port={:?}, user={:?}, host_name={:?}",
+            ssh_config.port, ssh_config.user, ssh_config.host_name
         );
 
         // Build russh configuration
@@ -376,7 +379,14 @@ impl Ssh {
         // Verbose diagnostics
         if opts.verbose {
             info!("SSH verbose mode enabled");
-            info!("Target: {}:{}", host.as_ref(), port);
+            if ssh_config.host_name.is_some() {
+                info!(
+                    "Host alias '{}' resolved to '{}'",
+                    host.as_ref(),
+                    connect_host
+                );
+            }
+            info!("Target: {}:{}", connect_host, port);
             info!("User: {}", user);
             debug!("Identity files: {:?}", opts.identity_files);
             debug!("Identities only: {:?}", opts.identities_only);
@@ -387,8 +397,7 @@ impl Ssh {
 
         debug!(
             "Initiating russh::client::connect to {}:{}...",
-            host.as_ref(),
-            port
+            connect_host, port
         );
 
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -396,15 +405,15 @@ impl Ssh {
             remote_sshid: Arc::clone(&remote_sshid),
         };
         let connect_result =
-            russh::client::connect(Arc::new(config), (host.as_ref(), port), handler).await;
+            russh::client::connect(Arc::new(config), (connect_host, port), handler).await;
 
         let handle = match connect_result {
             Ok(h) => {
-                info!("SSH connection established to {}:{}", host.as_ref(), port);
+                info!("SSH connection established to {}:{}", connect_host, port);
                 h
             }
             Err(e) => {
-                error!("SSH connection failed to {}:{}", host.as_ref(), port);
+                error!("SSH connection failed to {}:{}", connect_host, port);
                 error!("Russh error: {}", e);
                 debug!("Russh error debug: {:?}", e);
 
@@ -417,7 +426,7 @@ impl Ssh {
 
                     format!(
                         "SSH connection to {}:{} failed: {} (IO error: {}, kind: {:?}, os: {:?})",
-                        host.as_ref(),
+                        connect_host,
                         port,
                         e,
                         io_err,
@@ -425,7 +434,7 @@ impl Ssh {
                         io_err.raw_os_error()
                     )
                 } else {
-                    format!("SSH connection to {}:{} failed: {}", host.as_ref(), port, e)
+                    format!("SSH connection to {}:{} failed: {}", connect_host, port, e)
                 };
 
                 return Err(io::Error::new(
@@ -444,6 +453,7 @@ impl Ssh {
             authenticated: false,
             cached_family: Mutex::new(None),
             remote_sshid,
+            ssh_config_identity_files: ssh_config.identity_file.clone(),
         })
     }
 
@@ -478,17 +488,128 @@ impl Ssh {
 
         config.preferred = Self::build_preferred_algorithms(params);
 
+        // Map keepalive: prefer server_alive_interval, fall back to tcp_keep_alive
         if let Some(interval) = params.server_alive_interval {
             config.keepalive_interval = Some(interval);
+        } else if params.tcp_keep_alive == Some(true) {
+            // TCP keepalive requested but no interval specified; use a sensible default
+            config.keepalive_interval = Some(Duration::from_secs(15));
+        }
+
+        // Map connection timeout
+        if let Some(timeout) = params.connect_timeout {
+            config.inactivity_timeout = Some(timeout);
         }
 
         Ok(config)
     }
 
-    fn build_preferred_algorithms(_params: &HostParams) -> russh::Preferred {
-        // Using defaults; SSH config algorithm preferences (KexAlgorithms, Ciphers, MACs)
-        // are not yet applied.
-        russh::Preferred::default()
+    /// Builds preferred algorithm lists from SSH config, filtering to only algorithms
+    /// that russh actually supports. Unsupported algorithm names are logged and skipped.
+    fn build_preferred_algorithms(params: &HostParams) -> russh::Preferred {
+        let mut preferred = russh::Preferred::default();
+
+        // Map KexAlgorithms
+        if !params.kex_algorithms.is_default() {
+            let kex: Vec<russh::kex::Name> = params
+                .kex_algorithms
+                .algorithms()
+                .iter()
+                .filter_map(|s| match russh::kex::Name::try_from(s.as_str()) {
+                    Ok(name) => Some(name),
+                    Err(_) => {
+                        debug!("Skipping unsupported KEX algorithm from SSH config: {}", s);
+                        None
+                    }
+                })
+                .collect();
+            if !kex.is_empty() {
+                // Append extension negotiation names that russh needs internally
+                let mut full_kex = kex;
+                for ext in [
+                    russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
+                    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
+                ] {
+                    if !full_kex.contains(&ext) {
+                        full_kex.push(ext);
+                    }
+                }
+                preferred.kex = full_kex.into();
+            }
+        }
+
+        // Map HostKeyAlgorithms
+        if !params.host_key_algorithms.is_default() {
+            let keys: Vec<russh::keys::Algorithm> = params
+                .host_key_algorithms
+                .algorithms()
+                .iter()
+                .filter_map(|s| match s.parse::<russh::keys::Algorithm>() {
+                    Ok(algo) => Some(algo),
+                    Err(_) => {
+                        debug!(
+                            "Skipping unsupported host key algorithm from SSH config: {}",
+                            s
+                        );
+                        None
+                    }
+                })
+                .collect();
+            if !keys.is_empty() {
+                preferred.key = keys.into();
+            }
+        }
+
+        // Map Ciphers
+        if !params.ciphers.is_default() {
+            let ciphers: Vec<russh::cipher::Name> = params
+                .ciphers
+                .algorithms()
+                .iter()
+                .filter_map(|s| match russh::cipher::Name::try_from(s.as_str()) {
+                    Ok(name) => Some(name),
+                    Err(_) => {
+                        debug!("Skipping unsupported cipher from SSH config: {}", s);
+                        None
+                    }
+                })
+                .collect();
+            if !ciphers.is_empty() {
+                preferred.cipher = ciphers.into();
+            }
+        }
+
+        // Map MACs
+        if !params.mac.is_default() {
+            let macs: Vec<russh::mac::Name> = params
+                .mac
+                .algorithms()
+                .iter()
+                .filter_map(|s| match russh::mac::Name::try_from(s.as_str()) {
+                    Ok(name) => Some(name),
+                    Err(_) => {
+                        debug!("Skipping unsupported MAC from SSH config: {}", s);
+                        None
+                    }
+                })
+                .collect();
+            if !macs.is_empty() {
+                preferred.mac = macs.into();
+            }
+        }
+
+        // Map Compression
+        if let Some(true) = params.compression {
+            let compressed: Vec<russh::compression::Name> = ["zlib@openssh.com", "zlib", "none"]
+                .iter()
+                .filter_map(|s| russh::compression::Name::try_from(*s).ok())
+                .collect();
+            if !compressed.is_empty() {
+                preferred.compression = compressed.into();
+            }
+        }
+
+        preferred
     }
 
     /// Host this client is connected to
@@ -553,9 +674,18 @@ impl Ssh {
 
         // --- Public key authentication ---
         if server_accepts_pubkey {
-            // Determine which key files to try
+            // Determine which key files to try:
+            // 1. Explicitly provided via CLI opts
+            // 2. From SSH config IdentityFile directive
+            // 3. Standard defaults (~/.ssh/id_ed25519, id_rsa, id_ecdsa)
             let key_files: Vec<PathBuf> = if !self.opts.identity_files.is_empty() {
                 self.opts.identity_files.clone()
+            } else if let Some(config_files) = &self.ssh_config_identity_files {
+                config_files
+                    .iter()
+                    .filter(|p| p.exists())
+                    .cloned()
+                    .collect()
             } else {
                 // Try standard default key paths
                 if let Some(home) = dirs::home_dir() {
@@ -2806,5 +2936,149 @@ mod tests {
             instructions
         };
         assert_eq!(result, "Custom instructions");
+    }
+
+    // --- SSH config HostName resolution tests ---
+
+    #[test]
+    fn parse_ssh_config_returns_host_name_from_temp_config() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(
+            f,
+            "Host windows-vm\n  HostName 10.211.55.3\n  User testuser\n  Port 2222"
+        )
+        .unwrap();
+
+        let mut reader = std::io::BufReader::new(std::fs::File::open(&config_path).unwrap());
+        let config = SshConfig::default()
+            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
+            .unwrap();
+        let params = config.query("windows-vm");
+
+        assert_eq!(params.host_name.as_deref(), Some("10.211.55.3"));
+        assert_eq!(params.user.as_deref(), Some("testuser"));
+        assert_eq!(params.port, Some(2222));
+    }
+
+    #[test]
+    fn parse_ssh_config_host_name_is_none_for_unmatched_host() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(f, "Host myserver\n  HostName 10.0.0.1").unwrap();
+
+        let mut reader = std::io::BufReader::new(std::fs::File::open(&config_path).unwrap());
+        let config = SshConfig::default()
+            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
+            .unwrap();
+        let params = config.query("other-server");
+
+        assert!(params.host_name.is_none());
+    }
+
+    // --- build_russh_config TCP keepalive fallback ---
+
+    #[test]
+    fn build_russh_config_tcp_keep_alive_sets_default_interval() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.tcp_keep_alive = Some(true);
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn build_russh_config_server_alive_interval_takes_priority_over_tcp_keep_alive() {
+        use ssh2_config_rs::DefaultAlgorithms;
+
+        let opts = SshOpts::default();
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        params.tcp_keep_alive = Some(true);
+        params.server_alive_interval = Some(Duration::from_secs(30));
+
+        let config = Ssh::build_russh_config(&opts, &params).unwrap();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(30)));
+    }
+
+    // --- build_preferred_algorithms with non-default algorithms ---
+
+    /// Helper: parse a temp SSH config and return HostParams with algorithm overrides applied.
+    fn parse_config_str(config_text: &str) -> HostParams {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "{}", config_text).unwrap();
+
+        let mut reader = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+        let config = SshConfig::default()
+            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
+            .unwrap();
+        config.query("testhost")
+    }
+
+    #[test]
+    fn build_preferred_algorithms_maps_custom_ciphers() {
+        let params = parse_config_str(
+            "Host testhost\n  Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com\n",
+        );
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+        // Should contain the mapped ciphers, not the defaults
+        assert!(preferred.cipher.len() <= 2);
+        assert!(
+            preferred
+                .cipher
+                .iter()
+                .any(|c| c.as_ref() == "chacha20-poly1305@openssh.com")
+        );
+    }
+
+    #[test]
+    fn build_preferred_algorithms_skips_unsupported_cipher() {
+        let params = parse_config_str(
+            "Host testhost\n  Ciphers aes256-gcm@openssh.com,nonexistent-cipher\n",
+        );
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+        // nonexistent-cipher should be filtered out
+        assert!(
+            preferred
+                .cipher
+                .iter()
+                .all(|c| c.as_ref() != "nonexistent-cipher")
+        );
+    }
+
+    #[test]
+    fn build_preferred_algorithms_maps_custom_kex() {
+        let params = parse_config_str("Host testhost\n  KexAlgorithms curve25519-sha256\n");
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+        // Should include curve25519-sha256 plus extension negotiation names
+        assert!(
+            preferred
+                .kex
+                .iter()
+                .any(|k| k.as_ref() == "curve25519-sha256")
+        );
+    }
+
+    #[test]
+    fn build_preferred_algorithms_maps_custom_mac() {
+        let params = parse_config_str("Host testhost\n  MACs hmac-sha2-256\n");
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+        assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
     }
 }
