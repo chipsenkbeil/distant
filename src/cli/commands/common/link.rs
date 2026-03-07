@@ -23,7 +23,7 @@ pub struct RemoteProcessLink {
 }
 
 macro_rules! from_pipes {
-    ($stdin:expr, $stdout:expr, $stderr:expr, $buffer:expr) => {{
+    ($stdin:expr, $stdout:expr, $stderr:expr, $buffer:expr, $stdout_filter:expr) => {{
         let mut stdin_thread = None;
         let mut stdin_task = None;
         if let Some(mut stdin_handle) = $stdin {
@@ -43,8 +43,14 @@ macro_rules! from_pipes {
             stdin_thread = Some(thread);
             stdin_task = Some(task);
         }
+        let stdout_filter: Option<fn(&[u8], &mut Vec<u8>)> = $stdout_filter;
         let stdout_task = tokio::spawn(async move {
             let handle = io::stdout();
+            let mut filtered_buf = if stdout_filter.is_some() {
+                Vec::with_capacity(8192)
+            } else {
+                Vec::new()
+            };
             loop {
                 match $stdout.read().await {
                     Ok(output) => {
@@ -53,9 +59,19 @@ macro_rules! from_pipes {
                             output.len(),
                             &output[..output.len().min(64)]
                         );
-                        let mut out = handle.lock();
-                        out.write_all(&output)?;
-                        out.flush()?;
+                        if let Some(filter) = stdout_filter {
+                            filtered_buf.clear();
+                            filter(&output, &mut filtered_buf);
+                            if !filtered_buf.is_empty() {
+                                let mut out = handle.lock();
+                                out.write_all(&filtered_buf)?;
+                                out.flush()?;
+                            }
+                        } else {
+                            let mut out = handle.lock();
+                            out.write_all(&output)?;
+                            out.flush()?;
+                        }
                     }
                     Err(x) => break Err(x),
                 }
@@ -100,7 +116,31 @@ impl RemoteProcessLink {
         mut stderr: RemoteStderr,
         max_pipe_chunk_size: usize,
     ) -> Self {
-        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size)
+        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size, None)
+    }
+
+    /// Creates a new process link from the pipes of a remote process, applying a filter to stdout.
+    ///
+    /// `stdout_filter` is called on each stdout chunk before writing to local stdout. The filter
+    /// receives the raw bytes and must write the filtered output into the provided `Vec`. If the
+    /// filter produces empty output, the write is skipped entirely.
+    ///
+    /// `max_pipe_chunk_size` represents the maximum size (in bytes) of data that will be read from
+    /// stdin at one time to forward to the remote process.
+    pub fn from_remote_pipes_filtered(
+        stdin: Option<RemoteStdin>,
+        mut stdout: RemoteStdout,
+        mut stderr: RemoteStderr,
+        max_pipe_chunk_size: usize,
+        stdout_filter: fn(&[u8], &mut Vec<u8>),
+    ) -> Self {
+        from_pipes!(
+            stdin,
+            stdout,
+            stderr,
+            max_pipe_chunk_size,
+            Some(stdout_filter)
+        )
     }
 
     /// Creates a new process link from the pipes of a remote LSP server process.
@@ -113,7 +153,7 @@ impl RemoteProcessLink {
         mut stderr: RemoteLspStderr,
         max_pipe_chunk_size: usize,
     ) -> Self {
-        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size)
+        from_pipes!(stdin, stdout, stderr, max_pipe_chunk_size, None)
     }
 
     /// Shuts down the link, letting stdout/stderr drain before returning.
