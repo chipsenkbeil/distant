@@ -124,3 +124,10 @@ bin-dir = "distant-universal-apple-darwin"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
+
+[patch.crates-io]
+# Patched nix 0.29.0: removes IFF_NOTRAILERS for NetBSD (removed upstream
+# in libc 0.2.180). Backport of nix-rust/nix#2724 (landed in nix 0.31.0).
+# Remove this patch when upstream crates (termwiz, russh, mac_address)
+# update to nix >= 0.31.
+nix = { path = "patches/nix-0.29.0" }
