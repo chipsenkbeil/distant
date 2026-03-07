@@ -23,7 +23,7 @@ impl Ui {
     /// When `quiet` is true, all informational output (spinners, success/error messages,
     /// headers, etc.) is suppressed. This is useful for scripting and pipeline use.
     pub fn new(quiet: bool) -> Self {
-        let term = Term::stderr();
+        let term = Term::buffered_stderr();
         let interactive = term.is_term();
         Self {
             term,
@@ -54,6 +54,7 @@ impl Ui {
             }
         } else {
             let _ = self.term.write_line(msg);
+            let _ = self.term.flush();
             Spinner {
                 inner: None,
                 interactive: false,
@@ -74,6 +75,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(msg);
         }
+        let _ = self.term.flush();
     }
 
     /// Print a warning message: "⚠ msg" (yellow) or "warning: msg" (plain).
@@ -88,6 +90,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(&format!("warning: {msg}"));
         }
+        let _ = self.term.flush();
     }
 
     /// Print an error message: "✗ msg" (red) or "error: msg" (plain).
@@ -102,6 +105,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(&format!("error: {msg}"));
         }
+        let _ = self.term.flush();
     }
 
     /// Print an error message with a suggestion underneath.
@@ -120,6 +124,7 @@ impl Ui {
             let _ = self.term.write_line(&format!("error: {msg}"));
             let _ = self.term.write_line(&format!("  {suggestion}"));
         }
+        let _ = self.term.flush();
     }
 
     /// Print a header/title: bold or plain.
@@ -132,6 +137,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(msg);
         }
+        let _ = self.term.flush();
     }
 
     /// Print dim/secondary text.
@@ -144,6 +150,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(msg);
         }
+        let _ = self.term.flush();
     }
 
     /// Print a "Label: value" status line with colored value.
@@ -163,6 +170,7 @@ impl Ui {
         } else {
             let _ = self.term.write_line(&format!("{label}: {value}"));
         }
+        let _ = self.term.flush();
     }
 
     /// Write a raw line to the terminal (stderr).
@@ -171,6 +179,7 @@ impl Ui {
             return;
         }
         let _ = self.term.write_line(msg);
+        let _ = self.term.flush();
     }
 
     /// Whether the terminal is interactive (TTY).
@@ -221,11 +230,13 @@ impl SpinnerInner {
                     let msg = msg_clone.lock().unwrap().clone();
                     let _ = term.clear_line();
                     let _ = term.write_str(&format!("{symbol} {msg}"));
+                    let _ = term.flush();
                     frame += 1;
                 }
                 std::thread::sleep(Duration::from_millis(80));
             }
             let _ = term.clear_line();
+            let _ = term.flush();
         });
 
         Self {
@@ -278,6 +289,7 @@ impl Spinner {
             } else {
                 let _ = self.term.write_line(msg);
             }
+            let _ = self.term.flush();
         }
     }
 
@@ -294,6 +306,7 @@ impl Spinner {
             // Small sleep to let the animation thread finish its current frame
             std::thread::sleep(Duration::from_millis(100));
             let _ = self.term.clear_line();
+            let _ = self.term.flush();
             let result = f();
             inner.paused.store(false, Ordering::Relaxed);
             result
@@ -322,6 +335,7 @@ impl Spinner {
             } else {
                 let _ = self.term.write_line(&format!("error: {msg}"));
             }
+            let _ = self.term.flush();
         }
     }
 }
@@ -345,6 +359,7 @@ impl SuspendHandle {
         self.paused.store(true, Ordering::Relaxed);
         std::thread::sleep(Duration::from_millis(100));
         let _ = self.term.clear_line();
+        let _ = self.term.flush();
         let result = f();
         self.paused.store(false, Ordering::Relaxed);
         result
