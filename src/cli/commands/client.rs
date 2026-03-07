@@ -1896,11 +1896,11 @@ fn format_version_shell(version: &Version) -> anyhow::Result<String> {
         // to use; if we don't have a terminal width, default to something
         //
         // Maximum columns we want to support is 4
-        let cols = match crate::cli::common::terminal::terminal_size() {
+        let cols = match terminal_size::terminal_size() {
             // If we have a tty, see how many we can fit including space char
             //
             // Ensure that we at least return 1 as cols
-            Some((width, _)) => std::cmp::max(width as usize / (max_len + 1), 1),
+            Some((width, _)) => std::cmp::max(width.0 as usize / (max_len + 1), 1),
 
             // If we have no tty, default to 4 columns
             None => MAX_COLS,
