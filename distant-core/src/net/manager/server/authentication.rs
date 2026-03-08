@@ -356,7 +356,7 @@ mod tests {
                 let sender = reg.remove(&id).unwrap();
                 sender
                     .send(AuthenticationResponse::Challenge(ChallengeResponse {
-                        answers: vec![String::from("my_password")],
+                        answers: vec![SecretString::from("my_password")],
                     }))
                     .unwrap();
             }
@@ -370,7 +370,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.answers, vec![String::from("my_password")]);
+        assert_eq!(result.answers, vec![SecretString::from("my_password")]);
         task.await.unwrap();
     }
 

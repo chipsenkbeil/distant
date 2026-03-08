@@ -118,7 +118,10 @@ impl<'a> SshAuthHandler for AuthClientSshAuthHandler<'a> {
             .await
             .challenge(Challenge { questions, options })
             .await?
-            .answers)
+            .answers
+            .into_iter()
+            .map(|s| s.into_exposed())
+            .collect())
     }
 
     async fn on_verify_host<'b>(&'b self, host: &'b str) -> io::Result<bool> {

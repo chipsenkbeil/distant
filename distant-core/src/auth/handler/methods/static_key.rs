@@ -7,7 +7,7 @@ use log::*;
 
 use crate::auth::handler::AuthMethodHandler;
 use crate::auth::msg::{
-    Challenge, ChallengeResponse, Error, Info, Verification, VerificationResponse,
+    Challenge, ChallengeResponse, Error, Info, SecretString, Verification, VerificationResponse,
 };
 
 /// Implementation of [`AuthMethodHandler`] that answers challenge requests using a static
@@ -96,7 +96,7 @@ where
                         "Only 'key' challenges are supported",
                     ));
                 }
-                answers.push(self.key.to_string());
+                answers.push(SecretString::from(self.key.to_string()));
             }
             Ok(ChallengeResponse { answers })
         })
@@ -165,7 +165,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.answers.len(), 1, "Wrong answer set received");
-        assert!(!response.answers[0].is_empty(), "Empty answer being sent");
+        assert!(
+            !response.answers[0].as_exposed().is_empty(),
+            "Empty answer being sent"
+        );
     }
 
     #[test(tokio::test)]

@@ -317,7 +317,7 @@ impl AuthMethodHandler for PromptAuthHandler {
                     }
                     rpassword::prompt_password(line).unwrap_or_default()
                 });
-                answers.push(answer);
+                answers.push(SecretString::from(answer));
             }
             Ok(ChallengeResponse { answers })
         })
@@ -672,7 +672,7 @@ mod tests {
 
         // Simulate a response that sends back a ChallengeResponse
         let response = AuthenticationResponse::Challenge(ChallengeResponse {
-            answers: vec!["my-password".to_string()],
+            answers: vec![SecretString::from("my-password")],
         });
         let response_json = format!("{}\n", serde_json::to_string(&response).unwrap());
         let sent = Arc::new(Mutex::new(false));
@@ -701,7 +701,7 @@ mod tests {
             options: Default::default(),
         };
         let result = handler.on_challenge(challenge).await.unwrap();
-        assert_eq!(result.answers, ["my-password"]);
+        assert_eq!(result.answers, vec![SecretString::from("my-password")]);
     }
 
     // -------------------------------------------------------

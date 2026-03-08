@@ -153,7 +153,11 @@ async fn relay_auth(
                     .await?;
                 let resp_msg = AuthResponseMsg {
                     auth_response: AuthResponseInner {
-                        answers: response.answers,
+                        answers: response
+                            .answers
+                            .into_iter()
+                            .map(|s| s.into_exposed())
+                            .collect(),
                     },
                 };
                 let mut json = serde_json::to_string(&resp_msg).map_err(io::Error::other)?;

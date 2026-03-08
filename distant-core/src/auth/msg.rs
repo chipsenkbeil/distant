@@ -1,7 +1,76 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use derive_more::{Display, Error, From};
 use serde::{Deserialize, Serialize};
+
+/// A string that redacts its contents in Debug and Display output.
+///
+/// Used for sensitive values like authentication answers and passwords.
+/// The inner value is only accessible via [`as_exposed()`](SecretString::as_exposed) or
+/// [`into_exposed()`](SecretString::into_exposed), making secret access explicit and auditable.
+///
+/// # Examples
+///
+/// ```
+/// use distant_core::auth::msg::SecretString;
+///
+/// let secret = SecretString::from("hunter2");
+/// assert_eq!(format!("{:?}", secret), "***");
+/// assert_eq!(format!("{}", secret), "***");
+/// assert_eq!(secret.as_exposed(), "hunter2");
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretString(String);
+
+impl SecretString {
+    /// Returns a reference to the inner string.
+    pub fn as_exposed(&self) -> &str {
+        &self.0
+    }
+
+    /// Consumes the secret and returns the inner string.
+    pub fn into_exposed(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "***")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "***")
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl PartialEq<str> for SecretString {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<String> for SecretString {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
 
 /// Represents messages from an authenticator that act as initiators such as providing
 /// a challenge, verifying information, presenting information, or highlighting an error
@@ -99,7 +168,7 @@ pub struct InitializationResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChallengeResponse {
     /// Answers to challenge questions (in order relative to questions)
-    pub answers: Vec<String>,
+    pub answers: Vec<SecretString>,
 }
 
 /// Represents the answer to a previously-asked verification associated with authentication
@@ -399,7 +468,7 @@ mod tests {
     #[test]
     fn authentication_response_challenge_serde_round_trip() {
         let msg = AuthenticationResponse::Challenge(ChallengeResponse {
-            answers: vec!["answer1".to_string(), "answer2".to_string()],
+            answers: vec![SecretString::from("answer1"), SecretString::from("answer2")],
         });
         let json = serde_json::to_string(&msg).unwrap();
         let restored: AuthenticationResponse = serde_json::from_str(&json).unwrap();
@@ -726,7 +795,7 @@ mod tests {
     #[test]
     fn authentication_response_from_challenge_response() {
         let ch = ChallengeResponse {
-            answers: vec!["a".to_string()],
+            answers: vec![SecretString::from("a")],
         };
         let msg: AuthenticationResponse = ch.clone().into();
         assert_eq!(msg, AuthenticationResponse::Challenge(ch));
@@ -812,7 +881,7 @@ mod tests {
         assert_eq!(
             msg,
             AuthenticationResponse::Challenge(ChallengeResponse {
-                answers: vec!["pw".to_string()],
+                answers: vec![SecretString::from("pw")],
             })
         );
     }
@@ -918,7 +987,7 @@ mod tests {
     #[test]
     fn challenge_response_serde_round_trip() {
         let cr = ChallengeResponse {
-            answers: vec!["a".to_string()],
+            answers: vec![SecretString::from("a")],
         };
         let json = serde_json::to_string(&cr).unwrap();
         let restored: ChallengeResponse = serde_json::from_str(&json).unwrap();
@@ -991,5 +1060,70 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let restored: Authentication = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, restored);
+    }
+
+    // ---------------------------------------------------------------
+    // SecretString
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn secret_string_debug_is_redacted() {
+        let secret = SecretString::from("password123");
+        let debug = format!("{:?}", secret);
+        assert_eq!(debug, "***");
+        assert!(!debug.contains("password123"));
+    }
+
+    #[test]
+    fn secret_string_display_is_redacted() {
+        let secret = SecretString::from("password123");
+        let display = format!("{}", secret);
+        assert_eq!(display, "***");
+    }
+
+    #[test]
+    fn secret_string_as_exposed_returns_inner_value() {
+        let secret = SecretString::from("hunter2");
+        assert_eq!(secret.as_exposed(), "hunter2");
+    }
+
+    #[test]
+    fn secret_string_into_exposed_returns_inner_value() {
+        let secret = SecretString::from("hunter2");
+        assert_eq!(secret.into_exposed(), "hunter2");
+    }
+
+    #[test]
+    fn secret_string_partial_eq_str() {
+        let secret = SecretString::from("test");
+        assert_eq!(secret, *"test");
+    }
+
+    #[test]
+    fn secret_string_partial_eq_string() {
+        let secret = SecretString::from("test");
+        assert_eq!(secret, String::from("test"));
+    }
+
+    #[test]
+    fn secret_string_serde_round_trip() {
+        let secret = SecretString::from("my_secret");
+        let json = serde_json::to_string(&secret).unwrap();
+        assert_eq!(json, "\"my_secret\"");
+        let restored: SecretString = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, *"my_secret");
+    }
+
+    #[test]
+    fn challenge_response_debug_does_not_contain_answer_text() {
+        let response = ChallengeResponse {
+            answers: vec![SecretString::from("super_secret_pw")],
+        };
+        let debug = format!("{:?}", response);
+        assert!(
+            !debug.contains("super_secret_pw"),
+            "Debug output should not contain the secret value: {debug}"
+        );
+        assert!(debug.contains("***"));
     }
 }

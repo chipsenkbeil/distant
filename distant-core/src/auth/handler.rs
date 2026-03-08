@@ -429,7 +429,11 @@ impl Default for TestAuthHandler {
             on_initialization: Box::new(|x| Ok(InitializationResponse { methods: x.methods })),
             on_challenge: Box::new(|x| {
                 Ok(ChallengeResponse {
-                    answers: x.questions.into_iter().map(|x| x.text).collect(),
+                    answers: x
+                        .questions
+                        .into_iter()
+                        .map(|x| SecretString::from(x.text))
+                        .collect(),
                 })
             }),
             on_verification: Box::new(|_| Ok(VerificationResponse { valid: true })),
@@ -507,12 +511,12 @@ mod tests {
     // receives and returns canned responses.
     // ---------------------------------------------------------------------------
     struct RecordingMethodHandler {
-        challenge_answers: Vec<String>,
+        challenge_answers: Vec<SecretString>,
         verification_valid: bool,
     }
 
     impl RecordingMethodHandler {
-        fn new(answers: Vec<String>, valid: bool) -> Self {
+        fn new(answers: Vec<SecretString>, valid: bool) -> Self {
             Self {
                 challenge_answers: answers,
                 verification_valid: valid,
@@ -688,7 +692,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn single_auth_handler_delegates_on_challenge() {
-        let inner = RecordingMethodHandler::new(vec!["answer1".to_string()], true);
+        let inner = RecordingMethodHandler::new(vec![SecretString::from("answer1")], true);
         let mut handler = SingleAuthHandler::new(inner);
         let response = handler.on_challenge(make_challenge()).await.unwrap();
         assert_eq!(response.answers, vec!["answer1".to_string()]);
@@ -790,7 +794,7 @@ mod tests {
         map.insert_method_handler("method_a", RecordingMethodHandler::new(vec![], true));
         let prev = map.insert_method_handler(
             "method_a",
-            RecordingMethodHandler::new(vec!["replaced".to_string()], false),
+            RecordingMethodHandler::new(vec![SecretString::from("replaced")], false),
         );
         assert!(prev.is_some());
     }
@@ -934,7 +938,7 @@ mod tests {
         let mut map = AuthHandlerMap::new();
         map.insert_method_handler(
             "method_a",
-            RecordingMethodHandler::new(vec!["ans".to_string()], true),
+            RecordingMethodHandler::new(vec![SecretString::from("ans")], true),
         );
         map.set_active_id("method_a");
 
@@ -1126,7 +1130,7 @@ mod tests {
         let mut authenticator = TestAuthenticator {
             challenge: Box::new(|_c| {
                 Ok(ChallengeResponse {
-                    answers: vec!["proxy-answer".to_string()],
+                    answers: vec![SecretString::from("proxy-answer")],
                 })
             }),
             ..Default::default()
@@ -1301,7 +1305,7 @@ mod tests {
         let mut inner = TestAuthHandler {
             on_challenge: Box::new(|_| {
                 Ok(ChallengeResponse {
-                    answers: vec!["dyn-answer".to_string()],
+                    answers: vec![SecretString::from("dyn-answer")],
                 })
             }),
             ..Default::default()
@@ -1365,7 +1369,7 @@ mod tests {
         let mut inner = TestAuthHandler {
             on_challenge: Box::new(|_| {
                 Ok(ChallengeResponse {
-                    answers: vec!["from-conversion".to_string()],
+                    answers: vec![SecretString::from("from-conversion")],
                 })
             }),
             ..Default::default()

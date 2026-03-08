@@ -6,7 +6,8 @@ use log::*;
 
 use crate::auth::handler::AuthMethodHandler;
 use crate::auth::msg::{
-    Challenge, ChallengeResponse, Error, Info, Verification, VerificationKind, VerificationResponse,
+    Challenge, ChallengeResponse, Error, Info, SecretString, Verification, VerificationKind,
+    VerificationResponse,
 };
 
 /// Blocking implementation of [`AuthMethodHandler`] that uses prompts to communicate challenge &
@@ -53,7 +54,7 @@ where
                 // if we fail to get input from the user
                 let answer = (self.password_prompt)(line).unwrap_or_default();
 
-                answers.push(answer);
+                answers.push(SecretString::from(answer));
             }
             Ok(ChallengeResponse { answers })
         })
@@ -142,7 +143,7 @@ mod tests {
         let challenge = make_challenge(vec!["Password: "]);
         let response = handler.on_challenge(challenge).await.unwrap();
 
-        assert_eq!(response.answers, vec!["my_password".to_string()]);
+        assert_eq!(response.answers, vec![SecretString::from("my_password")]);
     }
 
     #[test_log::test(tokio::test)]
@@ -156,9 +157,9 @@ mod tests {
         let response = handler.on_challenge(challenge).await.unwrap();
 
         assert_eq!(response.answers.len(), 3);
-        assert_eq!(response.answers[0], "answer_for_Q1: ");
-        assert_eq!(response.answers[1], "answer_for_Q2: ");
-        assert_eq!(response.answers[2], "answer_for_Q3: ");
+        assert_eq!(response.answers[0], *"answer_for_Q1: ");
+        assert_eq!(response.answers[1], *"answer_for_Q2: ");
+        assert_eq!(response.answers[2], *"answer_for_Q3: ");
     }
 
     #[test_log::test(tokio::test)]
@@ -171,7 +172,7 @@ mod tests {
         let challenge = make_challenge(vec!["Password: "]);
         let response = handler.on_challenge(challenge).await.unwrap();
 
-        assert_eq!(response.answers, vec!["".to_string()]);
+        assert_eq!(response.answers, vec![SecretString::from("")]);
     }
 
     #[test_log::test(tokio::test)]
@@ -196,7 +197,10 @@ mod tests {
         let response = handler.on_challenge(challenge).await.unwrap();
 
         // The password_prompt should receive only the last line "Prompt: "
-        assert_eq!(response.answers, vec!["answer_for_Prompt: ".to_string()]);
+        assert_eq!(
+            response.answers,
+            vec![SecretString::from("answer_for_Prompt: ")]
+        );
     }
 
     #[test_log::test(tokio::test)]

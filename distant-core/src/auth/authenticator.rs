@@ -78,7 +78,11 @@ impl Default for TestAuthenticator {
             initialize: Box::new(|x| Ok(InitializationResponse { methods: x.methods })),
             challenge: Box::new(|x| {
                 Ok(ChallengeResponse {
-                    answers: x.questions.into_iter().map(|x| x.text).collect(),
+                    answers: x
+                        .questions
+                        .into_iter()
+                        .map(|x| SecretString::from(x.text))
+                        .collect(),
                 })
             }),
             verify: Box::new(|_| Ok(VerificationResponse { valid: true })),
@@ -178,7 +182,7 @@ mod tests {
         let resp = auth.challenge(challenge).await.unwrap();
         assert_eq!(
             resp.answers,
-            vec!["password".to_string(), "token".to_string()]
+            vec![SecretString::from("password"), SecretString::from("token")]
         );
     }
 
