@@ -40,54 +40,14 @@ utilities, and produce code that matches established project patterns.
 
 ## Coding Patterns
 
-### Module Organization
-- Re-export public items at the crate root for flat imports
-- Private inner modules with selective `pub use` re-exports
-- Group related functionality into focused modules
+See `docs/CONVENTIONS.md` (loaded via `distant-conventions` skill). Key points
+for implementation:
 
-### Error Handling
 - Binary crate: flexible error chaining with context on every propagation
 - Library crates: situation-specific error types using derive macros
-- Every error propagation adds context describing what operation failed
-- No bare `unwrap()` in production code without a safety comment
-
-### Documentation
-- All public items MUST have doc comments
-- Start with one-line summary
-- Add `# Examples` with compilable doctests for non-trivial items
-- Add `# Errors` section for fallible functions
-- No doc comments on `#[cfg(test)] mod tests` blocks
-
-### Type Design
-- Newtype wrappers for domain concepts (prevents misuse at type level)
-- Builder patterns for types with many configuration options
-- Type aliases to simplify complex generic signatures
-- Trait hierarchies for swappable implementations
-- Separate complex logic into dedicated structs — CLI commands translate
-  options, then delegate
-
-### Async
-- Tokio with full features as the runtime
-- Async trait methods return pinned futures for dynamic dispatch
-- No blocking calls in async context — use `spawn_blocking` if needed
-- Prefer `async fn` where the compiler allows
-
-### Naming
-- Rely on module namespaces for clarity — no redundant prefixes
-- Follow established Rust ecosystem naming norms
-- Prefix unused bindings with `_`
-
-### Imports
-1. `std::` imports
-2. External crate imports (alphabetical)
-3. Internal `crate::` imports
-
-### Platform-Specific Code
-- Use `cfg` attributes to isolate platform-specific modules and imports
-- `#[cfg(windows)]` blocks are invisible to macOS clippy — be careful
-  with borrows and format strings in Windows-only code
-- Use chained `.join()` calls for paths, never forward-slash separators
-- Remote operations use the project's dedicated remote path type
+- No bare `unwrap()` without a safety comment
+- `#[cfg(windows)]` blocks invisible to macOS clippy — verify in CI
+- Use chained `.join()` for paths, never forward-slash in `PathBuf::join()`
 
 ## Ecosystem Awareness
 
@@ -116,7 +76,7 @@ When designing implementations, consider these established patterns:
 
 ### Step 3: Validate
 - Run `cargo fmt --all` and fix any formatting issues
-- Run `cargo clippy --all-features --workspace --all-targets` and fix warnings
+- Run `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targets` and fix warnings
 - Report what was created/modified with file paths and line numbers
 
 ## Output Format

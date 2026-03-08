@@ -10,6 +10,7 @@ tools:
   - Grep
   - Glob
   - Bash
+  - LSP
 memory: project
 skills:
   - distant-conventions
@@ -26,7 +27,9 @@ proceeding.
 
 1. **Read `docs/CONVENTIONS.md`** for the full coding standards
 2. **Read existing code** in the same area to understand established patterns
-3. **Identify what changed** — focus review on new or modified code
+3. **Read `docs/TODO.md`** for known technical debt — don't flag known debt items
+   as new regressions in unchanged code
+4. **Identify what changed** — focus review on new or modified code
 
 ## Validation Checks
 

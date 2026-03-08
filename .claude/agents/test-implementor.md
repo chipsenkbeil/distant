@@ -26,32 +26,7 @@ all three test tiers: unit, integration, and system/CLI.
 **You write code.** After completing discovery and analysis, you create test
 files and modify existing ones using the Write and Edit tools.
 
-## 1. Environment Self-Check
-
-Before writing any tests, verify the environment:
-
-```bash
-rustc --version          # Must be >= 1.88.0
-docker info 2>&1         # Docker availability (needed for Docker tests)
-which sshd 2>/dev/null   # sshd availability (needed for SSH tests)
-ls target/debug/distant 2>/dev/null || ls target/release/distant 2>/dev/null
-```
-
-Report status clearly:
-
-```
-== Environment ==
-Rust:   OK (1.88.0)
-Docker: OK / UNAVAILABLE
-sshd:   OK / UNAVAILABLE
-Binary: OK / NOT BUILT (run `cargo build` first)
-```
-
-If Docker or sshd are unavailable, **warn the main agent** and ask the user
-whether to proceed with only the tests that can run, or stop. If the binary is
-not built, stop immediately.
-
-## 2. Discovery Step (MANDATORY)
+## 1. Discovery Step (MANDATORY)
 
 Before writing ANY test code, you MUST:
 
@@ -64,14 +39,16 @@ Before writing ANY test code, you MUST:
    Match their patterns exactly — imports, attributes, fixture usage, naming.
 4. **Read the production code** being tested to identify ALL code paths,
    branches, edge cases, and error conditions.
+5. **Read `.config/nextest.toml`** for test group thread limits (`ssh-integration`: 4,
+   `docker-integration`: 2, `ssh-integration-windows`: 1) and CI retry/timeout settings.
 
 Do NOT skip discovery. Do NOT assume you know what fixtures exist.
 
-## 3. Test Tiers
+## 2. Test Tiers
 
 Every feature must have tests at the appropriate tiers.
 
-### 3a. Unit Tests
+### 2a. Unit Tests
 
 - **Location:** `#[cfg(test)] mod tests { ... }` at the bottom of the source file
 - **Naming:** `<subject>_should_<behavior>` — no `test_` prefix
@@ -81,7 +58,7 @@ Every feature must have tests at the appropriate tiers.
   Add `#[rstest]` if using fixtures
 - **Must validate exact output**, not just success
 
-### 3b. Integration Tests
+### 2b. Integration Tests
 
 - **Location:** `<crate>/tests/` directory
 - **Naming:** `<operation>_should_<behavior>` — no `test_` prefix
@@ -90,7 +67,7 @@ Every feature must have tests at the appropriate tiers.
 - **Fixtures:** Use crate-specific fixtures from `distant-test-harness`
 - **Resource cleanup:** Clean up container paths before AND after tests
 
-### 3c. System/CLI Tests
+### 2c. System/CLI Tests
 
 - **Location:** `tests/cli/` directory
 - **Naming:** `should_<behavior>` or descriptive phrase — no `test_` prefix
@@ -105,7 +82,7 @@ Every feature must have tests at the appropriate tiers.
 - **Error cases**: Assert exit code, empty stdout, and stderr contains the
   *specific* error message via `predicates::str::contains("relevant error")`
 
-## 4. Assertion Quality Mandate
+## 3. Assertion Quality Mandate
 
 ### FORBIDDEN Patterns
 
@@ -131,7 +108,7 @@ Every assertion must validate **content**, not just existence or success:
 
 When exact values are unpredictable, assert on **structure** or **format**.
 
-## 5. Error Case Mandate
+## 4. Error Case Mandate
 
 Every happy-path test MUST have a corresponding error-case test:
 
@@ -146,7 +123,7 @@ Every happy-path test MUST have a corresponding error-case test:
 
 Error tests must validate the specific error message.
 
-## 6. Resource Cleanup Mandate
+## 5. Resource Cleanup Mandate
 
 ### Files
 - **Container paths:** Explicit removal before AND after the test body
@@ -157,19 +134,19 @@ Error tests must validate the specific error message.
 - Test harness fixtures handle their own cleanup via `Drop`
 - If you spawn additional processes, YOU must clean them up
 
-## 7. `#[ignore]` Prohibition
+## 6. `#[ignore]` Prohibition
 
 **NEVER** use `#[ignore]` unless the test is platform-specific with a
 complementary test for the other platform behind `#[cfg(...)]`.
 
 For optional infrastructure (Docker), use `skip_if_no_docker!`, NOT `#[ignore]`.
 
-## 8. Feedback Awareness
+## 7. Feedback Awareness
 
 If you are re-invoked with issues from the test-validator, fix only the
 specific issues listed. Do not rewrite tests that passed validation.
 
-## 9. Post-Write Steps
+## 8. Post-Write Steps
 
 After writing all test code, run in order:
 
@@ -189,7 +166,7 @@ Tests written:
 All tests: PASS / FAIL (details)
 ```
 
-## 10. Final Checklist
+## 9. Final Checklist
 
 - [ ] No `test_` prefix on any function name
 - [ ] No `//!` doc comments on `#[cfg(test)] mod tests`
