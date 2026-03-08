@@ -58,6 +58,9 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
     if cfg!(feature = "host") {
         features.push("host");
     }
+    if cfg!(feature = "pty") {
+        features.push("pty");
+    }
     if cfg!(feature = "ssh") {
         features.push("ssh");
     }
