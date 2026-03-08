@@ -87,15 +87,16 @@ via `~/.ssh/config` with `HostName` directive.
   This is also reported by external user in issue #251.
 - **Related:** [#251](#issue-251), [#252](#issue-252)
 
-### TD-7: Host key verification not implemented
+### TD-7: Host key verification not implemented — RESOLVED
 
-**(Bug)** In `distant-ssh/src/lib.rs`, the `check_server_key()` method always
-returns `Ok(true)`, meaning all server keys are accepted without verification.
-The `user_known_hosts_files` configuration is parsed but never actually used
-for host key checking. This is a security concern.
+**(Bug — Fixed)** Implemented TOFU (Trust On First Use) host key verification
+using russh's `known_hosts` module. `check_server_key()` now verifies keys
+against known_hosts files, rejects changed keys with MITM warnings, and supports
+`StrictHostKeyChecking` policies (`accept-new`/`yes`/`no`). Default behavior
+is `accept-new` (TOFU).
 
 - **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/lib.rs` (line ~293-298)
+- **File:** `distant-ssh/src/lib.rs`
 
 ---
 
