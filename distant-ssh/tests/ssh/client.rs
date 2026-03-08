@@ -1667,7 +1667,12 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
 ) {
     let mut client = client.await;
 
-    let cmd = platform_cmd("sh -c 'printf \"%s\" \"some stdout\"'", "echo some stdout");
+    // On Windows, `ping -n 2 127.0.0.1 >nul` keeps the process alive ~1s after
+    // writing stdout, giving sshd time to flush the pipe before exit.
+    let cmd = platform_cmd(
+        "sh -c 'printf \"%s\" \"some stdout\"'",
+        "cmd /c \"echo some stdout & ping -n 2 127.0.0.1 >nul\"",
+    );
     let mut proc = client
         .spawn(
             cmd,
@@ -1680,7 +1685,7 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
 
     let stdout_pipe = proc.stdout.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
             Ok(Ok(data)) => {
@@ -1713,9 +1718,11 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
 ) {
     let mut client = client.await;
 
+    // On Windows, `ping -n 2 127.0.0.1 >nul` keeps the process alive ~1s after
+    // writing stderr, giving sshd time to flush the pipe before exit.
     let cmd = platform_cmd(
         "sh -c 'printf \"%s\" \"some stderr\" >&2'",
-        "echo some stderr 1>&2",
+        "cmd /c \"echo some stderr 1>&2 & ping -n 2 127.0.0.1 >nul\"",
     );
     let mut proc = client
         .spawn(
@@ -1729,7 +1736,7 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
 
     let stderr_pipe = proc.stderr.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         match tokio::time::timeout_at(deadline, stderr_pipe.read()).await {
             Ok(Ok(data)) => {
