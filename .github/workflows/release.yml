@@ -381,6 +381,31 @@ jobs:
         run: |
           echo "Is pre-release: ${{ steps.check-tag.outputs.is_prerelease }}"
           echo "Is nightly: ${{ steps.check-tag.outputs.is_nightly }}"
+      - name: Collect release assets
+        id: assets
+        run: |
+          # find all binaries and their per-file checksum files (distant-*.sha256, distant-*.b2)
+          ASSET_FILES=$(find . -name "distant-*" -type f | sort)
+          COUNT=$(echo "$ASSET_FILES" | wc -l)
+          echo "Found $COUNT asset files to upload"
+
+          if [ -z "$ASSET_FILES" ]; then
+            echo "::error::No distant-* files found — aborting"
+            exit 1
+          fi
+
+          # Append the consolidated checksum files (these are named SHA256SUMS/B2SUMS,
+          # not distant-*, so find doesn't match them)
+          ASSET_FILES="$(echo "$ASSET_FILES")
+          SHA256SUMS
+          B2SUMS"
+
+          # Export as multiline output for use in later steps
+          {
+            echo "files<<EOF"
+            echo "$ASSET_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
@@ -390,34 +415,47 @@ jobs:
         if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
       - name: Publish (nightly)
         if: ${{ steps.check-tag.outputs.is_nightly == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly
-          name: Nightly Build
-          fail_on_unmatched_files: true
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: true
-          files: |
-            **/distant-*
-            SHA256SUMS
-            B2SUMS
-          body: |
-            Nightly build from master (${{ github.sha }}).
-            This is not guaranteed to pass all tests or even function properly.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Delete existing nightly release if present (preserve the tag)
+          gh release delete nightly --yes --cleanup-tag=false 2>/dev/null || true
+
+          # Create the nightly release — positional args are uploaded as assets
+          # --notes provides the static disclaimer, --generate-notes appends
+          # auto-generated PR/commit list showing what changed in this nightly
+          # shellcheck disable=SC2086
+          gh release create nightly \
+            --title "Nightly Build" \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            --notes "Nightly build from master (${{ github.sha }}).
+          This is not guaranteed to pass all tests or even function properly." \
+            ${{ steps.assets.outputs.files }}
       - name: Publish (release)
         if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          name: distant ${{ env.TAG_NAME }}
-          fail_on_unmatched_files: true
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: ${{ steps.check-tag.outputs.is_prerelease == 'true' }}
-          files: |
-            **/distant-*
-            SHA256SUMS
-            B2SUMS
-          body: |
-            ## Release Notes
-            ${{ steps.changelog.outputs.changes }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Build prerelease flag conditionally
+          PRERELEASE_FLAG=""
+          if [[ "${{ steps.check-tag.outputs.is_prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          # Write changelog to a temp file (safe for multiline content / special chars)
+          cat > /tmp/release-notes.md <<'NOTES_EOF'
+          ## Release Notes
+          ${{ steps.changelog.outputs.changes }}
+          NOTES_EOF
+
+          # Create the tagged release with changelog + auto-generated PR notes
+          # shellcheck disable=SC2086
+          gh release create "$TAG_NAME" \
+            --title "distant $TAG_NAME" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            --notes-file /tmp/release-notes.md \
+            ${{ steps.assets.outputs.files }}
