@@ -4,3 +4,13 @@
 /distant-ssh2/Cargo.lock
 **/*.un~
 
+# Ignore the entire directory by default
+.claude/
+
+# Explicitly allowlist project-related settings
+!.claude/.clauderules
+!.claude/agents/
+!.claude/prompts/
+!.claude/skills/
+!.claude/mcp.json
+!.claude/settings.json
