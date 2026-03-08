@@ -4,10 +4,11 @@
 /distant-ssh2/Cargo.lock
 **/*.un~
 
-# Ignore the entire directory by default
-.claude/
+# Ignore contents of .claude by default (use /* not / so negations work)
+.claude/*
 
 # Explicitly allowlist project-related settings
+!.claude/CLAUDE.md
 !.claude/.clauderules
 !.claude/agents/
 !.claude/prompts/
