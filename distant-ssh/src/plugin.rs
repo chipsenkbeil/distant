@@ -208,7 +208,17 @@ fn parse_ssh_opts(destination: &Destination, options: &Map) -> io::Result<SshOpt
             None => false,
         },
 
-        ..Default::default()
+        other: {
+            let mut other = std::collections::BTreeMap::new();
+            if let Some(v) = options
+                .get("strict_host_key_checking")
+                .or_else(|| options.get("ssh.strict_host_key_checking"))
+                .or_else(|| options.get("StrictHostKeyChecking"))
+            {
+                other.insert("stricthostkeychecking".to_string(), v.clone());
+            }
+            other
+        },
     })
 }
 

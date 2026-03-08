@@ -281,10 +281,140 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
+/// Verify a server's host key against known_hosts files using the specified policy.
+///
+/// Returns `Ok(true)` if the key is accepted, or an error if rejected.
+fn check_host_key(
+    host: &str,
+    port: u16,
+    pubkey: &russh::keys::PublicKey,
+    known_hosts_files: &[PathBuf],
+    policy: &HostKeyPolicy,
+) -> Result<bool, russh::Error> {
+    use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
+
+    // Check each known_hosts file for a matching key
+    for file in known_hosts_files {
+        match check_known_hosts_path(host, port, pubkey, file) {
+            Ok(true) => {
+                debug!(
+                    "Host key for {host}:{port} found and matches in {}",
+                    file.display()
+                );
+                return Ok(true);
+            }
+            Ok(false) => {
+                // Key not found in this file (no entry for this host, or different key type)
+                debug!(
+                    "No matching host key for {host}:{port} in {}",
+                    file.display()
+                );
+            }
+            Err(russh::keys::Error::KeyChanged { line }) => {
+                error!(
+                    "Host key for {host}:{port} has changed ({}:{}). \
+                     This could indicate a man-in-the-middle attack.",
+                    file.display(),
+                    line,
+                );
+                return Err(russh::Error::from(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Host key for {host}:{port} has changed ({}:line {line}). \
+                         This could indicate a man-in-the-middle attack. \
+                         Remove the offending key to continue.",
+                        file.display(),
+                    ),
+                )));
+            }
+            Err(e) => {
+                // File not found, parse error, etc. — skip to next file
+                debug!("Error checking known_hosts file {}: {e}", file.display());
+            }
+        }
+    }
+
+    // Key not found in any file — apply policy
+    match policy {
+        HostKeyPolicy::AcceptNew => {
+            // Record the key in the first known_hosts file (TOFU)
+            if let Some(file) = known_hosts_files.first() {
+                info!(
+                    "Accepting and recording new host key for {host}:{port} in {}",
+                    file.display()
+                );
+                if let Err(e) = learn_known_hosts_path(host, port, pubkey, file) {
+                    warn!(
+                        "Failed to record host key for {host}:{port} to {}: {e}",
+                        file.display()
+                    );
+                }
+            } else {
+                info!("Accepting new host key for {host}:{port} (no known_hosts file configured)");
+            }
+            Ok(true)
+        }
+        HostKeyPolicy::No => {
+            debug!(
+                "Accepting host key for {host}:{port} without recording (StrictHostKeyChecking=no)"
+            );
+            Ok(true)
+        }
+        HostKeyPolicy::Yes => {
+            error!("Host key for {host}:{port} not found in any known_hosts file");
+            Err(russh::Error::from(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Host key for {host}:{port} not found in known_hosts. \
+                     Connection rejected (StrictHostKeyChecking=yes)."
+                ),
+            )))
+        }
+    }
+}
+
+/// Policy for handling unknown SSH host keys.
+#[derive(Clone, Debug, Default)]
+enum HostKeyPolicy {
+    /// Accept unknown keys and record to known_hosts (TOFU). Reject changed keys.
+    #[default]
+    AcceptNew,
+
+    /// Accept all keys without recording (insecure, equivalent to OpenSSH `no`).
+    No,
+
+    /// Reject unknown keys; only accept keys already in known_hosts.
+    Yes,
+}
+
+impl HostKeyPolicy {
+    /// Parses the policy from the SSH config `StrictHostKeyChecking` value.
+    fn from_config(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "no" => Self::No,
+            "yes" => Self::Yes,
+            // "accept-new" is the explicit TOFU setting; also the default
+            _ => Self::AcceptNew,
+        }
+    }
+}
+
 /// Handles SSH client events from the russh connection, including host key verification.
 struct ClientHandler {
     /// The server's SSH identification string, captured during key exchange.
     remote_sshid: Arc<Mutex<Option<String>>>,
+
+    /// Hostname for known_hosts lookups.
+    host: String,
+
+    /// Port for known_hosts lookups.
+    port: u16,
+
+    /// Paths to known_hosts files to check.
+    known_hosts_files: Vec<PathBuf>,
+
+    /// Host key verification policy.
+    policy: HostKeyPolicy,
 }
 
 impl client::Handler for ClientHandler {
@@ -292,10 +422,13 @@ impl client::Handler for ClientHandler {
 
     fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
-        // TODO: Implement proper host key verification using known_hosts
-        async { Ok(true) }
+        let host = self.host.clone();
+        let port = self.port;
+        let files = self.known_hosts_files.clone();
+        let policy = self.policy.clone();
+        async move { check_host_key(&host, port, server_public_key, &files, &policy) }
     }
 
     fn kex_done(
@@ -400,9 +533,51 @@ impl Ssh {
             connect_host, port
         );
 
+        // Resolve known_hosts files: prefer explicit opts, then SSH config, then defaults
+        let known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
+            opts.user_known_hosts_files.clone()
+        } else if let Some(config_values) = ssh_config.unsupported_fields.get("userknownhostsfile")
+        {
+            let files: Vec<PathBuf> = config_values
+                .iter()
+                .map(|s| PathBuf::from(s.trim()))
+                .collect();
+            if files.is_empty() {
+                Self::default_known_hosts_files()
+            } else {
+                files
+            }
+        } else {
+            Self::default_known_hosts_files()
+        };
+
+        // Resolve host key policy: prefer explicit opts, then SSH config, then default (TOFU)
+        let policy = opts
+            .other
+            .get("stricthostkeychecking")
+            .or_else(|| opts.other.get("StrictHostKeyChecking"))
+            .map(|v| HostKeyPolicy::from_config(v))
+            .or_else(|| {
+                ssh_config
+                    .unsupported_fields
+                    .get("stricthostkeychecking")
+                    .and_then(|v| v.first())
+                    .map(|v| HostKeyPolicy::from_config(v))
+            })
+            .unwrap_or_default();
+
+        debug!(
+            "Host key verification: policy={:?}, files={:?}",
+            policy, known_hosts_files
+        );
+
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let handler = ClientHandler {
             remote_sshid: Arc::clone(&remote_sshid),
+            host: host.as_ref().to_string(),
+            port,
+            known_hosts_files,
+            policy,
         };
         let connect_result =
             russh::client::connect(Arc::new(config), (connect_host, port), handler).await;
@@ -455,6 +630,18 @@ impl Ssh {
             remote_sshid,
             ssh_config_identity_files: ssh_config.identity_file.clone(),
         })
+    }
+
+    /// Returns the default known_hosts file paths (`~/.ssh/known_hosts` and `~/.ssh/known_hosts2`).
+    fn default_known_hosts_files() -> Vec<PathBuf> {
+        dirs::home_dir()
+            .map(|h| {
+                vec![
+                    h.join(".ssh").join("known_hosts"),
+                    h.join(".ssh").join("known_hosts2"),
+                ]
+            })
+            .unwrap_or_default()
     }
 
     fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
@@ -2206,11 +2393,18 @@ mod tests {
     // --- ClientHandler tests ---
 
     #[test_log::test(tokio::test)]
-    async fn client_handler_check_server_key_always_accepts() {
+    async fn client_handler_check_server_key_accepts_new_with_tofu() {
         use russh::client::Handler;
+
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
 
         let mut handler = ClientHandler {
             remote_sshid: Arc::new(Mutex::new(None)),
+            host: "testhost".to_string(),
+            port: 22,
+            known_hosts_files: vec![kh],
+            policy: HostKeyPolicy::AcceptNew,
         };
 
         // Generate a test public key by creating a keypair
@@ -2219,9 +2413,9 @@ mod tests {
             russh::keys::Algorithm::Ed25519,
         )
         .unwrap();
-        let public_key = private_key.public_key();
+        let public_key = private_key.public_key().clone();
 
-        let result: Result<bool, russh::Error> = handler.check_server_key(public_key).await;
+        let result: Result<bool, russh::Error> = handler.check_server_key(&public_key).await;
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
@@ -2598,11 +2792,15 @@ mod tests {
     // --- ClientHandler additional tests ---
 
     #[test_log::test(tokio::test)]
-    async fn client_handler_check_server_key_ed25519() {
+    async fn client_handler_check_server_key_ed25519_no_policy() {
         use russh::client::Handler;
 
         let mut handler = ClientHandler {
             remote_sshid: Arc::new(Mutex::new(None)),
+            host: "testhost".to_string(),
+            port: 22,
+            known_hosts_files: vec![],
+            policy: HostKeyPolicy::No,
         };
 
         // Generate an Ed25519 key
@@ -2611,10 +2809,10 @@ mod tests {
             russh::keys::Algorithm::Ed25519,
         )
         .unwrap();
-        let public_key = private_key.public_key();
+        let public_key = private_key.public_key().clone();
 
-        // Should always return Ok(true) regardless of key type
-        let result: Result<bool, russh::Error> = handler.check_server_key(public_key).await;
+        // Should accept with No policy
+        let result: Result<bool, russh::Error> = handler.check_server_key(&public_key).await;
         assert!(result.unwrap());
     }
 
@@ -3080,5 +3278,197 @@ mod tests {
 
         let preferred = Ssh::build_preferred_algorithms(&params);
         assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
+    }
+
+    // ---------------------------------------------------------------
+    // Host key verification tests
+    // ---------------------------------------------------------------
+
+    mod host_key_verification {
+        use std::io::Write;
+
+        use super::*;
+
+        /// Generate an Ed25519 key pair for testing.
+        fn test_keypair() -> russh::keys::PublicKey {
+            let key = russh::keys::PrivateKey::random(
+                &mut rand::thread_rng(),
+                russh::keys::Algorithm::Ed25519,
+            )
+            .expect("Failed to generate test key");
+            key.public_key().clone()
+        }
+
+        /// Write a known_hosts entry for the given host/port/key.
+        fn write_known_hosts(
+            path: &std::path::Path,
+            host: &str,
+            port: u16,
+            pubkey: &russh::keys::PublicKey,
+        ) {
+            let mut file = std::fs::File::create(path).expect("create known_hosts");
+            if port != 22 {
+                write!(file, "[{host}]:{port} ").expect("write host");
+            } else {
+                write!(file, "{host} ").expect("write host");
+            }
+            file.write_all(pubkey.to_openssh().unwrap().as_bytes())
+                .expect("write key");
+            file.write_all(b"\n").expect("write newline");
+        }
+
+        #[test]
+        fn known_key_matches_is_accepted() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let pubkey = test_keypair();
+
+            write_known_hosts(&kh, "example.com", 22, &pubkey);
+
+            let result = check_host_key("example.com", 22, &pubkey, &[kh], &HostKeyPolicy::Yes);
+            assert!(result.unwrap());
+        }
+
+        #[test]
+        fn changed_key_is_rejected() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let original = test_keypair();
+            let different = test_keypair();
+
+            write_known_hosts(&kh, "example.com", 22, &original);
+
+            let result = check_host_key(
+                "example.com",
+                22,
+                &different,
+                &[kh],
+                &HostKeyPolicy::AcceptNew,
+            );
+            assert!(result.is_err());
+            let err = format!("{}", result.unwrap_err());
+            assert!(
+                err.contains("changed"),
+                "Error should mention key changed: {err}"
+            );
+        }
+
+        #[test]
+        fn unknown_key_accept_new_accepts_and_records() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let pubkey = test_keypair();
+
+            // File doesn't exist yet
+            let result = check_host_key(
+                "newhost.example.com",
+                22,
+                &pubkey,
+                std::slice::from_ref(&kh),
+                &HostKeyPolicy::AcceptNew,
+            );
+            assert!(result.unwrap());
+
+            // Now the file should exist and contain the key
+            assert!(kh.exists(), "known_hosts file should have been created");
+
+            // Verify the key was recorded correctly
+            let result2 = check_host_key(
+                "newhost.example.com",
+                22,
+                &pubkey,
+                &[kh],
+                &HostKeyPolicy::Yes,
+            );
+            assert!(result2.unwrap(), "Recorded key should match");
+        }
+
+        #[test]
+        fn unknown_key_yes_policy_rejects() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let pubkey = test_keypair();
+
+            // Empty known_hosts file
+            std::fs::write(&kh, "").unwrap();
+
+            let result = check_host_key(
+                "unknown.example.com",
+                22,
+                &pubkey,
+                &[kh],
+                &HostKeyPolicy::Yes,
+            );
+            assert!(result.is_err());
+            let err = format!("{}", result.unwrap_err());
+            assert!(
+                err.contains("not found"),
+                "Error should say key not found: {err}"
+            );
+        }
+
+        #[test]
+        fn unknown_key_no_policy_accepts_without_recording() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let pubkey = test_keypair();
+
+            // No known_hosts file exists
+            let result = check_host_key(
+                "norecord.example.com",
+                22,
+                &pubkey,
+                std::slice::from_ref(&kh),
+                &HostKeyPolicy::No,
+            );
+            assert!(result.unwrap());
+
+            // File should NOT have been created
+            assert!(
+                !kh.exists(),
+                "known_hosts file should not be created with No policy"
+            );
+        }
+
+        #[test]
+        fn host_key_policy_from_config_parses_correctly() {
+            assert!(matches!(
+                HostKeyPolicy::from_config("no"),
+                HostKeyPolicy::No
+            ));
+            assert!(matches!(
+                HostKeyPolicy::from_config("NO"),
+                HostKeyPolicy::No
+            ));
+            assert!(matches!(
+                HostKeyPolicy::from_config("yes"),
+                HostKeyPolicy::Yes
+            ));
+            assert!(matches!(
+                HostKeyPolicy::from_config("YES"),
+                HostKeyPolicy::Yes
+            ));
+            assert!(matches!(
+                HostKeyPolicy::from_config("accept-new"),
+                HostKeyPolicy::AcceptNew
+            ));
+            assert!(matches!(
+                HostKeyPolicy::from_config("anything_else"),
+                HostKeyPolicy::AcceptNew
+            ));
+        }
+
+        #[test]
+        fn nonstandard_port_uses_bracketed_host() {
+            let dir = tempfile::tempdir().unwrap();
+            let kh = dir.path().join("known_hosts");
+            let pubkey = test_keypair();
+
+            // Write known_hosts with non-standard port format
+            write_known_hosts(&kh, "example.com", 2222, &pubkey);
+
+            let result = check_host_key("example.com", 2222, &pubkey, &[kh], &HostKeyPolicy::Yes);
+            assert!(result.unwrap());
+        }
     }
 }
