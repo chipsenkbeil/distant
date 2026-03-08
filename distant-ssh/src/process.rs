@@ -10,6 +10,12 @@ use tokio::sync::mpsc;
 
 use crate::ClientHandler;
 
+/// Time to wait after receiving ExitStatus to drain any remaining
+/// Data/ExtendedData messages. SSH RFC 4254 provides no ordering
+/// guarantee between data and exit-status, so on Windows especially,
+/// stderr (ExtendedData) may arrive after ExitStatus.
+const POST_EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Represents a spawned process
 pub struct Process {
     pub id: ProcessId,
@@ -118,9 +124,31 @@ where
                 } => {
                     log::debug!("spawn_simple reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
-                    // On Windows, sshd may not send Eof after ExitStatus.
-                    // Break immediately — ExitStatus arrives after all data
-                    // has been flushed, so no output will be lost.
+                    // Don't break immediately — on Windows, ExtendedData (stderr)
+                    // may arrive after ExitStatus. Drain remaining messages with
+                    // a short timeout per SSH RFC 4254 (no ordering guarantee).
+                    let drain_deadline = tokio::time::Instant::now() + POST_EXIT_DRAIN_TIMEOUT;
+                    loop {
+                        match tokio::time::timeout_at(drain_deadline, read_half.wait()).await {
+                            Ok(Some(ChannelMsg::Data { ref data })) => {
+                                let _ = stdout_reply.send(Response::ProcStdout {
+                                    id: msg_id,
+                                    data: data.to_vec(),
+                                });
+                            }
+                            Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
+                                let _ = stderr_reply.send(Response::ProcStderr {
+                                    id: msg_id,
+                                    data: data.to_vec(),
+                                });
+                            }
+                            Ok(Some(ChannelMsg::Eof))
+                            | Ok(Some(ChannelMsg::Close))
+                            | Ok(None)
+                            | Err(_) => break,
+                            Ok(Some(_)) => {} // ignore other messages during drain
+                        }
+                    }
                     break;
                 }
                 ChannelMsg::ExitSignal { signal_name, .. } => {
@@ -292,9 +320,25 @@ where
                 } => {
                     log::debug!("spawn_pty reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
-                    // On Windows, sshd may not send Eof after ExitStatus.
-                    // Break immediately — ExitStatus arrives after all data
-                    // has been flushed, so no output will be lost.
+                    // Don't break immediately — on Windows, Data may arrive
+                    // after ExitStatus. Drain remaining messages with a short
+                    // timeout per SSH RFC 4254 (no ordering guarantee).
+                    let drain_deadline = tokio::time::Instant::now() + POST_EXIT_DRAIN_TIMEOUT;
+                    loop {
+                        match tokio::time::timeout_at(drain_deadline, read_half.wait()).await {
+                            Ok(Some(ChannelMsg::Data { ref data })) => {
+                                let _ = stdout_reply.send(Response::ProcStdout {
+                                    id: msg_id,
+                                    data: data.to_vec(),
+                                });
+                            }
+                            Ok(Some(ChannelMsg::Eof))
+                            | Ok(Some(ChannelMsg::Close))
+                            | Ok(None)
+                            | Err(_) => break,
+                            Ok(Some(_)) => {} // ignore other messages during drain
+                        }
+                    }
                     break;
                 }
                 ChannelMsg::ExitSignal { signal_name, .. } => {

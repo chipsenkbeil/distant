@@ -92,9 +92,35 @@ pub async fn execute_output(
                 } => {
                     log::debug!("execute_output: received ExitStatus({status}) for cmd={cmd}");
                     exit_status = Some(status);
-                    // On Windows, sshd may not send Eof after ExitStatus.
-                    // Break immediately — ExitStatus is sent after all data
-                    // has been flushed, so no output will be lost.
+                    // Don't break immediately — on Windows, ExtendedData
+                    // (stderr) may arrive after ExitStatus. Drain remaining
+                    // messages with a short timeout per SSH RFC 4254 (no
+                    // ordering guarantee).
+                    let drain_deadline =
+                        tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+                    loop {
+                        match tokio::time::timeout_at(drain_deadline, channel.wait()).await {
+                            Ok(Some(ChannelMsg::Data { ref data })) => {
+                                log::debug!(
+                                    "execute_output: drain Data ({} bytes) for cmd={cmd}",
+                                    data.len()
+                                );
+                                stdout.extend_from_slice(data);
+                            }
+                            Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
+                                log::debug!(
+                                    "execute_output: drain ExtendedData ({} bytes) for cmd={cmd}",
+                                    data.len()
+                                );
+                                stderr.extend_from_slice(data);
+                            }
+                            Ok(Some(ChannelMsg::Eof))
+                            | Ok(Some(ChannelMsg::Close))
+                            | Ok(None)
+                            | Err(_) => break,
+                            Ok(Some(_)) => {}
+                        }
+                    }
                     break;
                 }
                 ChannelMsg::Eof => {
