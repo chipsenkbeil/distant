@@ -312,6 +312,23 @@ jobs:
             ${{ matrix.build_env }} cargo build --release --all-features
             mv ./target/release/distant ./distant-${{ matrix.target }}
             chmod +x ./distant-${{ matrix.target }}
+      - name: Trim target cache
+        run: |
+          # Remove workspace crate artifacts (these embed the version and must
+          # be rebuilt each run anyway). Keep dependency crates which are the
+          # expensive part to compile from scratch.
+          #
+          # The binary itself is already moved out of target/ by the build step,
+          # so we only need the dependency artifacts for cache value.
+          rm -rf target/release/build/distant-*
+          rm -rf target/release/.fingerprint/distant-*
+          rm -f  target/release/deps/distant*
+          rm -f  target/release/deps/libdistant*
+          rm -f  target/release/distant target/release/distant.d
+          # Remove incremental compilation data (large, not useful for release)
+          rm -rf target/release/incremental
+          # Show resulting size
+          du -sh target/ 2>/dev/null || true
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
