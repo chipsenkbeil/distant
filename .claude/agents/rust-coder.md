@@ -48,6 +48,8 @@ for implementation:
 - No bare `unwrap()` without a safety comment
 - `#[cfg(windows)]` blocks invisible to macOS clippy — verify in CI
 - Use chained `.join()` for paths, never forward-slash in `PathBuf::join()`
+- `russh-sftp` defaults to a 10s request timeout — always construct SFTP sessions
+  with the crate's explicit timeout constant via `new_opts`
 
 ## Ecosystem Awareness
 

@@ -9,6 +9,13 @@ use crate::SshFamily;
 
 const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
 
+/// Timeout in seconds for SFTP operations (init handshake and per-request).
+///
+/// The `russh-sftp` crate defaults to 10 seconds, which is too aggressive for
+/// Windows CI where `sftp-server.exe` startup can be slow under load. This
+/// value matches [`SSH_EXEC_TIMEOUT`] for consistency.
+pub(crate) const SFTP_TIMEOUT_SECS: u64 = 30;
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
     pub success: bool,
@@ -263,9 +270,12 @@ pub async fn is_windows(
             .await
             .map_err(io::Error::other)?;
 
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(io::Error::other)?;
+        let sftp = russh_sftp::client::SftpSession::new_opts(
+            channel.into_stream(),
+            Some(SFTP_TIMEOUT_SECS),
+        )
+        .await
+        .map_err(io::Error::other)?;
 
         let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
         log::debug!("SFTP canonicalize(\".\") returned: {home}");
