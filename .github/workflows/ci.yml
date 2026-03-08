@@ -125,8 +125,25 @@ jobs:
           # Stop the system sshd service — it ships running on the windows-latest
           # VM image and interferes with per-test sshd instances (the user-context
           # sshd -z subprocess hangs, producing no output on exec/sftp channels).
-          Stop-Service sshd -ErrorAction SilentlyContinue
-          Set-Service sshd -StartupType Disabled
+          $sshService = Get-Service sshd -ErrorAction SilentlyContinue
+          if ($sshService -and $sshService.Status -eq 'Running') {
+            Stop-Service sshd -Force
+            $sshService.WaitForStatus('Stopped', '00:00:30')
+            Write-Host "System sshd service stopped successfully"
+          }
+          Set-Service sshd -StartupType Disabled -ErrorAction SilentlyContinue
+
+          # Kill any leftover sshd processes not managed by the service
+          Get-Process sshd -ErrorAction SilentlyContinue | Stop-Process -Force
+          Write-Host "Killed any leftover sshd processes"
+
+          # Verify nothing is listening on port 22
+          $listeners = netstat -an | Select-String ":22\s+.*LISTEN"
+          if ($listeners) {
+            Write-Error "Port 22 still in use after stopping sshd:`n$listeners"
+            exit 1
+          }
+          Write-Host "Verified: no process listening on port 22"
 
           # Ensure ssh-agent is available for key management
           Set-Service ssh-agent -StartupType Automatic
