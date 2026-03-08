@@ -71,9 +71,9 @@ Prevent *context drift* by treating project documentation as a living journal:
 1. **The Checkpoint Habit:** At the end of every session, run: *"Summarize
    architectural decisions made today and update CLAUDE.md. Remove deprecated
    patterns."*
-2. **The Debt Ledger:** Maintain a `## Technical Debt` section. Every shortcut
-   taken by the AI or yourself must be logged here to force acknowledgment in
-   future tasks.
+2. **The Debt Ledger:** Technical debt, open issues, and planned work are
+   tracked in `docs/TODO.md`. Every shortcut taken by the AI or yourself must
+   be logged there to force acknowledgment in future tasks.
 3. **Version Pinning:** Explicitly state the target versions for Rust (e.g.,
    1.88.0+) to avoid modern syntax being used in legacy-constrained
    environments.
@@ -82,59 +82,11 @@ Prevent *context drift* by treating project documentation as a living journal:
    the anti-patterns to reflect what was changed so the AI doesn't try that
    again.
 
-## Technical Debt
+## Technical Debt & TODOs
 
-Decisions we make that are considered shortcuts that we need to come back to
-later to resolve will be placed here.
-
-Each item is tagged with a category:
-
-- **(Bug)** — Produces incorrect results, wrong behavior, or data corruption.
-- **(Limitation)** — Missing or unsupported functionality that is known and
-  intentionally deferred.
-- **(Workaround)** — Correct behavior achieved through a non-ideal mechanism
-  (e.g. fallback paths, platform shims). Works today but should be replaced
-  with a cleaner solution.
-- **(Acknowledgement)** — Known inconsistency or rough edge that is not
-  currently causing failures but could in the future.
-
-1. **(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service integration
-   may be incomplete/untested.
-2. **(Acknowledgement)** Windows CI SSH tests have intermittent auth failures
-   from resource contention — mitigated with nextest retries (4x). Root cause
-   of the 19/47 consistent failures was the system sshd service running on the
-   `windows-latest` VM, conflicting with per-test sshd instances; resolved by
-   stopping the system service in CI.
-3. **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
-   (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
-   `xcopy /E /I /Y` (directories). `xcopy /I` treats the destination as a
-   directory, which causes "Cannot perform a cyclic copy" when src and dst are
-   sibling files in the same directory.
-4. **(Limitation)** Docker image pull has no CLI-visible progress — `info!`
-   logs require `--log-level info` and go to the log file. Need a progress
-   callback mechanism (e.g. `ManagerResponse::Progress`) for real-time spinner
-   updates during long plugin operations like image pulls.
-5. **(Bug)** Running `distant ssh` or `distant shell` after removing termwiz has
-   resulted in programs like `nvim` (neovim) hanging and not displaying anything
-   other than the cursor, or `ntop` (top on windows) hanging after the first
-   visual display of the processes (no refresh, no time tick displayed).
-6. **(Bug)** Config from ssh is not respected, at least when it comes to
-   HostName. Performing `distant ssh windows-vm` fails to connect to
-   ssh://windows-vm caused by, "SSH connection to windows-vm:22 failed: failed
-   to lookup address information: nodename nor servname provided, or not known"
-
-   An example of the config where regular `ssh windows-vm` would work:
-   ```
-   Include /Users/senkwich/.colima/ssh_config
-   Host windows-vm
-       HostName 10.211.55.3
-       User senkwich
-       IdentityFile ~/.ssh/id_windows_vm
-       StrictHostKeyChecking no
-       UserKnownHostsFile /dev/null
-       ServerAliveInterval 60
-       ServerAliveCountMax 3
-    ```
+Technical debt, open issues, and planned work are tracked in
+[`docs/TODO.md`](../docs/TODO.md). When taking shortcuts or discovering new
+issues during development, add them there rather than here.
 
 ## Tooling & Command Reference
 
