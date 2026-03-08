@@ -17,33 +17,6 @@ on:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
-
-# Status of Targets:
-#
-# ✅ x86_64-apple-darwin
-# ✅ aarch64-apple-darwin
-#
-# ✅ x86_64-pc-windows-msvc
-# ✅ aarch64-pc-windows-msvc
-#
-# ✅ x86_64-unknown-linux-gnu
-# ✅ aarch64-unknown-linux-gnu
-# ✅ aarch64-linux-android (runner NDK)
-# ✅ armv7-unknown-linux-gnueabihf
-#
-# ✅ x86_64-unknown-linux-musl
-# ✅ aarch64-unknown-linux-musl
-#
-# ✅ x86_64-unknown-freebsd (VM via cross-platform-actions)
-# ✅ aarch64-unknown-freebsd (VM via cross-platform-actions)
-#
-# ✅ x86_64-unknown-netbsd (VM via cross-platform-actions)
-# ✅ aarch64-unknown-netbsd (VM via cross-platform-actions)
-#
-# ❓ x86_64-unknown-openbsd (VM via cross-platform-actions; validate rustc ICE is fixed)
-# ✅ aarch64-unknown-openbsd (VM via cross-platform-actions; openssl removed by russh migration)
-#
-
 jobs:
   validate:
     name: "Pre-release validation"
