@@ -17,33 +17,6 @@ on:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
-
-# Status of Targets:
-#
-# ✅ x86_64-apple-darwin
-# ✅ aarch64-apple-darwin
-#
-# ✅ x86_64-pc-windows-msvc
-# ✅ aarch64-pc-windows-msvc
-#
-# ✅ x86_64-unknown-linux-gnu
-# ✅ aarch64-unknown-linux-gnu
-# ✅ aarch64-linux-android (runner NDK)
-# ✅ armv7-unknown-linux-gnueabihf
-#
-# ✅ x86_64-unknown-linux-musl
-# ✅ aarch64-unknown-linux-musl
-#
-# ✅ x86_64-unknown-freebsd (VM via cross-platform-actions)
-# ✅ aarch64-unknown-freebsd (VM via cross-platform-actions)
-#
-# ✅ x86_64-unknown-netbsd (VM via cross-platform-actions)
-# ✅ aarch64-unknown-netbsd (VM via cross-platform-actions)
-#
-# ❓ x86_64-unknown-openbsd (VM via cross-platform-actions; validate rustc ICE is fixed)
-# ✅ aarch64-unknown-openbsd (VM via cross-platform-actions; openssl removed by russh migration)
-#
-
 jobs:
   validate:
     name: "Pre-release validation"
@@ -312,6 +285,23 @@ jobs:
             ${{ matrix.build_env }} cargo build --release --all-features
             mv ./target/release/distant ./distant-${{ matrix.target }}
             chmod +x ./distant-${{ matrix.target }}
+      - name: Trim target cache
+        run: |
+          # Remove workspace crate artifacts (these embed the version and must
+          # be rebuilt each run anyway). Keep dependency crates which are the
+          # expensive part to compile from scratch.
+          #
+          # The binary itself is already moved out of target/ by the build step,
+          # so we only need the dependency artifacts for cache value.
+          rm -rf target/release/build/distant-*
+          rm -rf target/release/.fingerprint/distant-*
+          rm -f  target/release/deps/distant*
+          rm -f  target/release/deps/libdistant*
+          rm -f  target/release/distant target/release/distant.d
+          # Remove incremental compilation data (large, not useful for release)
+          rm -rf target/release/incremental
+          # Show resulting size
+          du -sh target/ 2>/dev/null || true
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
@@ -381,6 +371,31 @@ jobs:
         run: |
           echo "Is pre-release: ${{ steps.check-tag.outputs.is_prerelease }}"
           echo "Is nightly: ${{ steps.check-tag.outputs.is_nightly }}"
+      - name: Collect release assets
+        id: assets
+        run: |
+          # find all binaries and their per-file checksum files (distant-*.sha256, distant-*.b2)
+          ASSET_FILES=$(find . -name "distant-*" -type f | sort)
+          COUNT=$(echo "$ASSET_FILES" | wc -l)
+          echo "Found $COUNT asset files to upload"
+
+          if [ -z "$ASSET_FILES" ]; then
+            echo "::error::No distant-* files found — aborting"
+            exit 1
+          fi
+
+          # Append the consolidated checksum files (these are named SHA256SUMS/B2SUMS,
+          # not distant-*, so find doesn't match them)
+          ASSET_FILES="$(echo "$ASSET_FILES")
+          SHA256SUMS
+          B2SUMS"
+
+          # Export as multiline output for use in later steps
+          {
+            echo "files<<EOF"
+            echo "$ASSET_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
@@ -390,34 +405,47 @@ jobs:
         if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
       - name: Publish (nightly)
         if: ${{ steps.check-tag.outputs.is_nightly == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly
-          name: Nightly Build
-          fail_on_unmatched_files: true
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: true
-          files: |
-            **/distant-*
-            SHA256SUMS
-            B2SUMS
-          body: |
-            Nightly build from master (${{ github.sha }}).
-            This is not guaranteed to pass all tests or even function properly.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Delete existing nightly release if present (preserve the tag)
+          gh release delete nightly --yes --cleanup-tag=false 2>/dev/null || true
+
+          # Create the nightly release — positional args are uploaded as assets
+          # --notes provides the static disclaimer, --generate-notes appends
+          # auto-generated PR/commit list showing what changed in this nightly
+          # shellcheck disable=SC2086
+          gh release create nightly \
+            --title "Nightly Build" \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            --notes "Nightly build from master (${{ github.sha }}).
+          This is not guaranteed to pass all tests or even function properly." \
+            ${{ steps.assets.outputs.files }}
       - name: Publish (release)
         if: ${{ steps.check-tag.outputs.is_nightly != 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          name: distant ${{ env.TAG_NAME }}
-          fail_on_unmatched_files: true
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: ${{ steps.check-tag.outputs.is_prerelease == 'true' }}
-          files: |
-            **/distant-*
-            SHA256SUMS
-            B2SUMS
-          body: |
-            ## Release Notes
-            ${{ steps.changelog.outputs.changes }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Build prerelease flag conditionally
+          PRERELEASE_FLAG=""
+          if [[ "${{ steps.check-tag.outputs.is_prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          # Write changelog to a temp file (safe for multiline content / special chars)
+          cat > /tmp/release-notes.md <<'NOTES_EOF'
+          ## Release Notes
+          ${{ steps.changelog.outputs.changes }}
+          NOTES_EOF
+
+          # Create the tagged release with changelog + auto-generated PR notes
+          # shellcheck disable=SC2086
+          gh release create "$TAG_NAME" \
+            --title "distant $TAG_NAME" \
+            --target "${{ github.sha }}" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            --notes-file /tmp/release-notes.md \
+            ${{ steps.assets.outputs.files }}
