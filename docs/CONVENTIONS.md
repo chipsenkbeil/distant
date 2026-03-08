@@ -168,3 +168,76 @@ When looking for inspiration beyond this project, study these approaches:
 - **Extensions**: Extension trait patterns to add methods to foreign types
 - **API control**: Sealed trait patterns to prevent downstream implementations
 - **Zero-copy**: Efficient serialization patterns for protocol types
+
+## References
+
+External resources that informed these conventions and the agent system design.
+
+### Claude Code Documentation
+
+Informed agent frontmatter format, skills system, memory configuration, and
+CLAUDE.md best practices.
+
+- https://docs.anthropic.com/en/docs/claude-code/agents
+- https://docs.anthropic.com/en/docs/claude-code/skills
+- https://docs.anthropic.com/en/docs/claude-code/memory
+- https://docs.anthropic.com/en/docs/claude-code/claude-md
+
+### Rust Language References
+
+Informed coding conventions, documentation standards, and platform patterns.
+
+- https://doc.rust-lang.org/reference/ — The Rust Reference
+- https://doc.rust-lang.org/std/ — Standard Library documentation
+- https://doc.rust-lang.org/cargo/ — Cargo documentation
+- https://doc.rust-lang.org/nomicon/ — The Rustonomicon (advanced/unsafe patterns)
+- https://rust-lang.github.io/api-guidelines/ — Rust API Guidelines (naming,
+  documentation, type safety conventions)
+- https://rust-unofficial.github.io/patterns/ — Rust Design Patterns
+- https://rust-lang.github.io/rust-clippy/stable/index.html — Clippy lint index
+- https://releases.rs/ — Rust release and feature stabilization tracking
+- https://blog.rust-lang.org/ — Rust blog (edition guides, feature announcements)
+
+### Crate Documentation (Project Dependencies)
+
+Informed specific tool choices, error handling patterns, and testing approach.
+
+- https://docs.rs/tokio/latest/tokio/ — Async runtime
+- https://docs.rs/clap/latest/clap/ — CLI argument parsing (derive macros)
+- https://docs.rs/serde/latest/serde/ — Serialization framework
+- https://docs.rs/anyhow/latest/anyhow/ — Flexible error handling (binary crate)
+- https://docs.rs/derive_more/latest/derive_more/ — Derive macros for Display,
+  Error, From
+- https://docs.rs/flexi_logger/latest/flexi_logger/ — Logging configuration
+- https://docs.rs/bollard/latest/bollard/ — Docker API client
+- https://docs.rs/russh/latest/russh/ — SSH protocol implementation
+
+### Crate Documentation (Test Dependencies)
+
+Informed test infrastructure design and assertion patterns.
+
+- https://docs.rs/rstest/latest/rstest/ — Parameterized test fixtures
+- https://docs.rs/assert_cmd/latest/assert_cmd/ — CLI command testing
+- https://docs.rs/assert_fs/latest/assert_fs/ — Filesystem test fixtures
+- https://docs.rs/predicates/latest/predicates/ — Assertion predicates
+- https://docs.rs/test-log/latest/test_log/ — Log capture in tests
+- https://docs.rs/expectrl/latest/expectrl/ — PTY-based terminal testing
+
+### Crate Ecosystem (Exemplar Patterns)
+
+Influenced the "Exemplar Patterns" section — studied for architectural and
+API design inspiration.
+
+- https://docs.rs/tower/latest/tower/ — Service/layer middleware composition
+- https://docs.rs/hyper/latest/hyper/ — Extension trait patterns for HTTP types
+- https://docs.rs/typed-path/latest/typed_path/ — Documentation style exemplar
+  (the original CLAUDE.md documentation examples were modeled on this crate's
+  doc comments)
+
+### General Ecosystem Tools
+
+Used by agents for crate discovery and documentation lookup.
+
+- https://docs.rs/ — Crate API documentation hosting
+- https://crates.io/ — Rust package registry
+- https://lib.rs/ — Alternative crate discovery and categorization

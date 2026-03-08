@@ -122,6 +122,10 @@ Recommended Approach:
 
 Open Questions:
   - [Anything that needs user input or further investigation]
+
+Sources Consulted:
+  - [URL] — what was looked up and why
+  - [URL] — what was looked up and why
 ```
 
 ## Important Notes
@@ -132,3 +136,5 @@ Open Questions:
 - Consider MSRV (1.88.0) when recommending features or patterns
 - Note any relevant anti-patterns from the project conventions
 - If you find technical debt relevant to the question, mention it
+- Cite all external URLs fetched during research in the Sources Consulted
+  section of your report
