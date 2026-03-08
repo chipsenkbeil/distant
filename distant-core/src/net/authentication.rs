@@ -259,7 +259,9 @@ mod tests {
                             .collect(),
                     );
                     Ok(ChallengeResponse {
-                        answers: vec!["some answer".to_string()].into_iter().collect(),
+                        answers: vec![SecretString::from("some answer")]
+                            .into_iter()
+                            .collect(),
                     })
                 }),
                 ..Default::default()
@@ -292,7 +294,7 @@ mod tests {
         assert_eq!(
             response,
             ChallengeResponse {
-                answers: vec!["some answer".to_string()],
+                answers: vec![SecretString::from("some answer")],
             }
         );
     }

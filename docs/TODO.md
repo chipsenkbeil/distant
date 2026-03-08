@@ -2,7 +2,8 @@
 
 Tracks open issues, technical debt, and planned work for the distant project.
 This document is intended to be read by both humans and AI to understand what
-needs to be done.
+needs to be done. **When an item is resolved, remove it entirely** — don't mark
+it as "RESOLVED" or leave it in place.
 
 Each item is tagged with a category:
 
@@ -87,16 +88,6 @@ via `~/.ssh/config` with `HostName` directive.
   This is also reported by external user in issue #251.
 - **Related:** [#251](#issue-251), [#252](#issue-252)
 
-### TD-7: Host key verification not implemented
-
-**(Bug)** In `distant-ssh/src/lib.rs`, the `check_server_key()` method always
-returns `Ok(true)`, meaning all server keys are accepted without verification.
-The `user_known_hosts_files` configuration is parsed but never actually used
-for host key checking. This is a security concern.
-
-- **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/lib.rs` (line ~293-298)
-
 ---
 
 ## Open Issues
@@ -150,28 +141,6 @@ that the config query doesn't match the alias correctly, or that the
 3. Related to [#252](#issue-252), [TD-6](#td-6)
 
 ---
-
-### Issue #249: Password is logged
-
-- **Type:** Bug (Security)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/249
-
-**Problem:** At TRACE log level, the password appears in log output via
-`ChallengeResponse { answers: ["YOUR_PASSWORD_HERE"] }` in
-`distant-net/src/manager/server.rs`.
-
-**Codebase context:** The `distant-ssh` crate itself does not log passwords
-(only `debug!("Trying password auth")`). The leak occurs in the manager
-server layer when forwarding authentication frames. The TRACE log at
-`distant-core/src/net/manager/server.rs:270` serializes the full
-`ChallengeResponse` including answers.
-
-**Work needed:**
-1. Redact `ChallengeResponse.answers` in all log output — replace with
-   `["***"]` or similar
-2. Audit all TRACE/DEBUG logging for other sensitive data leaks
-3. Consider a wrapper type for sensitive strings that implements `Debug`
-   with redaction
 
 ---
 
@@ -463,15 +432,13 @@ fa\.ssh\known_hosts`), distant cannot find the known_hosts file.
 
 **Codebase context:** The old `wezterm-ssh` backend was the culprit. Current
 `distant-ssh` uses `PathBuf` for known_hosts paths which handles spaces
-correctly. However, since host key verification is not actually implemented
-(see [TD-7](#td-7)), this bug may be moot. The path parsing in `plugin.rs`
-uses `PathBuf::from()` which handles spaces fine.
+correctly. Host key verification is now implemented (TOFU via russh's
+`known_hosts` module). The path parsing in `plugin.rs` uses `PathBuf::from()`
+which handles spaces fine.
 
 **Work needed:**
-1. Once host key verification is implemented ([TD-7](#td-7)), ensure paths
-   with spaces work correctly
-2. Test with Windows usernames containing spaces
-3. May be resolved by the backend switch — verify and close if so
+1. Test known_hosts file paths with Windows usernames containing spaces
+2. May be resolved by the backend switch — verify and close if so
 
 ---
 
@@ -517,29 +484,6 @@ codebase. This is a large standalone feature.
 5. All three platforms need the distant client API as the data source
 
 ---
-
-### Issue #111: Set unix socket permission prior to bind
-
-- **Type:** Bug (Security)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/111
-
-**Problem:** Unix domain socket is world-accessible during the window between
-`bind()` and `set_permissions()`. Permissions should be set before bind via
-`fchmod()` on the raw file descriptor.
-
-**Codebase context:** Current code in
-`distant-core/src/net/common/listener/unix.rs` sets permissions after binding
-with a TODO comment referencing this issue. The fix requires using `socket2`
-crate to create a raw socket, calling `libc::fchmod()` before bind, then
-converting to tokio's `UnixListener`. Must also set the socket as
-non-blocking before converting to tokio.
-
-**Work needed:**
-1. Use `socket2::Socket::new(Domain::UNIX, Type::STREAM)` to create raw
-   socket
-2. Call `libc::fchmod(socket.as_raw_fd(), 0o600)` before bind
-3. Bind, listen, set non-blocking, convert to `UnixListener::from_std()`
-4. Solution is well-understood — code snippet exists in issue comments
 
 ---
 

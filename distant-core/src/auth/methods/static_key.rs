@@ -50,7 +50,14 @@ where
                 return Err(Error::non_fatal("missing answer").into_io_permission_denied());
             }
 
-            match response.answers.into_iter().next().unwrap().parse::<T>() {
+            match response
+                .answers
+                .into_iter()
+                .next()
+                .unwrap()
+                .into_exposed()
+                .parse::<T>()
+            {
                 Ok(key) if key == self.key => Ok(()),
                 _ => Err(Error::non_fatal("answer does not match key").into_io_permission_denied()),
             }
@@ -107,7 +114,7 @@ mod tests {
         let mut authenticator = TestAuthenticator {
             challenge: Box::new(|_| {
                 Ok(ChallengeResponse {
-                    answers: vec![String::from("other")],
+                    answers: vec![SecretString::from("other")],
                 })
             }),
             ..Default::default()
@@ -126,7 +133,7 @@ mod tests {
         let mut authenticator = TestAuthenticator {
             challenge: Box::new(|_| {
                 Ok(ChallengeResponse {
-                    answers: vec![String::from("answer")],
+                    answers: vec![SecretString::from("answer")],
                 })
             }),
             ..Default::default()

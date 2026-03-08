@@ -40,6 +40,10 @@ sha2 = "0.10.6"
 strum = { version = "0.28.0", features = ["derive"] }
 tokio = { version = "1.50.0", features = ["full"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+socket2 = "0.6"
+
 [dev-dependencies]
 env_logger = "0.11.9"
 tempfile = "3.26.0"

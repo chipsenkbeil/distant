@@ -86,7 +86,9 @@ Prevent *context drift* by treating project documentation as a living journal:
 
 Technical debt, open issues, and planned work are tracked in
 [`docs/TODO.md`](../docs/TODO.md). When taking shortcuts or discovering new
-issues during development, add them there rather than here.
+issues during development, add them there rather than here. **When resolving an
+item, remove it from `docs/TODO.md` entirely** — don't leave it marked as
+"RESOLVED".
 
 ## Tooling & Command Reference
 

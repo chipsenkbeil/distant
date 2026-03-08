@@ -1,8 +1,7 @@
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fmt, io};
 
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixStream;
 
 use super::Listener;
 use crate::net::common::UnixSocketTransport;
@@ -22,36 +21,46 @@ impl UnixSocketListener {
     }
 
     /// Creates a new listener by binding to the specified path, failing if the path already
-    /// exists. Sets the unix socket file permissions to `mode`.
+    /// exists. Sets the unix socket file permissions to `mode` atomically during bind by
+    /// temporarily adjusting the process umask, eliminating the window where the socket
+    /// would be world-accessible.
     pub async fn bind_with_permissions(path: impl AsRef<Path>, mode: u32) -> io::Result<Self> {
-        // Attempt to bind to the path, and if we fail, we see if we can connect
-        // to the path -- if not, we can try to delete the path and start again
-        let listener = match UnixListener::bind(path.as_ref()) {
-            Ok(listener) => listener,
-            Err(_) => {
-                // If we can connect to the path, then it's already in use
-                if UnixStream::connect(path.as_ref()).await.is_ok() {
-                    return Err(io::Error::from(io::ErrorKind::AddrInUse));
-                }
+        let path = path.as_ref();
 
-                // Otherwise, remove the file and try again
-                tokio::fs::remove_file(path.as_ref()).await?;
-
-                UnixListener::bind(path.as_ref())?
+        // If the path already exists, check whether something is listening
+        if path.exists() {
+            if UnixStream::connect(path).await.is_ok() {
+                return Err(io::Error::from(io::ErrorKind::AddrInUse));
             }
-        };
+            // Stale socket file — remove it
+            tokio::fs::remove_file(path).await?;
+        }
 
-        // TODO: We should be setting this permission during bind, but neither std library nor
-        //       tokio have support for this. We would need to create our own raw socket and
-        //       use libc to change the permissions via the raw file descriptor
-        //
-        // See https://github.com/chipsenkbeil/distant/issues/111
-        let mut permissions = tokio::fs::metadata(path.as_ref()).await?.permissions();
-        permissions.set_mode(mode);
-        tokio::fs::set_permissions(path.as_ref(), permissions).await?;
+        // Create a raw Unix stream socket via socket2
+        let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+
+        // Set umask so that bind() creates the socket file with the desired permissions.
+        // The kernel applies: actual_mode = 0o777 & !umask, so umask = !mode & 0o777.
+        // This eliminates the race window where the socket would be world-accessible
+        // between bind() and a post-bind chmod() (fixes #111).
+        let desired_umask = !mode & 0o777;
+        let old_umask = unsafe { libc::umask(desired_umask as libc::mode_t) };
+
+        let bind_result = socket.bind(&socket2::SockAddr::unix(path)?);
+
+        // Restore umask immediately after bind, regardless of success or failure
+        unsafe { libc::umask(old_umask) };
+
+        bind_result?;
+        socket.listen(128)?;
+        socket.set_nonblocking(true)?;
+
+        // Convert to tokio's UnixListener
+        let std_listener: std::os::unix::net::UnixListener = socket.into();
+        let listener = tokio::net::UnixListener::from_std(std_listener)?;
 
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             inner: listener,
         })
     }
@@ -92,6 +101,8 @@ impl Listener for UnixSocketListener {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::NamedTempFile;
     use test_log::test;
     use tokio::sync::oneshot;
@@ -207,5 +218,24 @@ mod tests {
 
         // Verify that the task has completed by waiting on it
         let _ = task.await.expect("Listener task failed unexpectedly");
+    }
+
+    #[test(tokio::test)]
+    async fn bind_with_permissions_should_set_socket_file_mode() {
+        let path = NamedTempFile::new()
+            .expect("Failed to create socket file")
+            .path()
+            .to_path_buf();
+
+        let _listener = UnixSocketListener::bind_with_permissions(&path, 0o600)
+            .await
+            .expect("Failed to bind with permissions");
+
+        let metadata = tokio::fs::metadata(&path).await.expect("Failed to stat");
+        let actual_mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(
+            actual_mode, 0o600,
+            "Socket file permissions should be 0o600, got 0o{actual_mode:o}"
+        );
     }
 }
