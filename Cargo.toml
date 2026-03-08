@@ -31,7 +31,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
 [workspace.dependencies]
 distant-core = { version = "=0.21.0-dev", path = "distant-core" }
 distant-docker = { version = "=0.21.0-dev", path = "distant-docker" }
-distant-host = { version = "=0.21.0-dev", path = "distant-host" }
+distant-host = { version = "=0.21.0-dev", path = "distant-host", default-features = false }
 distant-ssh = { version = "=0.21.0-dev", path = "distant-ssh", default-features = false, features = ["serde"] }
 
 [profile.release]
@@ -44,7 +44,7 @@ panic = "abort"
 [features]
 default = ["docker", "host", "ssh", "pty"]
 docker = ["dep:distant-docker"]
-host = ["dep:distant-host"]
+host = ["dep:distant-host", "distant-host/macos-fsevent"]
 pty = ["distant-host/pty"]
 ssh = ["dep:distant-ssh"]
 
