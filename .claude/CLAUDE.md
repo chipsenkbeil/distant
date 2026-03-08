@@ -213,6 +213,27 @@ throttling (`max-threads = 2` for `distant-docker`). These groups are assigned
 via `[profile.default.overrides]`. The CI profile adds retries (4) and
 slow-timeout (60s period, terminate after 3 periods).
 
+### CI Workflows
+
+Workflows live in `.github/workflows/`. Key workflows:
+
+- **`ci.yml`** — Runs on every push/PR: format check, clippy, tests across
+  ubuntu/macos/windows
+- **`nightly.yml`** — Nightly release builds (scheduled at midnight UTC). Builds
+  cross-compiled binaries for all release targets including Android
+  (`aarch64-linux-android`). Supports `workflow_dispatch` for manual triggers.
+
+```bash
+# Manually trigger the nightly workflow (e.g. to test release builds)
+gh workflow run "Nightly" --ref master
+
+# Check the status of recent nightly runs
+gh run list --workflow=nightly.yml --limit 5
+
+# Watch a specific run
+gh run watch <run-id>
+```
+
 ## Coding Style & Standards
 
 To ensure the AI produces code that "feels right" we define the following
