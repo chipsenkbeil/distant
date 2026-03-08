@@ -10,11 +10,9 @@ use tokio::sync::mpsc;
 
 use crate::ClientHandler;
 
-/// Time to wait after receiving ExitStatus to drain any remaining
-/// Data/ExtendedData messages. SSH RFC 4254 provides no ordering
-/// guarantee between data and exit-status, so on Windows especially,
-/// stderr (ExtendedData) may arrive after ExitStatus.
-const POST_EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+/// Safety fallback timeout when ExitStatus arrives without Eof.
+/// Only used for misbehaving servers that never send SSH_MSG_CHANNEL_EOF.
+const DRAIN_SAFETY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Represents a spawned process
 pub struct Process {
@@ -88,6 +86,7 @@ where
     let cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
+        let mut got_eof = false;
 
         log::debug!(
             "spawn_simple reader: waiting for channel messages (pid={msg_id}, cmd={cmd_for_log})"
@@ -118,44 +117,28 @@ where
                 }
                 ChannelMsg::Eof => {
                     log::debug!("spawn_simple reader: Eof for pid={msg_id}");
+                    got_eof = true;
+                    if exit_status.is_some() {
+                        break;
+                    }
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
                     log::debug!("spawn_simple reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
-                    // Don't break immediately — on Windows, ExtendedData (stderr)
-                    // may arrive after ExitStatus. Drain remaining messages with
-                    // a short timeout per SSH RFC 4254 (no ordering guarantee).
-                    let drain_deadline = tokio::time::Instant::now() + POST_EXIT_DRAIN_TIMEOUT;
-                    loop {
-                        match tokio::time::timeout_at(drain_deadline, read_half.wait()).await {
-                            Ok(Some(ChannelMsg::Data { ref data })) => {
-                                let _ = stdout_reply.send(Response::ProcStdout {
-                                    id: msg_id,
-                                    data: data.to_vec(),
-                                });
-                            }
-                            Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
-                                let _ = stderr_reply.send(Response::ProcStderr {
-                                    id: msg_id,
-                                    data: data.to_vec(),
-                                });
-                            }
-                            Ok(Some(ChannelMsg::Eof))
-                            | Ok(Some(ChannelMsg::Close))
-                            | Ok(None)
-                            | Err(_) => break,
-                            Ok(Some(_)) => {} // ignore other messages during drain
-                        }
+                    if got_eof {
+                        break;
                     }
-                    break;
                 }
                 ChannelMsg::ExitSignal { signal_name, .. } => {
                     log::debug!(
                         "spawn_simple reader: ExitSignal({signal_name:?}) for pid={msg_id}"
                     );
-                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
+                ChannelMsg::Close => {
+                    log::debug!("spawn_simple reader: Close for pid={msg_id}");
                     break;
                 }
                 _ => {
@@ -163,6 +146,34 @@ where
                 }
             }
         }
+
+        // Safety fallback: if ExitStatus arrived but no Eof (misbehaving server),
+        // drain with a generous timeout to catch any lingering data.
+        if exit_status.is_some() && !got_eof {
+            log::warn!(
+                "spawn_simple reader: ExitStatus received without Eof for pid={msg_id}, \
+                 draining with safety timeout"
+            );
+            let deadline = tokio::time::Instant::now() + DRAIN_SAFETY_TIMEOUT;
+            loop {
+                match tokio::time::timeout_at(deadline, read_half.wait()).await {
+                    Ok(Some(ChannelMsg::Data { ref data })) => {
+                        let _ = stdout_reply.send(Response::ProcStdout {
+                            id: msg_id,
+                            data: data.to_vec(),
+                        });
+                    }
+                    Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
+                        let _ = stderr_reply.send(Response::ProcStderr {
+                            id: msg_id,
+                            data: data.to_vec(),
+                        });
+                    }
+                    _ => break,
+                }
+            }
+        }
+
         log::debug!(
             "spawn_simple reader: channel closed for pid={msg_id}, exit_status={exit_status:?}"
         );
@@ -296,6 +307,7 @@ where
     let pty_cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
         let mut exit_status: Option<u32> = None;
+        let mut got_eof = false;
 
         log::debug!(
             "spawn_pty reader: waiting for channel messages (pid={msg_id}, cmd={pty_cmd_for_log})"
@@ -314,36 +326,26 @@ where
                 }
                 ChannelMsg::Eof => {
                     log::debug!("spawn_pty reader: Eof for pid={msg_id}");
+                    got_eof = true;
+                    if exit_status.is_some() {
+                        break;
+                    }
                 }
                 ChannelMsg::ExitStatus {
                     exit_status: status,
                 } => {
                     log::debug!("spawn_pty reader: ExitStatus({status}) for pid={msg_id}");
                     exit_status = Some(status);
-                    // Don't break immediately — on Windows, Data may arrive
-                    // after ExitStatus. Drain remaining messages with a short
-                    // timeout per SSH RFC 4254 (no ordering guarantee).
-                    let drain_deadline = tokio::time::Instant::now() + POST_EXIT_DRAIN_TIMEOUT;
-                    loop {
-                        match tokio::time::timeout_at(drain_deadline, read_half.wait()).await {
-                            Ok(Some(ChannelMsg::Data { ref data })) => {
-                                let _ = stdout_reply.send(Response::ProcStdout {
-                                    id: msg_id,
-                                    data: data.to_vec(),
-                                });
-                            }
-                            Ok(Some(ChannelMsg::Eof))
-                            | Ok(Some(ChannelMsg::Close))
-                            | Ok(None)
-                            | Err(_) => break,
-                            Ok(Some(_)) => {} // ignore other messages during drain
-                        }
+                    if got_eof {
+                        break;
                     }
-                    break;
                 }
                 ChannelMsg::ExitSignal { signal_name, .. } => {
                     log::debug!("spawn_pty reader: ExitSignal({signal_name:?}) for pid={msg_id}");
-                    // Process was killed by a signal — no numeric exit status available.
+                    break;
+                }
+                ChannelMsg::Close => {
+                    log::debug!("spawn_pty reader: Close for pid={msg_id}");
                     break;
                 }
                 _ => {
@@ -351,6 +353,25 @@ where
                 }
             }
         }
+
+        // Safety fallback: if ExitStatus arrived but no Eof (misbehaving server),
+        // drain with a generous timeout to catch any lingering data.
+        if exit_status.is_some() && !got_eof {
+            log::warn!(
+                "spawn_pty reader: ExitStatus received without Eof for pid={msg_id}, \
+                 draining with safety timeout"
+            );
+            let deadline = tokio::time::Instant::now() + DRAIN_SAFETY_TIMEOUT;
+            while let Ok(Some(ChannelMsg::Data { ref data })) =
+                tokio::time::timeout_at(deadline, read_half.wait()).await
+            {
+                let _ = stdout_reply.send(Response::ProcStdout {
+                    id: msg_id,
+                    data: data.to_vec(),
+                });
+            }
+        }
+
         log::debug!(
             "spawn_pty reader: channel closed for pid={msg_id}, exit_status={exit_status:?}"
         );

@@ -2,7 +2,7 @@
 max-threads = 4
 
 [test-groups.ssh-integration-windows]
-max-threads = 2
+max-threads = 1
 
 [test-groups.docker-integration]
 max-threads = 2

@@ -109,7 +109,7 @@ impl SshApi {
         let metadata = sftp
             .symlink_metadata(path)
             .await
-            .map_err(io::Error::other)?;
+            .map_err(|e| io::Error::other(format!("SFTP symlink_metadata '{path}': {e}")))?;
 
         if options.exclude_symlinks && metadata.is_symlink() {
             return Ok(None);
@@ -118,8 +118,14 @@ impl SshApi {
         // Resolve symlinks if requested
         let (resolved_path, resolved_metadata) = if options.follow_symlinks && metadata.is_symlink()
         {
-            let target = sftp.read_link(path).await.map_err(io::Error::other)?;
-            let target_metadata = sftp.metadata(&target).await.map_err(io::Error::other)?;
+            let target = sftp
+                .read_link(path)
+                .await
+                .map_err(|e| io::Error::other(format!("SFTP read_link '{path}': {e}")))?;
+            let target_metadata = sftp
+                .metadata(&target)
+                .await
+                .map_err(|e| io::Error::other(format!("SFTP metadata '{target}': {e}")))?;
             (target, target_metadata)
         } else {
             (path.to_string(), metadata)
@@ -172,7 +178,7 @@ impl SshApi {
 
         sftp.set_metadata(&resolved_path, new_attrs)
             .await
-            .map_err(io::Error::other)?;
+            .map_err(|e| io::Error::other(format!("SFTP set_metadata '{resolved_path}': {e}")))?;
 
         if resolved_metadata.is_dir() {
             Ok(Some(resolved_path))
@@ -198,7 +204,7 @@ impl Api for SshApi {
             let mut file = sftp
                 .open(sftp_path.as_str())
                 .await
-                .map_err(io::Error::other)?;
+                .map_err(|e| io::Error::other(format!("SFTP open '{}': {e}", sftp_path)))?;
 
             let mut contents = Vec::new();
             file.read_to_end(&mut contents).await?;
@@ -234,7 +240,7 @@ impl Api for SshApi {
             let mut file = sftp
                 .create(sftp_path.as_str())
                 .await
-                .map_err(io::Error::other)?;
+                .map_err(|e| io::Error::other(format!("SFTP create '{}': {e}", sftp_path)))?;
 
             file.write_all(&data).await?;
             file.flush().await?;
@@ -273,7 +279,9 @@ impl Api for SshApi {
                     OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::APPEND,
                 )
                 .await
-                .map_err(io::Error::other)?;
+                .map_err(|e| {
+                    io::Error::other(format!("SFTP open_with_flags '{}': {e}", sftp_path))
+                })?;
 
             file.write_all(&data).await?;
             file.flush().await?;
@@ -335,7 +343,7 @@ impl Api for SshApi {
                 let dir_entries = sftp
                     .read_dir(dir_path.as_str())
                     .await
-                    .map_err(io::Error::other)?;
+                    .map_err(|e| io::Error::other(format!("SFTP read_dir '{}': {e}", dir_path)))?;
 
                 let mut entries = Vec::new();
                 for entry in dir_entries {
@@ -537,7 +545,7 @@ impl Api for SshApi {
             } else {
                 sftp.create_dir(sftp_path.as_str())
                     .await
-                    .map_err(io::Error::other)
+                    .map_err(|e| io::Error::other(format!("SFTP create_dir '{}': {e}", sftp_path)))
             }
         }
     }
@@ -560,7 +568,7 @@ impl Api for SshApi {
             let metadata = sftp
                 .metadata(sftp_path.as_str())
                 .await
-                .map_err(io::Error::other)?;
+                .map_err(|e| io::Error::other(format!("SFTP metadata '{}': {e}", sftp_path)))?;
 
             if metadata.is_dir() {
                 if force {
@@ -569,7 +577,10 @@ impl Api for SshApi {
                     let mut stack = vec![sftp_path.into_string()];
 
                     while let Some(dir) = stack.pop() {
-                        let entries = sftp.read_dir(&dir).await.map_err(io::Error::other)?;
+                        let entries = sftp
+                            .read_dir(&dir)
+                            .await
+                            .map_err(|e| io::Error::other(format!("SFTP read_dir '{dir}': {e}")))?;
 
                         for entry in entries {
                             let filename = entry.file_name();
@@ -580,9 +591,11 @@ impl Api for SshApi {
                             if entry.metadata().is_dir() {
                                 stack.push(entry_path.clone());
                             } else {
-                                sftp.remove_file(&entry_path)
-                                    .await
-                                    .map_err(io::Error::other)?;
+                                sftp.remove_file(&entry_path).await.map_err(|e| {
+                                    io::Error::other(format!(
+                                        "SFTP remove_file '{entry_path}': {e}"
+                                    ))
+                                })?;
                             }
                         }
 
@@ -591,19 +604,21 @@ impl Api for SshApi {
 
                     // Remove directories in reverse order (deepest first)
                     for dir in dirs_to_remove.into_iter().rev() {
-                        sftp.remove_dir(&dir).await.map_err(io::Error::other)?;
+                        sftp.remove_dir(&dir).await.map_err(|e| {
+                            io::Error::other(format!("SFTP remove_dir '{dir}': {e}"))
+                        })?;
                     }
 
                     Ok(())
                 } else {
-                    sftp.remove_dir(sftp_path.as_str())
-                        .await
-                        .map_err(io::Error::other)
+                    sftp.remove_dir(sftp_path.as_str()).await.map_err(|e| {
+                        io::Error::other(format!("SFTP remove_dir '{}': {e}", sftp_path))
+                    })
                 }
             } else {
                 sftp.remove_file(sftp_path.as_str())
                     .await
-                    .map_err(io::Error::other)
+                    .map_err(|e| io::Error::other(format!("SFTP remove_file '{}': {e}", sftp_path)))
             }
         }
     }
@@ -661,7 +676,9 @@ impl Api for SshApi {
 
             sftp.rename(src_path.as_str(), dst_path.as_str())
                 .await
-                .map_err(io::Error::other)
+                .map_err(|e| {
+                    io::Error::other(format!("SFTP rename '{}' -> '{}': {e}", src_path, dst_path))
+                })
         }
     }
 
@@ -727,7 +744,7 @@ impl Api for SshApi {
             } else {
                 sftp.symlink_metadata(sftp_path.as_str()).await
             }
-            .map_err(io::Error::other)?;
+            .map_err(|e| io::Error::other(format!("SFTP metadata '{}': {e}", sftp_path)))?;
 
             use std::time::SystemTime;
 

@@ -1667,11 +1667,9 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
 ) {
     let mut client = client.await;
 
-    // On Windows, `ping -n 2 127.0.0.1 >nul` keeps the process alive ~1s after
-    // writing stdout, giving sshd time to flush the pipe before exit.
     let cmd = platform_cmd(
         "sh -c 'printf \"%s\" \"some stdout\"'",
-        "cmd /c \"echo some stdout & ping -n 2 127.0.0.1 >nul\"",
+        "cmd /c \"echo some stdout\"",
     );
     let mut proc = client
         .spawn(
@@ -1718,11 +1716,9 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
 ) {
     let mut client = client.await;
 
-    // On Windows, `ping -n 2 127.0.0.1 >nul` keeps the process alive ~1s after
-    // writing stderr, giving sshd time to flush the pipe before exit.
     let cmd = platform_cmd(
         "sh -c 'printf \"%s\" \"some stderr\" >&2'",
-        "cmd /c \"echo some stderr 1>&2 & ping -n 2 127.0.0.1 >nul\"",
+        "cmd /c \"echo some stderr 1>&2\"",
     );
     let mut proc = client
         .spawn(
