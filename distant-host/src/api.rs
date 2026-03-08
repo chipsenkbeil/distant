@@ -1635,51 +1635,53 @@ mod tests {
         let nested_file = dir.child("nested-file");
         nested_file.write_str("some text").unwrap();
 
-        // Sleep a bit to give time to get all changes happening
-        // TODO: Can we slim down this sleep? Or redesign test in some other way?
-        tokio::time::sleep(DEBOUNCE_TIMEOUT + Duration::from_millis(100)).await;
+        // Collect responses until we see events for both paths (or timeout).
+        // A single file modification can produce multiple events (Attribute, Modify, etc.),
+        // so we track which paths have been seen rather than counting total responses.
+        let file_canonical = file.path().to_path_buf().canonicalize().unwrap();
+        let nested_canonical = nested_file.path().to_path_buf().canonicalize().unwrap();
 
-        // Collect all responses, as we may get multiple for interactions within a directory
         let mut responses = Vec::new();
-        while let Ok(res) = rx.try_recv() {
-            responses.push(res);
+        let mut seen_file = false;
+        let mut seen_nested = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !seen_file || !seen_nested {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(res)) => {
+                    if !seen_file {
+                        seen_file = validate_changed_path(
+                            &res,
+                            &file_canonical,
+                            /* should_panic */ false,
+                        );
+                    }
+                    if !seen_nested {
+                        seen_nested = validate_changed_path(
+                            &res,
+                            &nested_canonical,
+                            /* should_panic */ false,
+                        );
+                    }
+                    responses.push(res);
+                }
+                Ok(None) => break, // channel closed
+                Err(_) => break,   // timeout
+            }
         }
 
-        // Validate that we have at least one change reported for each of our paths
-        assert!(
-            responses.len() >= 2,
-            "Less than expected total responses: {:?}",
-            responses
-        );
+        let response_strs: Vec<String> = responses.iter().map(|x| format!("{:?}", x)).collect();
 
-        let path = file.path().to_path_buf();
         assert!(
-            responses.iter().any(|res| validate_changed_path(
-                res,
-                &file.path().to_path_buf().canonicalize().unwrap(),
-                /* should_panic */ false,
-            )),
+            seen_file,
             "Missing {:?} in {:?}",
-            path,
-            responses
-                .iter()
-                .map(|x| format!("{:?}", x))
-                .collect::<Vec<String>>(),
+            file.path().to_path_buf(),
+            response_strs,
         );
-
-        let path = nested_file.path().to_path_buf();
         assert!(
-            responses.iter().any(|res| validate_changed_path(
-                res,
-                &file.path().to_path_buf().canonicalize().unwrap(),
-                /* should_panic */ false,
-            )),
+            seen_nested,
             "Missing {:?} in {:?}",
-            path,
-            responses
-                .iter()
-                .map(|x| format!("{:?}", x))
-                .collect::<Vec<String>>(),
+            nested_file.path().to_path_buf(),
+            response_strs,
         );
     }
 

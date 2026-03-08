@@ -839,19 +839,24 @@ pub async fn load_ssh_client(sshd: &Sshd) -> Ssh {
     for attempt in 1..=max_attempts {
         for addr in &addrs {
             let addr_string = addr.to_string();
-            match Ssh::connect(&addr_string, opts.clone()).await {
-                Ok(mut ssh_client) => match ssh_client.authenticate(MockSshAuthHandler).await {
-                    Ok(_) => return ssh_client,
-                    Err(x) => {
-                        errors.push(anyhow::Error::new(x).context(format!(
-                            "Failed to authenticate with sshd @ {addr_string} (attempt {attempt})"
-                        )));
-                    }
-                },
-                Err(x) => {
+            let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut ssh_client = Ssh::connect(&addr_string, opts.clone()).await?;
+                ssh_client.authenticate(MockSshAuthHandler).await?;
+                Ok::<_, std::io::Error>(ssh_client)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(ssh_client)) => return ssh_client,
+                Ok(Err(x)) => {
                     errors.push(anyhow::Error::new(x).context(format!(
-                        "Failed to connect to sshd @ {addr_string} (attempt {attempt})"
+                        "Failed to connect/auth @ {addr_string} (attempt {attempt})"
                     )));
+                }
+                Err(_) => {
+                    errors.push(anyhow::anyhow!(
+                        "Timed out connecting to sshd @ {addr_string} after 10s (attempt {attempt})"
+                    ));
                 }
             }
         }
