@@ -124,3 +124,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
 # in libc 0.2.180). Backport of nix-rust/nix#2724 (landed in nix 0.31.0).
 # Remove this patch when upstream crates (termwiz, russh-cryptovec) update to nix >= 0.31.
 nix = { path = "patches/nix-0.29.0" }
+# Patched ssh2-config 0.7.0: removes git2 build-dependency (only used for
+# dev-only RELOAD_SSH_ALGO workflow). Eliminates unnecessary C build deps.
+# Remove when upstream makes git2 optional behind a feature flag.
+ssh2-config = { path = "patches/ssh2-config-0.7.0" }
