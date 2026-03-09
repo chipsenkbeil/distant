@@ -8,7 +8,8 @@ use log::*;
 
 use crate::protocol::{
     self, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelId, TunnelInfo,
+    Version,
 };
 
 mod reply;
@@ -415,6 +416,73 @@ pub trait Api {
     fn system_info(&self, ctx: Ctx) -> impl Future<Output = io::Result<SystemInfo>> + Send {
         async { unsupported("system_info") }
     }
+
+    /// Opens a forward tunnel connecting to the specified host and port.
+    ///
+    /// * `host` - the host to connect to
+    /// * `port` - the port to connect to
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    fn tunnel_open(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> impl Future<Output = io::Result<TunnelId>> + Send {
+        async { unsupported("tunnel_open") }
+    }
+
+    /// Starts a reverse tunnel listener on the specified host and port.
+    /// Returns the tunnel id and the actual bound port.
+    ///
+    /// * `host` - the host to bind on
+    /// * `port` - the port to listen on (0 for OS-assigned)
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    fn tunnel_listen(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> impl Future<Output = io::Result<(TunnelId, u16)>> + Send {
+        async { unsupported("tunnel_listen") }
+    }
+
+    /// Writes data to an active tunnel.
+    ///
+    /// * `id` - the unique id of the tunnel
+    /// * `data` - the bytes to send
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    fn tunnel_write(
+        &self,
+        ctx: Ctx,
+        id: TunnelId,
+        data: Vec<u8>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("tunnel_write") }
+    }
+
+    /// Closes an active tunnel or listener.
+    ///
+    /// * `id` - the unique id of the tunnel or listener to close
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    fn tunnel_close(&self, ctx: Ctx, id: TunnelId) -> impl Future<Output = io::Result<()>> + Send {
+        async { unsupported("tunnel_close") }
+    }
+
+    /// Lists all active tunnels and listeners.
+    ///
+    /// *Override this, otherwise it will return "unsupported" as an error.*
+    #[allow(unused_variables)]
+    fn tunnel_list(&self, ctx: Ctx) -> impl Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
+        async { unsupported("tunnel_list") }
+    }
 }
 
 impl<T> ServerHandler for ApiServerHandler<T>
@@ -705,6 +773,31 @@ where
             .system_info(ctx)
             .await
             .map(protocol::Response::SystemInfo)
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::TunnelOpen { host, port } => api
+            .tunnel_open(ctx, host, port)
+            .await
+            .map(|id| protocol::Response::TunnelOpened { id })
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::TunnelListen { host, port } => api
+            .tunnel_listen(ctx, host, port)
+            .await
+            .map(|(id, port)| protocol::Response::TunnelListening { id, port })
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::TunnelWrite { id, data } => api
+            .tunnel_write(ctx, id, data)
+            .await
+            .map(|_| protocol::Response::Ok)
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::TunnelClose { id } => api
+            .tunnel_close(ctx, id)
+            .await
+            .map(|_| protocol::Response::Ok)
+            .unwrap_or_else(protocol::Response::from),
+        protocol::Request::TunnelList {} => api
+            .tunnel_list(ctx)
+            .await
+            .map(|entries| protocol::Response::TunnelEntries { entries })
             .unwrap_or_else(protocol::Response::from),
     }
 }
@@ -1025,6 +1118,52 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api.system_info(ctx).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_tunnel_open_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .tunnel_open(ctx, String::from("localhost"), 8080)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_tunnel_listen_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api
+            .tunnel_listen(ctx, String::from("0.0.0.0"), 0)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_tunnel_write_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.tunnel_write(ctx, 1, vec![1, 2, 3]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_tunnel_close_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.tunnel_close(ctx, 1).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn default_tunnel_list_returns_unsupported() {
+        let api = DefaultApi;
+        let (ctx, _rx) = make_ctx();
+        let err = api.tunnel_list(ctx).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 

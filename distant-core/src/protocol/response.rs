@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 use crate::protocol::common::{
-    Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, SystemInfo, Version,
+    Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, SystemInfo, TunnelId,
+    TunnelInfo, Version,
 };
 
 /// Represents the payload of a successful response
@@ -134,6 +135,52 @@ pub enum Response {
 
     /// Response to retrieving information about the server's version
     Version(Version),
+
+    /// Response to opening a forward tunnel
+    TunnelOpened {
+        /// Id of the opened tunnel
+        id: TunnelId,
+    },
+
+    /// Response to starting a reverse tunnel listener
+    TunnelListening {
+        /// Id of the listener
+        id: TunnelId,
+        /// Actual port the listener is bound to
+        port: u16,
+    },
+
+    /// Data received through a tunnel (sent asynchronously via ctx.reply)
+    TunnelData {
+        /// Id of the tunnel
+        id: TunnelId,
+        /// Data received from the tunnel
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+
+    /// Notification of a new incoming connection on a reverse tunnel listener (sent asynchronously)
+    TunnelIncoming {
+        /// Id of the listener that accepted the connection
+        listener_id: TunnelId,
+        /// Id of the new tunnel for this connection
+        tunnel_id: TunnelId,
+        /// Peer address of the incoming connection, if available
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peer_addr: Option<String>,
+    },
+
+    /// Notification that a tunnel or listener has been closed (sent asynchronously)
+    TunnelClosed {
+        /// Id of the closed tunnel or listener
+        id: TunnelId,
+    },
+
+    /// Response to listing active tunnels
+    TunnelEntries {
+        /// List of active tunnels and listeners
+        entries: Vec<TunnelInfo>,
+    },
 }
 
 impl From<io::Error> for Response {
@@ -2093,6 +2140,508 @@ mod tests {
                     protocol_version: SemVer::new(1, 2, 3),
                     capabilities: vec![String::from("cap")],
                 })
+            );
+        }
+    }
+
+    mod tunnel_opened {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::TunnelOpened { id: 42 };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_opened",
+                    "id": 42,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_opened",
+                "id": 42,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Response::TunnelOpened { id: 42 });
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelOpened { id: 42 };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelOpened { id: 42 }).unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Response::TunnelOpened { id: 42 });
+        }
+    }
+
+    mod tunnel_listening {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::TunnelListening { id: 42, port: 9090 };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_listening",
+                    "id": 42,
+                    "port": 9090,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_listening",
+                "id": 42,
+                "port": 9090,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Response::TunnelListening { id: 42, port: 9090 });
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelListening { id: 42, port: 9090 };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf =
+                rmp_serde::encode::to_vec_named(&Response::TunnelListening { id: 42, port: 9090 })
+                    .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Response::TunnelListening { id: 42, port: 9090 });
+        }
+    }
+
+    mod tunnel_data {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::TunnelData {
+                id: 7,
+                data: vec![1, 2, 3],
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_data",
+                    "id": 7,
+                    "data": [1, 2, 3],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_data",
+                "id": 7,
+                "data": [1, 2, 3],
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelData {
+                    id: 7,
+                    data: vec![1, 2, 3],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelData {
+                id: 7,
+                data: vec![1, 2, 3],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelData {
+                id: 7,
+                data: vec![1, 2, 3],
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelData {
+                    id: 7,
+                    data: vec![1, 2, 3],
+                }
+            );
+        }
+    }
+
+    mod tunnel_incoming {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json_with_peer_addr() {
+            let payload = Response::TunnelIncoming {
+                listener_id: 1,
+                tunnel_id: 2,
+                peer_addr: Some(String::from("192.168.1.1:54321")),
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_incoming",
+                    "listener_id": 1,
+                    "tunnel_id": 2,
+                    "peer_addr": "192.168.1.1:54321",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_json_without_peer_addr() {
+            let payload = Response::TunnelIncoming {
+                listener_id: 1,
+                tunnel_id: 2,
+                peer_addr: None,
+            };
+
+            let value = serde_json::to_value(&payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_incoming",
+                    "listener_id": 1,
+                    "tunnel_id": 2,
+                })
+            );
+            // Verify peer_addr is absent when None
+            assert!(value.get("peer_addr").is_none());
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json_with_peer_addr() {
+            let value = serde_json::json!({
+                "type": "tunnel_incoming",
+                "listener_id": 1,
+                "tunnel_id": 2,
+                "peer_addr": "192.168.1.1:54321",
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelIncoming {
+                    listener_id: 1,
+                    tunnel_id: 2,
+                    peer_addr: Some(String::from("192.168.1.1:54321")),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json_without_peer_addr() {
+            let value = serde_json::json!({
+                "type": "tunnel_incoming",
+                "listener_id": 1,
+                "tunnel_id": 2,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelIncoming {
+                    listener_id: 1,
+                    tunnel_id: 2,
+                    peer_addr: None,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelIncoming {
+                listener_id: 1,
+                tunnel_id: 2,
+                peer_addr: Some(String::from("192.168.1.1:54321")),
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack_with_peer_addr() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelIncoming {
+                listener_id: 1,
+                tunnel_id: 2,
+                peer_addr: Some(String::from("192.168.1.1:54321")),
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelIncoming {
+                    listener_id: 1,
+                    tunnel_id: 2,
+                    peer_addr: Some(String::from("192.168.1.1:54321")),
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack_without_peer_addr() {
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelIncoming {
+                listener_id: 1,
+                tunnel_id: 2,
+                peer_addr: None,
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelIncoming {
+                    listener_id: 1,
+                    tunnel_id: 2,
+                    peer_addr: None,
+                }
+            );
+        }
+    }
+
+    mod tunnel_closed {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::TunnelClosed { id: 42 };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_closed",
+                    "id": 42,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_closed",
+                "id": 42,
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Response::TunnelClosed { id: 42 });
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelClosed { id: 42 };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelClosed { id: 42 }).unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Response::TunnelClosed { id: 42 });
+        }
+    }
+
+    mod tunnel_entries {
+        use super::*;
+        use crate::protocol::TunnelDirection;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Response::TunnelEntries {
+                entries: vec![TunnelInfo {
+                    id: 1,
+                    direction: TunnelDirection::Forward,
+                    host: String::from("localhost"),
+                    port: 8080,
+                }],
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_entries",
+                    "entries": [
+                        {
+                            "id": 1,
+                            "direction": "forward",
+                            "host": "localhost",
+                            "port": 8080,
+                        }
+                    ],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_entries",
+                "entries": [
+                    {
+                        "id": 1,
+                        "direction": "forward",
+                        "host": "localhost",
+                        "port": 8080,
+                    }
+                ],
+            });
+
+            let payload: Response = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelEntries {
+                    entries: vec![TunnelInfo {
+                        id: 1,
+                        direction: TunnelDirection::Forward,
+                        host: String::from("localhost"),
+                        port: 8080,
+                    }],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_empty_entries_to_json() {
+            let payload = Response::TunnelEntries { entries: vec![] };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_entries",
+                    "entries": [],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Response::TunnelEntries {
+                entries: vec![TunnelInfo {
+                    id: 1,
+                    direction: TunnelDirection::Forward,
+                    host: String::from("localhost"),
+                    port: 8080,
+                }],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelEntries {
+                entries: vec![TunnelInfo {
+                    id: 1,
+                    direction: TunnelDirection::Forward,
+                    host: String::from("localhost"),
+                    port: 8080,
+                }],
+            })
+            .unwrap();
+
+            let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Response::TunnelEntries {
+                    entries: vec![TunnelInfo {
+                        id: 1,
+                        direction: TunnelDirection::Forward,
+                        host: String::from("localhost"),
+                        port: 8080,
+                    }],
+                }
             );
         }
     }

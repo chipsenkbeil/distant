@@ -6,3 +6,6 @@ pub const CLIENT_WATCHER_CAPACITY: usize = 100;
 
 /// Capacity associated with a client searcher receiving matches
 pub const CLIENT_SEARCHER_CAPACITY: usize = 10000;
+
+/// Capacity associated with a client tunnel receiving data
+pub const CLIENT_TUNNEL_CAPACITY: usize = 10000;

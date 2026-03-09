@@ -6,12 +6,13 @@ use crate::net::client::Channel;
 use crate::net::common::Request;
 
 use crate::client::{
-    RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
-    Watcher,
+    RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, RemoteTunnel,
+    RemoteTunnelListener, Searcher, Watcher,
 };
 use crate::protocol::{
     self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelId, TunnelInfo,
+    Version,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -163,6 +164,25 @@ pub trait ChannelExt {
         path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
+
+    /// Opens a forward tunnel to the specified host and port
+    fn tunnel_open(&mut self, host: impl Into<String>, port: u16) -> AsyncReturn<'_, RemoteTunnel>;
+
+    /// Starts a reverse tunnel listener on the specified host and port
+    fn tunnel_listen(
+        &mut self,
+        host: impl Into<String>,
+        port: u16,
+    ) -> AsyncReturn<'_, RemoteTunnelListener>;
+
+    /// Writes data to an active tunnel
+    fn tunnel_write(&mut self, id: TunnelId, data: impl Into<Vec<u8>>) -> AsyncReturn<'_, ()>;
+
+    /// Closes an active tunnel or listener
+    fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()>;
+
+    /// Lists all active tunnels and listeners
+    fn tunnel_list(&mut self) -> AsyncReturn<'_, Vec<TunnelInfo>>;
 }
 
 macro_rules! make_body {
@@ -508,6 +528,44 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
             protocol::Request::FileWriteText { path: path.into(), text: data.into() },
             @ok
         )
+    }
+
+    fn tunnel_open(&mut self, host: impl Into<String>, port: u16) -> AsyncReturn<'_, RemoteTunnel> {
+        let host = host.into();
+        Box::pin(async move { RemoteTunnel::open(self.clone(), host, port).await })
+    }
+
+    fn tunnel_listen(
+        &mut self,
+        host: impl Into<String>,
+        port: u16,
+    ) -> AsyncReturn<'_, RemoteTunnelListener> {
+        let host = host.into();
+        Box::pin(async move { RemoteTunnelListener::listen(self.clone(), host, port).await })
+    }
+
+    fn tunnel_write(&mut self, id: TunnelId, data: impl Into<Vec<u8>>) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            protocol::Request::TunnelWrite { id, data: data.into() },
+            @ok
+        )
+    }
+
+    fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            protocol::Request::TunnelClose { id },
+            @ok
+        )
+    }
+
+    fn tunnel_list(&mut self) -> AsyncReturn<'_, Vec<TunnelInfo>> {
+        make_body!(self, protocol::Request::TunnelList {}, |data| match data {
+            protocol::Response::TunnelEntries { entries } => Ok(entries),
+            protocol::Response::Error(x) => Err(io::Error::from(x)),
+            _ => Err(mismatched_response()),
+        })
     }
 }
 
@@ -1547,6 +1605,187 @@ mod tests {
                 req.id,
                 protocol::Response::Exists { value: true },
             ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "Mismatched response");
+    }
+
+    // ------------------------------------------------------------------
+    // tunnel_write
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn tunnel_write_should_send_correct_request_and_return_ok() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_write(7, vec![104, 101]).await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::TunnelWrite { id, data } => {
+                assert_eq!(id, 7);
+                assert_eq!(data, [104, 101]);
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+
+        transport
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
+            .await
+            .unwrap();
+
+        task.await.unwrap().unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn tunnel_write_should_return_error_on_error_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_write(7, vec![1, 2]).await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::Error(protocol::Error {
+                    kind: protocol::ErrorKind::NotFound,
+                    description: String::from("tunnel not found"),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    // ------------------------------------------------------------------
+    // tunnel_close
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn tunnel_close_should_send_correct_request_and_return_ok() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_close(42).await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::TunnelClose { id } => {
+                assert_eq!(id, 42);
+            }
+            x => panic!("Unexpected request: {:?}", x),
+        }
+
+        transport
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
+            .await
+            .unwrap();
+
+        task.await.unwrap().unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn tunnel_close_should_return_error_on_error_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_close(99).await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::Error(protocol::Error {
+                    kind: protocol::ErrorKind::Other,
+                    description: String::from("no such tunnel"),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    // ------------------------------------------------------------------
+    // tunnel_list
+    // ------------------------------------------------------------------
+
+    #[test(tokio::test)]
+    async fn tunnel_list_should_return_entries_on_success() {
+        use crate::protocol::TunnelDirection;
+
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_list().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::TunnelList {} => {}
+            x => panic!("Unexpected request: {:?}", x),
+        }
+
+        let entries = vec![TunnelInfo {
+            id: 1,
+            direction: TunnelDirection::Forward,
+            host: String::from("localhost"),
+            port: 8080,
+        }];
+
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::TunnelEntries {
+                    entries: entries.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let result = task.await.unwrap().unwrap();
+        assert_eq!(result, entries);
+    }
+
+    #[test(tokio::test)]
+    async fn tunnel_list_should_return_error_on_error_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_list().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::Error(protocol::Error {
+                    kind: protocol::ErrorKind::Other,
+                    description: String::from("list failed"),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn tunnel_list_should_return_error_on_mismatched_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.tunnel_list().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
             .await
             .unwrap();
 
