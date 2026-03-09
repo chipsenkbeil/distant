@@ -449,6 +449,45 @@ pub async fn tar_path_exists(client: &Docker, container: &str, path: &str) -> bo
     matches!(stream.next().await, Some(Ok(_)))
 }
 
+/// Available tunnel relay tools detected in a container.
+///
+/// Docker tunneling uses `socat` or `nc` inside the container to relay TCP connections.
+/// At least one tool must be present for forward tunneling to work.
+#[derive(Debug, Clone, Default)]
+pub struct TunnelTools {
+    /// Whether socat is available (preferred — supports bidirectional relay).
+    pub socat: bool,
+
+    /// Whether netcat (nc) is available (fallback).
+    pub nc: bool,
+}
+
+impl TunnelTools {
+    /// Returns true if at least one tunnel relay tool is available.
+    pub fn has_any(&self) -> bool {
+        self.socat || self.nc
+    }
+}
+
+/// Probe the container for available tunnel relay tools.
+///
+/// Uses `which` to check for socat and nc.
+pub async fn probe_tunnel_tools(client: &Docker, container: &str) -> TunnelTools {
+    let mut tools = TunnelTools::default();
+
+    if let Ok(output) = execute_output(client, container, &["which", "socat"], None).await {
+        tools.socat = output.success();
+    }
+
+    if let Ok(output) = execute_output(client, container, &["which", "nc"], None).await {
+        tools.nc = output.success();
+    }
+
+    debug!("Tunnel tools: socat={}, nc={}", tools.socat, tools.nc);
+
+    tools
+}
+
 /// Available search tools detected in a container.
 #[derive(Debug, Clone, Default)]
 pub struct SearchTools {

@@ -3,21 +3,41 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use distant_core::net::server::Reply;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
-    ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SearchQueryTarget,
-    SetPermissionsOptions, SystemInfo, UnixMetadata, Version,
+    ProcessId, PtySize, RemotePath, Response, SearchId, SearchQuery, SearchQueryTarget,
+    SetPermissionsOptions, SystemInfo, TunnelDirection, TunnelId, TunnelInfo, UnixMetadata,
+    Version,
 };
 use distant_core::{Api, Ctx};
-use tokio::sync::RwLock;
+use futures::StreamExt;
+use log::*;
+use tokio::sync::{RwLock, mpsc};
+use tokio::task::JoinHandle;
 
 use crate::process::{self, Process, SpawnResult};
 use crate::search;
-use crate::utils::{self, SearchTools};
+use crate::utils::{self, SearchTools, TunnelTools};
 use crate::{DockerClient, DockerOpts};
+
+/// Global counter for generating unique tunnel IDs across all Docker connections.
+static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Internal state for a single active Docker tunnel (forward connection).
+struct DockerTunnel {
+    /// Metadata about the tunnel (id, direction, host, port).
+    info: TunnelInfo,
+    /// Sender to write data into the tunnel's exec stdin.
+    write_tx: mpsc::Sender<Vec<u8>>,
+    /// Handle to the background relay task; aborted on close.
+    task: JoinHandle<()>,
+}
 
 /// Docker implementation of the distant [`Api`] trait.
 ///
@@ -45,6 +65,12 @@ pub struct DockerApi {
     /// Detected search tools available in the container.
     search_tools: SearchTools,
 
+    /// Detected tunnel relay tools available in the container.
+    tunnel_tools: TunnelTools,
+
+    /// Active tunnel connections keyed by tunnel ID.
+    tunnels: Arc<RwLock<HashMap<TunnelId, DockerTunnel>>>,
+
     /// Cached current working directory.
     cached_current_dir: OnceCell<PathBuf>,
 
@@ -59,6 +85,7 @@ impl DockerApi {
     /// Creates a new `DockerApi`, probing the container for available tools.
     pub async fn new(client: DockerClient, container: String, opts: DockerOpts) -> Self {
         let search_tools = utils::probe_search_tools(client.inner(), &container).await;
+        let tunnel_tools = utils::probe_tunnel_tools(client.inner(), &container).await;
 
         Self {
             client,
@@ -67,6 +94,8 @@ impl DockerApi {
             processes: Arc::new(RwLock::new(HashMap::new())),
             searches: Arc::new(RwLock::new(HashMap::new())),
             search_tools,
+            tunnel_tools,
+            tunnels: Arc::new(RwLock::new(HashMap::new())),
             cached_current_dir: OnceCell::new(),
             cached_username: OnceCell::new(),
             cached_shell: OnceCell::new(),
@@ -150,6 +179,11 @@ impl Api for DockerApi {
             // Only advertise search if we have tools
             if self.search_tools.has_any() {
                 capabilities.push(Version::CAP_FS_SEARCH.to_string());
+            }
+
+            // Only advertise tunneling if we have relay tools
+            if self.tunnel_tools.has_any() {
+                capabilities.push(Version::CAP_TCP_TUNNEL.to_string());
             }
 
             let mut server_version: semver::Version = env!("CARGO_PKG_VERSION")
@@ -930,6 +964,230 @@ impl Api for DockerApi {
             })
         }
     }
+
+    fn tunnel_open(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> impl std::future::Future<Output = io::Result<TunnelId>> + Send {
+        let tunnels = Arc::clone(&self.tunnels);
+        let client = self.client.inner().clone();
+        let container = self.container.clone();
+        let user = self.user().map(|s| s.to_string());
+        let tunnel_tools = self.tunnel_tools.clone();
+
+        async move {
+            if !tunnel_tools.has_any() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "No tunnel relay tools available in this container. \
+                     Install socat or nc (netcat) for tunnel support.",
+                ));
+            }
+
+            debug!(
+                "[Conn {}] Opening forward tunnel to {}:{}",
+                ctx.connection_id, host, port
+            );
+
+            // Build the relay command: prefer socat, fall back to nc
+            let cmd: Vec<String> = if tunnel_tools.socat {
+                vec![
+                    "socat".to_string(),
+                    "-".to_string(),
+                    format!("TCP:{}:{}", host, port),
+                ]
+            } else {
+                vec!["nc".to_string(), host.clone(), port.to_string()]
+            };
+
+            let created = client
+                .create_exec(
+                    &container,
+                    CreateExecOptions {
+                        cmd: Some(cmd),
+                        attach_stdin: Some(true),
+                        attach_stdout: Some(true),
+                        attach_stderr: Some(false),
+                        user,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to create tunnel relay to {host}:{port}: {e}"
+                    ))
+                })?;
+
+            let start_result = client
+                .start_exec(
+                    &created.id,
+                    Some(StartExecOptions {
+                        detach: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to start tunnel relay to {host}:{port}: {e}"
+                    ))
+                })?;
+
+            let id = NEXT_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+
+            match start_result {
+                StartExecResults::Attached { output, input } => {
+                    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(1024);
+                    let reply = ctx.reply.clone_reply();
+                    let tunnels_task = Arc::clone(&tunnels);
+
+                    let task = tokio::spawn(docker_tunnel_relay_task(
+                        id,
+                        output,
+                        input,
+                        write_rx,
+                        reply,
+                        tunnels_task,
+                    ));
+
+                    tunnels.write().await.insert(
+                        id,
+                        DockerTunnel {
+                            info: TunnelInfo {
+                                id,
+                                direction: TunnelDirection::Forward,
+                                host,
+                                port,
+                            },
+                            write_tx,
+                            task,
+                        },
+                    );
+
+                    Ok(id)
+                }
+                StartExecResults::Detached => Err(io::Error::other(
+                    "Tunnel relay started in detached mode unexpectedly",
+                )),
+            }
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn tunnel_listen(
+        &self,
+        _ctx: Ctx,
+        _host: String,
+        _port: u16,
+    ) -> impl std::future::Future<Output = io::Result<(TunnelId, u16)>> + Send {
+        async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "tunnel_listen is not supported for Docker backends",
+            ))
+        }
+    }
+
+    fn tunnel_write(
+        &self,
+        _ctx: Ctx,
+        id: TunnelId,
+        data: Vec<u8>,
+    ) -> impl std::future::Future<Output = io::Result<()>> + Send {
+        async move {
+            let tunnels = self.tunnels.read().await;
+            let tunnel = tunnels
+                .get(&id)
+                .ok_or_else(|| io::Error::other(format!("No tunnel found with id {id}")))?;
+            tunnel
+                .write_tx
+                .try_send(data)
+                .map_err(|_| io::Error::other(format!("Tunnel {id} write channel full or closed")))
+        }
+    }
+
+    fn tunnel_close(
+        &self,
+        _ctx: Ctx,
+        id: TunnelId,
+    ) -> impl std::future::Future<Output = io::Result<()>> + Send {
+        async move {
+            let mut tunnels = self.tunnels.write().await;
+            let tunnel = tunnels
+                .remove(&id)
+                .ok_or_else(|| io::Error::other(format!("No tunnel found with id {id}")))?;
+            tunnel.task.abort();
+            Ok(())
+        }
+    }
+
+    fn tunnel_list(
+        &self,
+        _ctx: Ctx,
+    ) -> impl std::future::Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
+        async move {
+            let tunnels = self.tunnels.read().await;
+            Ok(tunnels.values().map(|t| t.info.clone()).collect())
+        }
+    }
+}
+
+/// Manages the bidirectional I/O relay for a single Docker tunnel.
+///
+/// Reads from the container relay process stdout and sends `TunnelData` responses via the
+/// reply channel. Writes data received on `write_rx` to the relay process stdin. Sends
+/// `TunnelClosed` and removes the tunnel from the map when the connection ends.
+async fn docker_tunnel_relay_task(
+    id: TunnelId,
+    mut output: impl futures::Stream<
+        Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
+    > + Unpin
+    + Send,
+    mut input: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
+    mut write_rx: mpsc::Receiver<Vec<u8>>,
+    reply: Box<dyn Reply<Data = Response>>,
+    tunnels: Arc<RwLock<HashMap<TunnelId, DockerTunnel>>>,
+) {
+    use tokio::io::AsyncWriteExt;
+
+    // Spawn writer sub-task
+    let write_task = tokio::spawn(async move {
+        while let Some(data) = write_rx.recv().await {
+            if input.write_all(&data).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Read loop
+    while let Some(msg) = output.next().await {
+        match msg {
+            Ok(bollard::container::LogOutput::StdOut { message }) => {
+                if !message.is_empty()
+                    && reply
+                        .send(Response::TunnelData {
+                            id,
+                            data: message.to_vec(),
+                        })
+                        .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                debug!("[Tunnel {id}] Read error: {e}");
+                break;
+            }
+        }
+    }
+
+    let _ = reply.send(Response::TunnelClosed { id });
+    write_task.abort();
+    tunnels.write().await.remove(&id);
 }
 
 /// Parse Unix `stat` output into [`Metadata`].
