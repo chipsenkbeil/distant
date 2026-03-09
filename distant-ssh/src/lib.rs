@@ -3470,5 +3470,55 @@ mod tests {
             let result = check_host_key("example.com", 2222, &pubkey, &[kh], &HostKeyPolicy::Yes);
             assert!(result.unwrap());
         }
+
+        /// Regression test for issue #162: known_hosts file in a directory path
+        /// containing whitespace (e.g. Windows username "fa fa" → `C:\Users\fa fa\.ssh\`).
+        /// The old wezterm-ssh backend failed on such paths; russh + PathBuf handles them.
+        #[test]
+        fn known_hosts_in_path_with_whitespace() {
+            let base = tempfile::tempdir().unwrap();
+            let spaced_dir = base.path().join("user name with spaces").join(".ssh");
+            std::fs::create_dir_all(&spaced_dir).unwrap();
+
+            let kh = spaced_dir.join("known_hosts");
+            let pubkey = test_keypair();
+
+            write_known_hosts(&kh, "example.com", 22, &pubkey);
+
+            // Verify the key can be looked up through the spaced path
+            let result = check_host_key(
+                "example.com",
+                22,
+                &pubkey,
+                std::slice::from_ref(&kh),
+                &HostKeyPolicy::Yes,
+            );
+            assert!(result.unwrap(), "Should find known key via whitespace path");
+
+            // Also verify TOFU learning works into the spaced path
+            let kh2 = spaced_dir.join("known_hosts2");
+            let new_key = test_keypair();
+            let result = check_host_key(
+                "new-host.example.com",
+                22,
+                &new_key,
+                std::slice::from_ref(&kh2),
+                &HostKeyPolicy::AcceptNew,
+            );
+            assert!(
+                result.unwrap(),
+                "AcceptNew should learn key into whitespace path"
+            );
+
+            // The learned key should now be found on a second check
+            let result = check_host_key(
+                "new-host.example.com",
+                22,
+                &new_key,
+                &[kh2],
+                &HostKeyPolicy::Yes,
+            );
+            assert!(result.unwrap(), "Learned key should be found on re-check");
+        }
     }
 }
