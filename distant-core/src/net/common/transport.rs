@@ -10,6 +10,7 @@ mod inmemory;
 pub use inmemory::*;
 
 mod tcp;
+pub(crate) use tcp::configure_tcp_keepalive;
 pub use tcp::*;
 
 #[cfg(test)]
