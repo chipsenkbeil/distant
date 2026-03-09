@@ -389,14 +389,6 @@ jobs:
           # (unquoted expansion + SC2086 disable lets bash word-split correctly)
           ASSET_LINE=$(echo "$ASSET_FILES" | tr '\n' ' ')
           echo "files=${ASSET_LINE}SHA256SUMS B2SUMS" >> "$GITHUB_OUTPUT"
-      - name: Debug token permissions
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "=== gh auth status ==="
-          gh auth status
-          echo "=== test releases API ==="
-          gh api repos/${{ github.repository }}/releases --jq '.[0].tag_name' || echo "API call failed with exit $?"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
@@ -419,7 +411,6 @@ jobs:
           gh release create nightly \
             --title "Nightly Build" \
             --prerelease \
-            --target "${{ github.sha }}" \
             --generate-notes \
             --notes "Nightly build from master (${{ github.sha }}).
           This is not guaranteed to pass all tests or even function properly." \
@@ -445,7 +436,6 @@ jobs:
           # shellcheck disable=SC2086
           gh release create "$TAG_NAME" \
             --title "distant $TAG_NAME" \
-            --target "${{ github.sha }}" \
             --generate-notes \
             $PRERELEASE_FLAG \
             --notes-file /tmp/release-notes.md \
