@@ -162,7 +162,7 @@ fn ctx() -> Ctx<Client> {
 }
 
 #[rstest]
-fn test_read_file(ctx: Ctx<Client>) {
+fn read_file_should_return_contents(ctx: Ctx<Client>) {
     // Test using the shared context
 }
 ```
@@ -176,5 +176,6 @@ Don't assume error cases are "obvious" — test them explicitly.
 
 - Never dismiss test failures as "intermittent" without investigation
 - Every failure must be analyzed for root cause
-- Use `assert!` with descriptive messages: `assert!(result.is_ok(), "expected success but got: {result:?}")`
-- Prefer `assert_eq!` over `assert!` when comparing values
+- Prefer `assert_eq!` and `unwrap()` over `assert!(result.is_ok())` — validate the
+  value inside Ok, not just success. When exact values are unpredictable, use
+  `assert!` with descriptive messages explaining what was expected

@@ -51,8 +51,22 @@ cargo nextest run --profile ci --all-features --workspace --all-targets
 7. Skipping `--all-features` when testing
 8. Outdated Rust patterns — prefer modern async/await over futures combinators
 9. Modifying workspace dependency versions without updating all members
+10. `SftpSession::new()` uses russh-sftp's 10s default — always use `new_opts` with the crate's unified SSH timeout constant
 
 ## Agent Orchestration Guide
+
+### Agent Selection Rules
+
+- **Always prefer custom agents** from `.claude/agents/` over builtin equivalents.
+  Custom agents have project-specific skills, LSP access, and conventions that
+  builtin agents lack (CLAUDE.md does NOT propagate into subagents).
+- **`rust-explorer`** over `Explore` for all codebase research.
+- **`rust-coder`** over generic implementation for all production code changes.
+- **`code-validator`** is mandatory after production code changes (BLOCKING).
+- **`test-validator`** is mandatory after test code changes (BLOCKING).
+- Use builtin `general-purpose` only for tasks needing tools custom agents lack
+  (e.g., `gh` CLI for CI log fetching).
+- Use builtin `Plan` for design — no custom planning agent exists.
 
 ### Available Agents
 
@@ -66,24 +80,24 @@ cargo nextest run --profile ci --all-features --workspace --all-targets
 
 ### Pipeline: Feature Implementation
 
-1. **Explore** → understand code, find reusable utilities
-2. **Implement** → write production code
-3. **Validate Code** → review for quality (BLOCKING, max 3 rounds)
-4. **Write Tests** → create tests at all applicable tiers
-5. **Validate Tests** → review test quality (BLOCKING, max 3 rounds)
+1. **rust-explorer** → understand code, find reusable utilities
+2. **rust-coder** → write production code
+3. **code-validator** → review for quality (BLOCKING, max 3 rounds)
+4. **test-implementor** → create tests at all applicable tiers
+5. **test-validator** → review test quality (BLOCKING, max 3 rounds)
 6. **Report** → summarize to user
 
 ### Pipeline: Simple Questions
 
-Spawn only rust-explorer. No coding pipeline needed.
+Spawn only **rust-explorer**. No coding pipeline needed.
 
 ### Pipeline: Test-Only Changes
 
-Explore → Write Tests → Validate Tests
+**rust-explorer** → **test-implementor** → **test-validator**
 
 ### Pipeline: TDD
 
-Explore → Write Tests First → Implement → Validate Code → Validate Tests
+**rust-explorer** → **test-implementor** → **rust-coder** → **code-validator** → **test-validator**
 
 ### Feedback Loop Rules
 

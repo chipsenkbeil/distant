@@ -7,7 +7,16 @@ use russh::client::Handle;
 use crate::ClientHandler;
 use crate::SshFamily;
 
-const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
+/// Timeout in seconds for SSH operations (exec channels and SFTP sessions).
+///
+/// Used as the base value for both `SSH_EXEC_TIMEOUT` (as `Duration`) and
+/// SFTP session init (as raw `u64`). 60 seconds is generous enough for
+/// worst-case Windows CI VMs where `sftp-server.exe` startup and command
+/// execution can be slow under load.
+pub(crate) const SSH_TIMEOUT_SECS: u64 = 60;
+
+/// Timeout for exec-channel operations (typed wrapper for `execute_output()`).
+const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(SSH_TIMEOUT_SECS));
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
@@ -63,10 +72,15 @@ pub async fn execute_output(
     channel.exec(true, cmd).await.map_err(io::Error::other)?;
 
     let read_future = async {
-        // Read output via channel messages
+        // Read output via channel messages.
+        // Use dual-flag (ExitStatus + Eof) approach: SSH RFC 4254 says
+        // SSH_MSG_CHANNEL_EOF signals "no more data." We wait for both
+        // ExitStatus and Eof before completing, which handles the Windows
+        // case where ExitStatus arrives before all data is flushed.
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_status: Option<u32> = None;
+        let mut got_eof = false;
 
         log::debug!("execute_output: waiting for channel messages for cmd={cmd}");
         while let Some(msg) = channel.wait().await {
@@ -92,50 +106,48 @@ pub async fn execute_output(
                 } => {
                     log::debug!("execute_output: received ExitStatus({status}) for cmd={cmd}");
                     exit_status = Some(status);
-                    // Don't break immediately — on Windows, ExtendedData
-                    // (stderr) may arrive after ExitStatus. Drain remaining
-                    // messages with a short timeout per SSH RFC 4254 (no
-                    // ordering guarantee).
-                    let drain_deadline =
-                        tokio::time::Instant::now() + std::time::Duration::from_millis(500);
-                    loop {
-                        match tokio::time::timeout_at(drain_deadline, channel.wait()).await {
-                            Ok(Some(ChannelMsg::Data { ref data })) => {
-                                log::debug!(
-                                    "execute_output: drain Data ({} bytes) for cmd={cmd}",
-                                    data.len()
-                                );
-                                stdout.extend_from_slice(data);
-                            }
-                            Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
-                                log::debug!(
-                                    "execute_output: drain ExtendedData ({} bytes) for cmd={cmd}",
-                                    data.len()
-                                );
-                                stderr.extend_from_slice(data);
-                            }
-                            Ok(Some(ChannelMsg::Eof))
-                            | Ok(Some(ChannelMsg::Close))
-                            | Ok(None)
-                            | Err(_) => break,
-                            Ok(Some(_)) => {}
-                        }
+                    if got_eof {
+                        break;
                     }
-                    break;
                 }
                 ChannelMsg::Eof => {
                     log::debug!("execute_output: received Eof for cmd={cmd}");
-                    // If we already have exit status, we're done.
-                    // Otherwise keep waiting — ExitStatus usually follows.
+                    got_eof = true;
                     if exit_status.is_some() {
                         break;
                     }
+                }
+                ChannelMsg::Close => {
+                    log::debug!("execute_output: received Close for cmd={cmd}");
+                    break;
                 }
                 _ => {
                     log::debug!("execute_output: received other ChannelMsg for cmd={cmd}");
                 }
             }
         }
+
+        // Safety fallback: if ExitStatus arrived but no Eof (misbehaving server),
+        // drain with a generous timeout to catch any lingering data.
+        if exit_status.is_some() && !got_eof {
+            log::warn!(
+                "execute_output: ExitStatus received without Eof for cmd={cmd}, \
+                 draining with safety timeout"
+            );
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                match tokio::time::timeout_at(deadline, channel.wait()).await {
+                    Ok(Some(ChannelMsg::Data { ref data })) => {
+                        stdout.extend_from_slice(data);
+                    }
+                    Ok(Some(ChannelMsg::ExtendedData { ref data, ext: 1 })) => {
+                        stderr.extend_from_slice(data);
+                    }
+                    _ => break,
+                }
+            }
+        }
+
         log::debug!(
             "execute_output: channel closed for cmd={cmd}, exit_status={exit_status:?}, \
              stdout={} bytes, stderr={} bytes",
@@ -260,9 +272,12 @@ pub async fn is_windows(
             .await
             .map_err(io::Error::other)?;
 
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
-            .await
-            .map_err(io::Error::other)?;
+        let sftp = russh_sftp::client::SftpSession::new_opts(
+            channel.into_stream(),
+            Some(SSH_TIMEOUT_SECS),
+        )
+        .await
+        .map_err(io::Error::other)?;
 
         let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
         log::debug!("SFTP canonicalize(\".\") returned: {home}");
@@ -828,7 +843,7 @@ mod tests {
 
     #[test]
     fn ssh_exec_timeout_is_30_seconds() {
-        assert_eq!(SSH_EXEC_TIMEOUT, Some(Duration::from_secs(30)));
+        assert_eq!(SSH_EXEC_TIMEOUT, Some(Duration::from_secs(60)));
     }
 
     // --- contains_subslice logic tests ---
