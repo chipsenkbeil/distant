@@ -5,7 +5,7 @@ use std::{env, io};
 use distant_core::protocol::{
     ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION,
     Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SetPermissionsOptions,
-    SystemInfo, Version, semver,
+    SystemInfo, TunnelId, TunnelInfo, Version, semver,
 };
 use distant_core::{Api as DistantApi, Ctx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
@@ -622,6 +622,40 @@ impl DistantApi for Api {
             ctx.connection_id, id, size
         );
         process.resize_pty(id, size).await
+    }
+
+    async fn tunnel_open(&self, ctx: Ctx, host: String, port: u16) -> io::Result<TunnelId> {
+        debug!(
+            "[Conn {}] Opening tunnel to {}:{}",
+            ctx.connection_id, host, port
+        );
+        self.state.tunnel.open(host, port, ctx.reply).await
+    }
+
+    async fn tunnel_listen(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> io::Result<(TunnelId, u16)> {
+        debug!(
+            "[Conn {}] Listening for tunnels on {}:{}",
+            ctx.connection_id, host, port
+        );
+        self.state.tunnel.listen(host, port, ctx.reply).await
+    }
+
+    async fn tunnel_write(&self, _ctx: Ctx, id: TunnelId, data: Vec<u8>) -> io::Result<()> {
+        self.state.tunnel.write(id, data).await
+    }
+
+    async fn tunnel_close(&self, ctx: Ctx, id: TunnelId) -> io::Result<()> {
+        debug!("[Conn {}] Closing tunnel {}", ctx.connection_id, id);
+        self.state.tunnel.close(id).await
+    }
+
+    async fn tunnel_list(&self, _ctx: Ctx) -> io::Result<Vec<TunnelInfo>> {
+        self.state.tunnel.list().await
     }
 
     async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {
