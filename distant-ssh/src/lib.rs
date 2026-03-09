@@ -26,7 +26,7 @@ use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
 use russh::keys::PrivateKey;
-use ssh2_config_rs::{HostParams, ParseRule, SshConfig};
+use ssh2_config::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
@@ -650,7 +650,7 @@ impl Ssh {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
 
         if !config_path.exists() {
-            use ssh2_config_rs::DefaultAlgorithms;
+            use ssh2_config::DefaultAlgorithms;
             return Ok(HostParams::new(&DefaultAlgorithms::default()));
         }
 
@@ -1938,7 +1938,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_default_params() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let params = HostParams::new(&DefaultAlgorithms::default());
@@ -1950,7 +1950,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_keepalive_interval() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -1962,7 +1962,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_short_keepalive() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -1974,7 +1974,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_without_keepalive() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -1986,7 +1986,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_verbose_opts() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let mut opts = SshOpts::default();
         opts.verbose = true;
@@ -1999,7 +1999,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_populated_opts() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let mut opts = SshOpts::default();
         opts.port = Some(2222);
@@ -2015,7 +2015,7 @@ mod tests {
 
     #[test]
     fn build_preferred_algorithms_returns_defaults() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let params = HostParams::new(&DefaultAlgorithms::default());
         let preferred = Ssh::build_preferred_algorithms(&params);
@@ -2028,7 +2028,7 @@ mod tests {
 
     #[test]
     fn build_preferred_algorithms_with_custom_params() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let mut params = HostParams::new(&DefaultAlgorithms::default());
         params.port = Some(9999);
@@ -2710,7 +2710,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_zero_keepalive() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -2722,7 +2722,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_with_large_keepalive() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -2734,7 +2734,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_config_has_preferred_algorithms() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let params = HostParams::new(&DefaultAlgorithms::default());
@@ -3184,7 +3184,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_tcp_keep_alive_sets_default_interval() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
@@ -3196,7 +3196,7 @@ mod tests {
 
     #[test]
     fn build_russh_config_server_alive_interval_takes_priority_over_tcp_keep_alive() {
-        use ssh2_config_rs::DefaultAlgorithms;
+        use ssh2_config::DefaultAlgorithms;
 
         let opts = SshOpts::default();
         let mut params = HostParams::new(&DefaultAlgorithms::default());
