@@ -29,6 +29,7 @@ use ssh2_config::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
+mod auth;
 mod plugin;
 mod process;
 mod utils;
@@ -37,80 +38,7 @@ pub use plugin::SshPlugin;
 pub use utils::SftpPathBuf;
 
 use api::SshApi;
-
-/// Expand a leading `~` in a path to the user's home directory.
-fn expand_tilde(path: &Path) -> PathBuf {
-    if let Ok(rest) = path.strip_prefix("~")
-        && let Some(home) = dirs::home_dir()
-    {
-        return home.join(rest);
-    }
-    path.to_path_buf()
-}
-
-/// Try SSH agent authentication using the given agent client.
-///
-/// Queries the agent for available keys and tries each one against the server.
-/// Returns `true` if any agent key was accepted.
-async fn authenticate_with_agent<S>(
-    handle: &mut Handle<ClientHandler>,
-    user: &str,
-    agent: &mut russh::keys::agent::client::AgentClient<S>,
-    methods_tried: &mut Vec<String>,
-    server_methods: &mut Option<russh::MethodSet>,
-) -> bool
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let keys = match agent.request_identities().await {
-        Ok(keys) => keys,
-        Err(e) => {
-            debug!("Failed to list agent keys: {}", e);
-            return false;
-        }
-    };
-
-    if keys.is_empty() {
-        debug!("SSH agent has no keys");
-        return false;
-    }
-
-    debug!("SSH agent has {} key(s)", keys.len());
-    methods_tried.push("agent".to_string());
-
-    for key in &keys {
-        debug!("Trying agent key: {:?}", key.algorithm());
-        match handle
-            .authenticate_publickey_with(user, key.clone(), None, agent)
-            .await
-        {
-            Ok(res) if res.success() => return true,
-            Ok(russh::client::AuthResult::Failure {
-                remaining_methods, ..
-            }) => {
-                *server_methods = Some(remaining_methods);
-            }
-            Ok(_) => {}
-            Err(e) => {
-                debug!("Agent key rejected: {}", e);
-            }
-        }
-    }
-
-    false
-}
-
-/// Format a `MethodSet` as a comma-separated string of method names.
-fn format_methods(methods: &russh::MethodSet) -> String {
-    if methods.is_empty() {
-        return "none".to_string();
-    }
-    methods
-        .iter()
-        .map(<&str>::from)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
+use auth::{expand_tilde, format_methods};
 
 /// Represents the family of the remote machine connected over SSH
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -596,12 +524,15 @@ impl Ssh {
 
         // Resolve known_hosts files: prefer explicit opts, then SSH config, then defaults
         let known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
-            opts.user_known_hosts_files.clone()
+            opts.user_known_hosts_files
+                .iter()
+                .map(|p| expand_tilde(p))
+                .collect()
         } else if let Some(config_values) = ssh_config.unsupported_fields.get("userknownhostsfile")
         {
             let files: Vec<PathBuf> = config_values
                 .iter()
-                .map(|s| PathBuf::from(s.trim()))
+                .map(|s| expand_tilde(Path::new(s.trim())))
                 .collect();
             if files.is_empty() {
                 Self::default_known_hosts_files()
@@ -883,7 +814,6 @@ impl Ssh {
             return Ok(());
         }
 
-        // Track what we tried and what the server accepts for error reporting
         let mut methods_tried: Vec<String> = Vec::new();
         let mut server_methods: Option<russh::MethodSet> = None;
 
@@ -920,354 +850,79 @@ impl Ssh {
             .as_ref()
             .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
 
-        // --- SSH agent authentication ---
-        // Try agent before file-based keys (unless identities_only restricts to files)
-        if server_accepts_pubkey && !self.opts.identities_only.unwrap_or(false) {
-            debug!("Attempting SSH agent authentication");
-
-            #[cfg(unix)]
-            {
-                match russh::keys::agent::client::AgentClient::connect_env().await {
-                    Ok(mut agent) => {
-                        if authenticate_with_agent(
-                            &mut self.handle,
-                            &self.user,
-                            &mut agent,
-                            &mut methods_tried,
-                            &mut server_methods,
-                        )
-                        .await
-                        {
-                            self.authenticated = true;
-                            return Ok(());
-                        }
-                    }
-                    Err(e) => {
-                        debug!("SSH agent not available: {}", e);
-                    }
-                }
-            }
-
-            #[cfg(windows)]
-            {
-                use russh::keys::agent::client::AgentClient;
-                let mut agent_authenticated = false;
-
-                // Try OpenSSH agent (named pipe)
-                match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
-                    Ok(mut agent) => {
-                        if authenticate_with_agent(
-                            &mut self.handle,
-                            &self.user,
-                            &mut agent,
-                            &mut methods_tried,
-                            &mut server_methods,
-                        )
-                        .await
-                        {
-                            agent_authenticated = true;
-                        }
-                    }
-                    Err(e) => {
-                        debug!("OpenSSH agent not available: {:?}", e);
-                    }
-                }
-
-                // Try Pageant if OpenSSH agent didn't work
-                if !agent_authenticated {
-                    match AgentClient::connect_pageant().await {
-                        Ok(mut agent) => {
-                            if authenticate_with_agent(
-                                &self.handle,
-                                &self.user,
-                                &mut agent,
-                                &mut methods_tried,
-                                &mut server_methods,
-                            )
-                            .await
-                            {
-                                agent_authenticated = true;
-                            }
-                        }
-                        Err(e) => {
-                            debug!("Pageant not available: {:?}", e);
-                        }
-                    }
-                }
-
-                if agent_authenticated {
-                    self.authenticated = true;
-                    return Ok(());
-                }
-            }
+        // Agent auth
+        if server_accepts_pubkey
+            && !self.opts.identities_only.unwrap_or(false)
+            && auth::try_agent_auth(
+                &mut self.handle,
+                &self.user,
+                &mut methods_tried,
+                &mut server_methods,
+            )
+            .await?
+        {
+            self.authenticated = true;
+            return Ok(());
         }
 
-        // --- File-based public key authentication ---
+        // File-based pubkey auth
         if server_accepts_pubkey {
-            // Determine which key files to try:
-            // 1. Explicitly provided via CLI opts (with tilde expansion)
-            // 2. From SSH config IdentityFile directive (ssh2-config expands tildes,
-            //    but we expand again as a safety net)
-            // 3. Standard defaults (~/.ssh/id_ed25519, id_rsa, id_ecdsa)
-            let key_files: Vec<PathBuf> = if !self.opts.identity_files.is_empty() {
-                self.opts
-                    .identity_files
-                    .iter()
-                    .map(|p| expand_tilde(p))
-                    .collect()
-            } else if let Some(config_files) = &self.ssh_config_identity_files {
-                config_files
-                    .iter()
-                    .map(|p| expand_tilde(p))
-                    .filter(|p| p.exists())
-                    .collect()
-            } else {
-                // Try standard default key paths
-                if let Some(home) = dirs::home_dir() {
-                    let ssh_dir = home.join(".ssh");
-                    let defaults = [
-                        ssh_dir.join("id_ed25519"),
-                        ssh_dir.join("id_rsa"),
-                        ssh_dir.join("id_ecdsa"),
-                    ];
-                    defaults.into_iter().filter(|p| p.exists()).collect()
-                } else {
-                    warn!("Could not determine home directory; skipping default key discovery");
-                    Vec::new()
-                }
-            };
-
+            let key_files =
+                auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
             if !key_files.is_empty() {
                 methods_tried.push("publickey".to_string());
             }
-
             for key_file in &key_files {
-                let contents = match tokio::fs::read_to_string(key_file).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!("Failed to read key {:?}: {}", key_file, e);
-                        continue;
-                    }
-                };
-
-                // Try decoding without passphrase first; if the key is encrypted,
-                // prompt the user for the passphrase and retry.
-                let key = match russh::keys::decode_secret_key(&contents, None) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        if e.to_string().to_lowercase().contains("encrypted") {
-                            debug!("Key {:?} is encrypted, prompting for passphrase", key_file);
-                            let file_name =
-                                key_file.file_name().unwrap_or_default().to_string_lossy();
-                            let event = SshAuthEvent {
-                                username: self.user.clone(),
-                                instructions: String::new(),
-                                prompts: vec![SshAuthPrompt {
-                                    prompt: format!("Enter passphrase for key '{file_name}': "),
-                                    echo: false,
-                                }],
-                            };
-                            match handler.on_authenticate(event).await {
-                                Ok(answers) if !answers.is_empty() && !answers[0].is_empty() => {
-                                    match russh::keys::decode_secret_key(
-                                        &contents,
-                                        Some(&answers[0]),
-                                    ) {
-                                        Ok(k) => k,
-                                        Err(e2) => {
-                                            warn!("Failed to decrypt key {:?}: {}", key_file, e2);
-                                            continue;
-                                        }
-                                    }
-                                }
-                                Ok(_) => {
-                                    debug!(
-                                        "Skipping encrypted key {:?} (no passphrase provided)",
-                                        key_file
-                                    );
-                                    continue;
-                                }
-                                Err(e) => {
-                                    debug!(
-                                        "Skipping encrypted key {:?} (prompt failed: {})",
-                                        key_file, e
-                                    );
-                                    continue;
-                                }
-                            }
-                        } else {
-                            warn!("Failed to load key {:?}: {}", key_file, e);
-                            continue;
-                        }
-                    }
-                };
-
-                let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
-
-                debug!("Trying publickey auth with {:?}", key_file);
-                let auth_res = self
-                    .handle
-                    .authenticate_publickey(&self.user, key_with_hash)
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
-
-                if auth_res.success() {
+                if let Some(true) = auth::load_and_try_key(
+                    &mut self.handle,
+                    &self.user,
+                    key_file,
+                    &handler,
+                    &mut server_methods,
+                )
+                .await?
+                {
                     self.authenticated = true;
                     return Ok(());
-                }
-
-                if let russh::client::AuthResult::Failure {
-                    remaining_methods, ..
-                } = auth_res
-                {
-                    server_methods = Some(remaining_methods);
                 }
             }
         }
 
-        // --- Keyboard-interactive authentication ---
-        // Track whether we already prompted the user (to avoid double-prompting with password)
+        // Keyboard-interactive
         let mut user_was_prompted = false;
-
         if server_accepts_kbdint {
-            debug!("Trying keyboard-interactive auth");
-            match self
-                .handle
-                .authenticate_keyboard_interactive_start(&self.user, None)
-                .await
-            {
-                Ok(mut response) => {
-                    methods_tried.push("keyboard-interactive".to_string());
-                    loop {
-                        match response {
-                            russh::client::KeyboardInteractiveAuthResponse::Success => {
-                                self.authenticated = true;
-                                return Ok(());
-                            }
-                            russh::client::KeyboardInteractiveAuthResponse::Failure {
-                                remaining_methods,
-                                ..
-                            } => {
-                                server_methods = Some(remaining_methods);
-                                break;
-                            }
-                            russh::client::KeyboardInteractiveAuthResponse::InfoRequest {
-                                name,
-                                instructions,
-                                prompts,
-                            } => {
-                                if prompts.is_empty() {
-                                    // Server sent an empty prompt set; respond with empty answers
-                                    match self
-                                        .handle
-                                        .authenticate_keyboard_interactive_respond(Vec::new())
-                                        .await
-                                    {
-                                        Ok(next) => {
-                                            response = next;
-                                            continue;
-                                        }
-                                        Err(e) => {
-                                            warn!("keyboard-interactive respond failed: {e}");
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                user_was_prompted = true;
-                                let event = SshAuthEvent {
-                                    username: if name.is_empty() {
-                                        self.user.clone()
-                                    } else {
-                                        name
-                                    },
-                                    instructions: if instructions.is_empty() {
-                                        "Authentication required".to_string()
-                                    } else {
-                                        instructions
-                                    },
-                                    prompts: prompts
-                                        .into_iter()
-                                        .map(|p| SshAuthPrompt {
-                                            prompt: p.prompt,
-                                            echo: p.echo,
-                                        })
-                                        .collect(),
-                                };
-                                let answers = handler.on_authenticate(event).await?;
-                                match self
-                                    .handle
-                                    .authenticate_keyboard_interactive_respond(answers)
-                                    .await
-                                {
-                                    Ok(next) => response = next,
-                                    Err(e) => {
-                                        warn!("keyboard-interactive respond failed: {e}");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("keyboard-interactive start failed: {e}");
-                }
+            let (authenticated, prompted) = auth::try_keyboard_interactive(
+                &mut self.handle,
+                &self.user,
+                &handler,
+                &mut methods_tried,
+                &mut server_methods,
+            )
+            .await?;
+            user_was_prompted = prompted;
+            if authenticated {
+                self.authenticated = true;
+                return Ok(());
             }
         }
 
-        // --- Password authentication ---
-        // Skip if keyboard-interactive already prompted the user (avoids double-prompt)
-        if server_accepts_password && !user_was_prompted {
-            let event = SshAuthEvent {
-                username: self.user.clone(),
-                instructions: "Password:".to_string(),
-                prompts: vec![SshAuthPrompt {
-                    prompt: "Password: ".to_string(),
-                    echo: false,
-                }],
-            };
-
-            let responses = handler.on_authenticate(event).await?;
-
-            if let Some(password) = responses.first() {
-                methods_tried.push("password".to_string());
-                debug!("Trying password auth");
-                let auth_res = self
-                    .handle
-                    .authenticate_password(&self.user, password)
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
-
-                if auth_res.success() {
-                    self.authenticated = true;
-                    return Ok(());
-                }
-
-                if let russh::client::AuthResult::Failure {
-                    remaining_methods, ..
-                } = auth_res
-                {
-                    server_methods = Some(remaining_methods);
-                }
-            }
+        // Password auth
+        if server_accepts_password
+            && !user_was_prompted
+            && auth::try_password_auth(
+                &mut self.handle,
+                &self.user,
+                &handler,
+                &mut methods_tried,
+                &mut server_methods,
+            )
+            .await?
+        {
+            self.authenticated = true;
+            return Ok(());
         }
 
-        // All methods exhausted — build a descriptive error
-        let tried = if methods_tried.is_empty() {
-            "none".to_string()
-        } else {
-            methods_tried.join(", ")
-        };
-        let accepts = server_methods
-            .as_ref()
-            .map(format_methods)
-            .unwrap_or_else(|| "unknown".to_string());
-
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("Permission denied (tried: {tried}; server accepts: {accepts})"),
-        ))
+        Err(auth::build_auth_error(&methods_tried, &server_methods))
     }
 
     /// Detects whether the family is Unix or Windows.

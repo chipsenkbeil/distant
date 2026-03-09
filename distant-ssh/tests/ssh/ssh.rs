@@ -1,8 +1,9 @@
+use std::io;
 use std::time::Duration;
 
 use assert_fs::prelude::*;
 use distant_core::ChannelExt;
-use distant_ssh::{LaunchOpts, Ssh, SshFamily, SshOpts};
+use distant_ssh::{LaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshFamily, SshOpts};
 use distant_test_harness::manager::bin_path;
 use rstest::*;
 use test_log::test;
@@ -170,4 +171,185 @@ async fn connect_failure_error_should_be_connection_refused() {
         }
         Ok(_) => panic!("Expected connection to fail"),
     }
+}
+
+/// A custom auth handler that returns a passphrase when prompted for key decryption.
+struct PassphraseSshAuthHandler {
+    passphrase: String,
+}
+
+impl SshAuthHandler for PassphraseSshAuthHandler {
+    async fn on_authenticate(&self, event: SshAuthEvent) -> io::Result<Vec<String>> {
+        // Return the passphrase for any prompt
+        Ok(vec![self.passphrase.clone(); event.prompts.len()])
+    }
+
+    async fn on_verify_host(&self, _host: &str) -> io::Result<bool> {
+        Ok(true)
+    }
+
+    async fn on_banner(&self, _text: &str) {}
+
+    async fn on_error(&self, _text: &str) {}
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn encrypted_key_should_authenticate_with_passphrase(sshd: Sshd) {
+    let passphrase = "test_integration_passphrase";
+
+    // Generate a passphrase-protected ed25519 key in a separate temp dir
+    let key_dir = assert_fs::TempDir::new().unwrap();
+    let encrypted_key_path = key_dir.child("id_ed25519_enc").path().to_path_buf();
+    assert!(
+        SshKeygen::generate_ed25519(&encrypted_key_path, passphrase)
+            .expect("Failed to generate encrypted key"),
+        "ssh-keygen failed to generate encrypted key"
+    );
+
+    // Add the public key to sshd's authorized_keys
+    let pub_key_contents =
+        std::fs::read_to_string(encrypted_key_path.with_extension("pub")).unwrap();
+    let authorized_keys_path = sshd.tmp.child("authorized_keys").path().to_path_buf();
+    let mut existing_keys = std::fs::read_to_string(&authorized_keys_path).unwrap_or_default();
+    existing_keys.push('\n');
+    existing_keys.push_str(&pub_key_contents);
+    std::fs::write(&authorized_keys_path, existing_keys).unwrap();
+
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![encrypted_key_path],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    let handler = PassphraseSshAuthHandler {
+        passphrase: passphrase.to_string(),
+    };
+    ssh.authenticate(handler).await.unwrap();
+    assert!(
+        ssh.is_authenticated(),
+        "Should be authenticated with encrypted key + passphrase"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn identities_only_should_skip_agent_and_use_file(sshd: Sshd) {
+    // With identities_only=true, only the specified key file should be tried
+    // (agent auth is skipped). This is already the pattern used by load_ssh_client,
+    // but we make the behavior explicit here.
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    ssh.authenticate(MockSshAuthHandler).await.unwrap();
+    assert!(
+        ssh.is_authenticated(),
+        "Should authenticate via file-based key with identities_only=true"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn authenticate_with_wrong_key_should_fail(sshd: Sshd) {
+    // Generate a different key that is NOT in authorized_keys
+    let key_dir = assert_fs::TempDir::new().unwrap();
+    let wrong_key_path = key_dir.child("wrong_key").path().to_path_buf();
+    assert!(
+        SshKeygen::generate_ed25519(&wrong_key_path, "").expect("Failed to generate wrong key"),
+        "ssh-keygen failed"
+    );
+
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![wrong_key_path],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    let result = ssh.authenticate(MockSshAuthHandler).await;
+    assert!(result.is_err(), "Authentication with wrong key should fail");
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "Error should be PermissionDenied, got: {:?} - {}",
+        err.kind(),
+        err
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Permission denied"),
+        "Error message should contain 'Permission denied', got: '{msg}'"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn encrypted_key_with_wrong_passphrase_should_fail(sshd: Sshd) {
+    let passphrase = "correct_passphrase";
+
+    // Generate a passphrase-protected key
+    let key_dir = assert_fs::TempDir::new().unwrap();
+    let encrypted_key_path = key_dir.child("id_ed25519_enc").path().to_path_buf();
+    assert!(
+        SshKeygen::generate_ed25519(&encrypted_key_path, passphrase)
+            .expect("Failed to generate encrypted key"),
+        "ssh-keygen failed"
+    );
+
+    // Add the public key to authorized_keys
+    let pub_key_contents =
+        std::fs::read_to_string(encrypted_key_path.with_extension("pub")).unwrap();
+    let authorized_keys_path = sshd.tmp.child("authorized_keys").path().to_path_buf();
+    let mut existing_keys = std::fs::read_to_string(&authorized_keys_path).unwrap_or_default();
+    existing_keys.push('\n');
+    existing_keys.push_str(&pub_key_contents);
+    std::fs::write(&authorized_keys_path, existing_keys).unwrap();
+
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![encrypted_key_path],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    let handler = PassphraseSshAuthHandler {
+        passphrase: "wrong_passphrase".to_string(),
+    };
+    let result = ssh.authenticate(handler).await;
+    // With wrong passphrase, the key decryption fails and auth falls through to error
+    assert!(
+        result.is_err(),
+        "Authentication with wrong passphrase should fail"
+    );
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "Error should be PermissionDenied, got: {:?} - {}",
+        err.kind(),
+        err
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Permission denied"),
+        "Error message should contain 'Permission denied', got: '{msg}'"
+    );
 }
