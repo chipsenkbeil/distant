@@ -322,6 +322,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      pull-requests: read
     env:
       GIT_REF: ${{ github.ref }}
       IS_NIGHTLY: ${{ inputs.nightly }}
@@ -384,18 +385,18 @@ jobs:
             exit 1
           fi
 
-          # Append the consolidated checksum files (these are named SHA256SUMS/B2SUMS,
-          # not distant-*, so find doesn't match them)
-          ASSET_FILES="$(echo "$ASSET_FILES")
-          SHA256SUMS
-          B2SUMS"
-
-          # Export as multiline output for use in later steps
-          {
-            echo "files<<EOF"
-            echo "$ASSET_FILES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          # Build a single-line, space-separated list of all asset files
+          # (unquoted expansion + SC2086 disable lets bash word-split correctly)
+          ASSET_LINE=$(echo "$ASSET_FILES" | tr '\n' ' ')
+          echo "files=${ASSET_LINE}SHA256SUMS B2SUMS" >> "$GITHUB_OUTPUT"
+      - name: Debug token permissions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== gh auth status ==="
+          gh auth status
+          echo "=== test releases API ==="
+          gh api repos/${{ github.repository }}/releases --jq '.[0].tag_name' || echo "API call failed with exit $?"
       - name: Get Changelog Entry
         id: changelog
         uses: mindsers/changelog-reader-action@v2
