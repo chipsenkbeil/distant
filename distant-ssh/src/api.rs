@@ -1,22 +1,39 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
+use distant_core::net::server::Reply;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
-    SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    Response, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelDirection, TunnelId,
+    TunnelInfo, Version,
 };
 use distant_core::{Api, Ctx};
 use log::*;
 use russh::client::Handle;
 use russh_sftp::client::SftpSession;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::task::JoinHandle;
 
 use crate::process::Process;
 use crate::utils::{SSH_TIMEOUT_SECS, SftpPathBuf};
 use crate::{ClientHandler, SshFamily};
+
+/// Global counter for generating unique tunnel IDs across all SSH connections.
+static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Internal state for a single active SSH tunnel (forward connection).
+struct SshTunnel {
+    /// Metadata about the tunnel (id, direction, host, port).
+    info: TunnelInfo,
+    /// Sender to write data into the tunnel's SSH channel.
+    write_tx: mpsc::Sender<Vec<u8>>,
+    /// Handle to the background relay task; aborted on close.
+    task: JoinHandle<()>,
+}
 
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
@@ -28,6 +45,9 @@ pub struct SshApi {
 
     /// Global tracking of running processes by id.
     processes: Arc<RwLock<HashMap<ProcessId, Process>>>,
+
+    /// Active TCP tunnels (forward connections via SSH direct-tcpip).
+    tunnels: Arc<RwLock<HashMap<TunnelId, SshTunnel>>>,
 
     /// Remote system family (Unix/Windows).
     family: SshFamily,
@@ -48,6 +68,7 @@ impl SshApi {
             session,
             sftp: Arc::new(Mutex::new(None)),
             processes: Arc::new(RwLock::new(HashMap::new())),
+            tunnels: Arc::new(RwLock::new(HashMap::new())),
             family,
             cached_current_dir: OnceCell::new(),
             cached_username: OnceCell::new(),
@@ -1110,6 +1131,100 @@ impl Api for SshApi {
         }
     }
 
+    fn tunnel_open(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> impl Future<Output = io::Result<TunnelId>> + Send {
+        let tunnels = Arc::clone(&self.tunnels);
+        async move {
+            debug!(
+                "[Conn {}] Opening forward tunnel to {}:{}",
+                ctx.connection_id, host, port
+            );
+
+            let channel = self
+                .session
+                .channel_open_direct_tcpip(&host, port as u32, "127.0.0.1", 0)
+                .await
+                .map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to open direct-tcpip channel to {host}:{port}: {e}"
+                    ))
+                })?;
+
+            let id = NEXT_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+            let stream = channel.into_stream();
+            let (read_half, write_half) = tokio::io::split(stream);
+
+            let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(1024);
+            let reply = ctx.reply.clone_reply();
+            let tunnels_task = Arc::clone(&tunnels);
+
+            let task = tokio::spawn(tunnel_relay_task(
+                id,
+                read_half,
+                write_half,
+                write_rx,
+                reply,
+                tunnels_task,
+            ));
+
+            tunnels.write().await.insert(
+                id,
+                SshTunnel {
+                    info: TunnelInfo {
+                        id,
+                        direction: TunnelDirection::Forward,
+                        host,
+                        port,
+                    },
+                    write_tx,
+                    task,
+                },
+            );
+
+            Ok(id)
+        }
+    }
+
+    fn tunnel_write(
+        &self,
+        _ctx: Ctx,
+        id: TunnelId,
+        data: Vec<u8>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        async move {
+            let tunnels = self.tunnels.read().await;
+            let tunnel = tunnels
+                .get(&id)
+                .ok_or_else(|| io::Error::other(format!("No tunnel found with id {id}")))?;
+            tunnel
+                .write_tx
+                .try_send(data)
+                .map_err(|_| io::Error::other(format!("Tunnel {id} write channel full or closed")))
+        }
+    }
+
+    fn tunnel_close(&self, _ctx: Ctx, id: TunnelId) -> impl Future<Output = io::Result<()>> + Send {
+        async move {
+            let mut tunnels = self.tunnels.write().await;
+            let tunnel = tunnels
+                .remove(&id)
+                .ok_or_else(|| io::Error::other(format!("No tunnel found with id {id}")))?;
+            tunnel.task.abort();
+            Ok(())
+        }
+    }
+
+    fn tunnel_list(&self, _ctx: Ctx) -> impl Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
+        async move {
+            let tunnels = self.tunnels.read().await;
+            Ok(tunnels.values().map(|t| t.info.clone()).collect())
+        }
+    }
+
     fn version(&self, ctx: Ctx) -> impl Future<Output = io::Result<Version>> + Send {
         async move {
             debug!("[Conn {}] Querying capabilities", ctx.connection_id);
@@ -1118,6 +1233,7 @@ impl Api for SshApi {
                 Version::CAP_EXEC.to_string(),
                 Version::CAP_FS_IO.to_string(),
                 Version::CAP_SYS_INFO.to_string(),
+                Version::CAP_TCP_TUNNEL.to_string(),
             ];
 
             use distant_core::protocol::semver;
@@ -1146,4 +1262,51 @@ impl Api for SshApi {
             })
         }
     }
+}
+
+/// Manages the bidirectional I/O relay for a single SSH tunnel.
+///
+/// Reads from the SSH channel and sends `TunnelData` responses via the reply channel.
+/// Writes data received on `write_rx` to the SSH channel. Sends `TunnelClosed` and
+/// removes the tunnel from the map when the connection ends.
+async fn tunnel_relay_task(
+    id: TunnelId,
+    mut read_half: tokio::io::ReadHalf<russh::ChannelStream<russh::client::Msg>>,
+    mut write_half: tokio::io::WriteHalf<russh::ChannelStream<russh::client::Msg>>,
+    mut write_rx: mpsc::Receiver<Vec<u8>>,
+    reply: Box<dyn Reply<Data = Response>>,
+    tunnels: Arc<RwLock<HashMap<TunnelId, SshTunnel>>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Spawn writer sub-task
+    let write_task = tokio::spawn(async move {
+        while let Some(data) = write_rx.recv().await {
+            if write_half.write_all(&data).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Read loop
+    let mut buf = vec![0u8; 8192];
+    loop {
+        match read_half.read(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                let data = buf[..n].to_vec();
+                if reply.send(Response::TunnelData { id, data }).is_err() {
+                    break;
+                }
+            }
+            Err(e) => {
+                debug!("[Tunnel {id}] Read error: {e}");
+                break;
+            }
+        }
+    }
+
+    let _ = reply.send(Response::TunnelClosed { id });
+    write_task.abort();
+    tunnels.write().await.remove(&id);
 }
