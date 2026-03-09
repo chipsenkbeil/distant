@@ -14,6 +14,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: write
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -320,9 +323,6 @@ jobs:
       needs.linux.result == 'success' &&
       needs.bsd.result == 'success'
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: read
     env:
       GIT_REF: ${{ github.ref }}
       IS_NIGHTLY: ${{ inputs.nightly }}
