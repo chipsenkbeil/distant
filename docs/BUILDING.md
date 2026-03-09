@@ -3,11 +3,6 @@
 ## Dependencies
 
 * Rust 1.88.0+ (install via [rustup](https://rustup.rs/))
-* `make` and `perl` — required by `aws-lc-sys` (used by the `russh` SSH backend)
-
-### FreeBSD
-
-* `gmake` — required by `aws-lc-sys` (`pkg install gmake`)
 
 ## Using Cargo
 
@@ -29,6 +24,21 @@ cargo build -p distant-ssh
 
 # Install the binary locally from source
 cargo install --path .
+```
+
+## Using Nix
+
+If you have [Nix](https://nixos.org/) with flakes enabled, you can build
+without manually installing Rust or any native dependencies:
+
+```bash
+# Build the release binary
+nix build
+
+# The binary will be at ./result/bin/distant
+
+# Enter a development shell with all tools available
+nix develop
 ```
 
 ## Completely static binary
