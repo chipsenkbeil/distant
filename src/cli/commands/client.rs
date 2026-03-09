@@ -35,6 +35,7 @@ use crate::options::{
 };
 use crate::{CliError, CliResult};
 
+mod copy;
 mod lsp;
 mod shell;
 
@@ -164,6 +165,31 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     .unwrap()
                 ),
             }
+        }
+        ClientSubcommand::Copy {
+            cache,
+            connection,
+            network,
+            recursive,
+            src,
+            dst,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let mut channel: Channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
+                .into_client()
+                .into_channel();
+
+            copy::run_copy(&mut channel, &src, &dst, recursive, &ui).await?;
         }
         ClientSubcommand::Launch {
             cache,

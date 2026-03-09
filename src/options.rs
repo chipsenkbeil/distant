@@ -176,6 +176,9 @@ impl Options {
                         network.merge(config.client.network);
                         options.merge(config.client.connect.options, /* keep */ true);
                     }
+                    ClientSubcommand::Copy { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                     ClientSubcommand::FileSystem(
                         ClientFileSystemSubcommand::Copy { network, .. }
                         | ClientFileSystemSubcommand::Exists { network, .. }
@@ -419,6 +422,44 @@ pub enum ClientSubcommand {
 
         /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
         destination: String,
+    },
+
+    /// Copy files between local and remote machines.
+    ///
+    /// Prefix remote paths with `:` to distinguish them from local paths.
+    /// Exactly one of src or dst must be remote.
+    ///
+    /// Examples:
+    ///   distant copy ./local.txt :/remote/file.txt   # upload
+    ///   distant copy :/remote/file.txt ./local.txt    # download
+    ///   distant copy -r ./dir :/remote/dir            # upload dir
+    #[clap(name = "copy")]
+    Copy {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Recursively copy directories
+        #[clap(short, long)]
+        recursive: bool,
+
+        /// Source path (prefix with `:` for remote)
+        src: String,
+
+        /// Destination path (prefix with `:` for remote)
+        dst: String,
     },
 
     /// Subcommands for file system operations
@@ -726,6 +767,7 @@ impl ClientSubcommand {
     pub fn cache_path(&self) -> &Path {
         match self {
             Self::Connect { cache, .. } => cache.as_path(),
+            Self::Copy { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
@@ -744,6 +786,7 @@ impl ClientSubcommand {
     pub fn network_settings(&self) -> &NetworkSettings {
         match self {
             Self::Connect { network, .. } => network,
+            Self::Copy { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Launch { network, .. } => network,
             Self::Api { network, .. } => network,
@@ -765,6 +808,7 @@ impl ClientSubcommand {
         match self {
             Self::Api { .. } => Format::Json,
             Self::Connect { format, .. } => *format,
+            Self::Copy { .. } => Format::Shell,
             Self::FileSystem(fs) => fs.format(),
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
