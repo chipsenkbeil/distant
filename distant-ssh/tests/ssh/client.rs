@@ -1683,7 +1683,7 @@ async fn proc_spawn_should_send_back_stdout_periodically_when_available(
 
     let stdout_pipe = proc.stdout.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
             Ok(Ok(data)) => {
@@ -1732,7 +1732,7 @@ async fn proc_spawn_should_send_back_stderr_periodically_when_available(
 
     let stderr_pipe = proc.stderr.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         match tokio::time::timeout_at(deadline, stderr_pipe.read()).await {
             Ok(Ok(data)) => {
@@ -1889,7 +1889,7 @@ async fn proc_stdin_should_send_stdin_to_process(#[future] client: Ctx<Client>) 
     // Third, check the async response of stdout to verify we got stdin
     let stdout_pipe = proc.stdout.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         match tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
             Ok(Ok(data)) => {

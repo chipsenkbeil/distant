@@ -33,15 +33,17 @@ integration may be incomplete/untested.
 
 ### TD-2: Windows CI SSH test flakiness
 
-**(Acknowledgement)** Windows CI SSH tests have intermittent auth failures from
-resource contention — mitigated with nextest retries (4x). Historical issues:
+**(Acknowledgement)** Windows CI SSH tests have intermittent failures tied to
+VM performance variance on `windows-latest` — mitigated with nextest retries
+(4x) and generous timeouts. Historical issues:
 
 - **Consistent 19/47 failures**: System sshd service conflicting with per-test
   instances; resolved by stopping the system service in CI.
 - **SFTP timeout**: `russh-sftp` defaults to a 10-second per-request timeout.
-  Windows `sftp-server.exe` startup under CI load exceeded this, causing all
-  SFTP-backed tests to fail. Resolved by using `SftpSession::new_opts()` with
-  an explicit timeout matching the SSH exec timeout.
+  Windows `sftp-server.exe` startup under CI load exceeded this. Resolved by
+  using `SftpSession::new_opts()` with a unified SSH timeout constant (60s).
+- **Test read deadlines**: proc_spawn tests had 5–15 second deadlines for
+  reading stdout/stderr, too aggressive for slow Windows VMs. Increased to 30s.
 
 ### TD-3: Windows SSH copy cyclic-copy edge case
 

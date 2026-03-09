@@ -15,7 +15,7 @@ use russh_sftp::client::SftpSession;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::process::Process;
-use crate::utils::{SFTP_TIMEOUT_SECS, SftpPathBuf};
+use crate::utils::{SSH_TIMEOUT_SECS, SftpPathBuf};
 use crate::{ClientHandler, SshFamily};
 
 /// Represents implementation of [`Api`] for SSH.
@@ -76,7 +76,7 @@ impl SshApi {
             .map_err(io::Error::other)?;
 
         let sftp = Arc::new(
-            SftpSession::new_opts(channel.into_stream(), Some(SFTP_TIMEOUT_SECS))
+            SftpSession::new_opts(channel.into_stream(), Some(SSH_TIMEOUT_SECS))
                 .await
                 .map_err(io::Error::other)?,
         );

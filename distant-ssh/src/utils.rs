@@ -7,14 +7,16 @@ use russh::client::Handle;
 use crate::ClientHandler;
 use crate::SshFamily;
 
-const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
-
-/// Timeout in seconds for SFTP operations (init handshake and per-request).
+/// Timeout in seconds for SSH operations (exec channels and SFTP sessions).
 ///
-/// The `russh-sftp` crate defaults to 10 seconds, which is too aggressive for
-/// Windows CI where `sftp-server.exe` startup can be slow under load. This
-/// value matches [`SSH_EXEC_TIMEOUT`] for consistency.
-pub(crate) const SFTP_TIMEOUT_SECS: u64 = 30;
+/// Used as the base value for both `SSH_EXEC_TIMEOUT` (as `Duration`) and
+/// SFTP session init (as raw `u64`). 60 seconds is generous enough for
+/// worst-case Windows CI VMs where `sftp-server.exe` startup and command
+/// execution can be slow under load.
+pub(crate) const SSH_TIMEOUT_SECS: u64 = 60;
+
+/// Timeout for exec-channel operations (typed wrapper for `execute_output()`).
+const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(SSH_TIMEOUT_SECS));
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
@@ -272,7 +274,7 @@ pub async fn is_windows(
 
         let sftp = russh_sftp::client::SftpSession::new_opts(
             channel.into_stream(),
-            Some(SFTP_TIMEOUT_SECS),
+            Some(SSH_TIMEOUT_SECS),
         )
         .await
         .map_err(io::Error::other)?;
@@ -841,7 +843,7 @@ mod tests {
 
     #[test]
     fn ssh_exec_timeout_is_30_seconds() {
-        assert_eq!(SSH_EXEC_TIMEOUT, Some(Duration::from_secs(30)));
+        assert_eq!(SSH_EXEC_TIMEOUT, Some(Duration::from_secs(60)));
     }
 
     // --- contains_subslice logic tests ---

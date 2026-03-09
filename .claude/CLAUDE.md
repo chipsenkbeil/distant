@@ -51,7 +51,7 @@ cargo nextest run --profile ci --all-features --workspace --all-targets
 7. Skipping `--all-features` when testing
 8. Outdated Rust patterns — prefer modern async/await over futures combinators
 9. Modifying workspace dependency versions without updating all members
-10. `SftpSession::new()` uses russh-sftp's 10s default — always use `new_opts` with the crate's SFTP timeout constant
+10. `SftpSession::new()` uses russh-sftp's 10s default — always use `new_opts` with the crate's unified SSH timeout constant
 
 ## Agent Orchestration Guide
 
