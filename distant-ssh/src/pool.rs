@@ -183,6 +183,14 @@ impl ChannelPool {
         inner.open_count = inner.open_count.saturating_sub(1);
     }
 
+    /// Returns `true` if the underlying SSH connection has been closed.
+    ///
+    /// Delegates to russh's `Handle::is_closed()`, which returns true when
+    /// the connection task has terminated.
+    pub fn is_closed(&self) -> bool {
+        self.handle.is_closed()
+    }
+
     /// Returns the server's channel limit, if it has been discovered.
     ///
     /// The limit is discovered when the first `channel_open_session` call fails,

@@ -23,6 +23,7 @@
 #![allow(clippy::manual_async_fn)]
 
 use std::io;
+use std::time::Duration;
 
 use bollard::Docker as BollardDocker;
 use bollard::models::ContainerCreateBody;
@@ -33,7 +34,7 @@ use bollard::query_parameters::{
 use distant_core::net::auth::{DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener};
-use distant_core::net::server::{Server, ServerRef};
+use distant_core::net::server::{Server, ServerRef, ShutdownSender};
 use distant_core::{ApiServerHandler, Client};
 use futures::StreamExt;
 use log::*;
@@ -358,7 +359,9 @@ impl Docker {
     /// Converts this Docker connection into a distant [`Client`].
     ///
     /// Creates an in-memory server/client pair where the server side is backed by [`DockerApi`].
-    /// If `auto_remove` is enabled, the container is stopped and removed when the server task ends.
+    /// If `auto_remove` is enabled, the container is stopped and removed when the server shuts
+    /// down. A health monitor task is spawned to detect Docker daemon or container death and
+    /// trigger server shutdown, which causes the client to see a disconnect.
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let auto_remove = self.auto_remove;
         let cleanup_client = if auto_remove {
@@ -367,6 +370,8 @@ impl Docker {
             None
         };
         let container_name = self.container.clone();
+        let health_client = self.client.clone();
+        let health_container = self.container.clone();
 
         let api = DockerApi::new(self.client.clone(), self.container, self.opts).await;
 
@@ -376,22 +381,35 @@ impl Docker {
             .handler(ApiServerHandler::new(api))
             .verifier(Verifier::none());
 
-        tokio::spawn(async move {
-            let _ = server.start(OneshotListener::from_value(t2));
+        let server_ref = server
+            .start(OneshotListener::from_value(t2))
+            .map_err(io::Error::other)?;
 
-            if let Some(client) = cleanup_client {
+        // Spawn cleanup task if auto_remove is set
+        if let Some(client) = cleanup_client {
+            let mut shutdown_rx = server_ref.subscribe_shutdown();
+            let cleanup_container = container_name.clone();
+            tokio::spawn(async move {
+                let _ = shutdown_rx.recv().await;
                 info!(
                     "Auto-removing container '{}' after server shutdown",
-                    container_name
+                    cleanup_container
                 );
-                if let Err(e) = Self::stop_and_remove(&client, &container_name).await {
+                if let Err(e) = Self::stop_and_remove(&client, &cleanup_container).await {
                     warn!(
                         "Failed to auto-remove container '{}': {}",
-                        container_name, e
+                        cleanup_container, e
                     );
                 }
-            }
-        });
+            });
+        }
+
+        // Spawn health monitor that detects Docker daemon/container death
+        tokio::spawn(Self::docker_health_monitor(
+            health_client,
+            health_container,
+            server_ref.shutdown_sender(),
+        ));
 
         let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
@@ -407,7 +425,8 @@ impl Docker {
     /// Converts this Docker connection into a pair of distant client and server ref.
     ///
     /// If `auto_remove` is enabled, the container is stopped and removed when the server
-    /// shuts down.
+    /// shuts down. A health monitor task is spawned to detect Docker daemon or container
+    /// death and trigger server shutdown.
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let auto_remove = self.auto_remove;
         let cleanup_client = if auto_remove {
@@ -416,6 +435,8 @@ impl Docker {
             None
         };
         let container_name = self.container.clone();
+        let health_client = self.client.clone();
+        let health_container = self.container.clone();
 
         let api = DockerApi::new(self.client, self.container, self.opts).await;
 
@@ -432,20 +453,28 @@ impl Docker {
         // Spawn cleanup task that waits for server shutdown signal
         if let Some(client) = cleanup_client {
             let mut shutdown_rx = server_ref.subscribe_shutdown();
+            let cleanup_container = container_name;
             tokio::spawn(async move {
                 let _ = shutdown_rx.recv().await;
                 info!(
                     "Auto-removing container '{}' after server shutdown",
-                    container_name
+                    cleanup_container
                 );
-                if let Err(e) = Self::stop_and_remove(&client, &container_name).await {
+                if let Err(e) = Self::stop_and_remove(&client, &cleanup_container).await {
                     warn!(
                         "Failed to auto-remove container '{}': {}",
-                        container_name, e
+                        cleanup_container, e
                     );
                 }
             });
         }
+
+        // Spawn health monitor that detects Docker daemon/container death
+        tokio::spawn(Self::docker_health_monitor(
+            health_client,
+            health_container,
+            server_ref.shutdown_sender(),
+        ));
 
         let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
@@ -461,6 +490,59 @@ impl Docker {
     /// Returns the container name or ID.
     pub fn container(&self) -> &str {
         &self.container
+    }
+
+    /// Monitors Docker daemon and container health, triggering server shutdown on failure.
+    ///
+    /// Checks every 5 seconds:
+    /// 1. Docker daemon responsiveness via ping
+    /// 2. Container running state via inspect
+    ///
+    /// When either check fails, the server shutdown signal is sent, which drops
+    /// the in-memory transport and causes the client to see a disconnect.
+    async fn docker_health_monitor(
+        client: DockerClient,
+        container: String,
+        shutdown: ShutdownSender,
+    ) {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+
+            // Check daemon responsiveness
+            if client.ping().await.is_err() {
+                warn!(
+                    "Docker daemon unreachable, triggering server shutdown for container '{container}'"
+                );
+                shutdown.shutdown();
+                return;
+            }
+
+            // Check container state
+            match client
+                .inner()
+                .inspect_container(&container, None::<InspectContainerOptions>)
+                .await
+            {
+                Ok(info) => {
+                    let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
+                    if !running {
+                        warn!(
+                            "Container '{container}' is no longer running, triggering server shutdown"
+                        );
+                        shutdown.shutdown();
+                        return;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Cannot inspect container '{container}': {e}, triggering server shutdown"
+                    );
+                    shutdown.shutdown();
+                    return;
+                }
+            }
+        }
     }
 
     /// Creates a Docker client from the provided options.
