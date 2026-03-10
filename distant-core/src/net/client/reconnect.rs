@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use log::*;
+use serde::{Deserialize, Serialize};
 use strum::Display;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -47,8 +48,9 @@ impl ConnectionWatcher {
 }
 
 /// Represents the state of a connection.
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ConnectionState {
     /// Connection is not active, but currently going through reconnection process.
     Reconnecting,
@@ -767,5 +769,87 @@ mod tests {
 
         let result = strategy.reconnect(&mut mock).await;
         assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // ConnectionState serde round-trip tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn connection_state_reconnecting_serde_round_trip() {
+        let state = ConnectionState::Reconnecting;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"reconnecting\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Reconnecting);
+    }
+
+    #[test]
+    fn connection_state_connected_serde_round_trip() {
+        let state = ConnectionState::Connected;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"connected\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Connected);
+    }
+
+    #[test]
+    fn connection_state_disconnected_serde_round_trip() {
+        let state = ConnectionState::Disconnected;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"disconnected\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn connection_state_should_reject_unknown_variant() {
+        let result = serde_json::from_str::<ConnectionState>("\"invalid\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_should_reject_capitalized_variant() {
+        // Ensures snake_case renaming is enforced
+        let result = serde_json::from_str::<ConnectionState>("\"Reconnecting\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_should_reject_non_string_json_types() {
+        // Number
+        let result = serde_json::from_str::<ConnectionState>("42");
+        assert!(result.is_err());
+
+        // Null
+        let result = serde_json::from_str::<ConnectionState>("null");
+        assert!(result.is_err());
+
+        // Object
+        let result = serde_json::from_str::<ConnectionState>(r#"{"variant":"connected"}"#);
+        assert!(result.is_err());
+
+        // Array
+        let result = serde_json::from_str::<ConnectionState>(r#"["connected"]"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_serde_display_and_serde_names_are_consistent() {
+        // Verify that Display (strum) and serde both use snake_case and agree
+        for state in [
+            ConnectionState::Reconnecting,
+            ConnectionState::Connected,
+            ConnectionState::Disconnected,
+        ] {
+            let display_name = state.to_string();
+            let serde_json_str = serde_json::to_string(&state).unwrap();
+            // serde_json wraps in quotes: "reconnecting"
+            let serde_name = serde_json_str.trim_matches('"');
+            assert_eq!(
+                display_name, serde_name,
+                "Display and serde names should match for {state:?}"
+            );
+        }
     }
 }

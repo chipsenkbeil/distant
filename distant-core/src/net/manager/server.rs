@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use crate::auth::msg::AuthenticationResponse;
 use log::*;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
+use crate::net::client::ConnectionState;
 use crate::net::common::{ConnectionId, Map};
 use crate::net::manager::{
     ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, ManagerRequest,
@@ -43,6 +44,9 @@ pub struct ManagerServer {
     /// Each [`ManagerConnection`] spawned by this server receives a clone to report
     /// when its underlying transport disconnects.
     death_tx: mpsc::UnboundedSender<ConnectionId>,
+
+    /// Broadcast channel for sending connection state change events to subscribed clients.
+    event_tx: broadcast::Sender<ManagerResponse>,
 }
 
 impl ManagerServer {
@@ -51,12 +55,18 @@ impl ManagerServer {
     /// for the server as well as provide other defaults.
     pub fn new(config: Config) -> Server<Self> {
         let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = broadcast::channel(16);
 
-        // Spawn a task that logs connection deaths.
+        // Spawn a task that broadcasts connection death events.
         // Reconnection orchestration will be added in a future phase.
+        let event_tx_for_death = event_tx.clone();
         tokio::spawn(async move {
             while let Some(id) = death_rx.recv().await {
                 warn!("[Conn {id}] Connection death detected by manager");
+                let _ = event_tx_for_death.send(ManagerResponse::ConnectionStateChanged {
+                    id,
+                    state: ConnectionState::Disconnected,
+                });
             }
         });
 
@@ -66,7 +76,16 @@ impl ManagerServer {
             connections: RwLock::new(HashMap::new()),
             registry: Arc::new(RwLock::new(HashMap::new())),
             death_tx,
+            event_tx,
         })
+    }
+
+    /// Broadcasts a connection state change event to all subscribed clients.
+    #[allow(dead_code)] // Will be used by reconnection orchestration in Phase 7
+    fn notify_state_change(&self, id: ConnectionId, state: ConnectionState) {
+        let _ = self
+            .event_tx
+            .send(ManagerResponse::ConnectionStateChanged { id, state });
     }
 
     /// Launches a new server at the specified `destination` using the given `options` information
@@ -381,6 +400,32 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
+            ManagerRequest::SubscribeConnectionEvents => {
+                let mut event_rx = self.event_tx.subscribe();
+                let reply_clone = reply.clone();
+                tokio::spawn(async move {
+                    while let Ok(event) = event_rx.recv().await {
+                        if reply_clone.send(event).is_err() {
+                            break;
+                        }
+                    }
+                });
+                ManagerResponse::SubscribedConnectionEvents
+            }
+            ManagerRequest::Reconnect { id } => {
+                // Reconnection orchestration will be added in Phase 7.
+                // For now, just check if the connection exists and return an error.
+                match self.connections.read().await.get(&id) {
+                    Some(_) => {
+                        info!("[Conn {id}] Reconnection requested (not yet implemented)");
+                        ManagerResponse::ReconnectInitiated { id }
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "No connection found",
+                    )),
+                }
+            }
         };
 
         if let Err(x) = reply.send(response) {
@@ -393,7 +438,7 @@ impl ServerHandler for ManagerServer {
 mod tests {
     use std::pin::Pin;
 
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
 
     use super::*;
     use crate::auth::Authenticator;
@@ -493,6 +538,7 @@ mod tests {
         };
 
         let (death_tx, _death_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = broadcast::channel(16);
 
         let server = ManagerServer {
             config,
@@ -500,6 +546,7 @@ mod tests {
             connections: RwLock::new(HashMap::new()),
             registry,
             death_tx,
+            event_tx,
         };
 
         (server, authenticator)
