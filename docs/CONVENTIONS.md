@@ -78,6 +78,22 @@ Good documentation follows this structure:
 /// Returns `Err` if [describe the failure condition].
 ```
 
+### Module Documentation Style
+
+Module-level doc comments (`//!`) should describe what the module provides
+and when to use it — not how it was created or where code was extracted from.
+Follow the Rust standard library style (e.g., `std::fs`, `std::net`).
+
+Avoid:
+- "Extracted from ..." or "Refactored out of ..."
+- References to specific orchestrators or callers
+- Implementation history
+
+Prefer:
+- What functionality the module provides
+- When/why to use it
+- Key types and functions available
+
 ## Async Patterns
 
 - Use Tokio with full features as the async runtime
@@ -101,6 +117,10 @@ Good documentation follows this structure:
 1. `std::` imports
 2. External crate imports (alphabetical)
 3. Internal `crate::` imports
+- Import types used in signatures and pattern matches — avoid inline
+  `crate::module::Type` references. Only use longer paths for module-level
+  function calls (e.g., `russh::keys::decode_secret_key()`) or when there
+  are name conflicts.
 
 ## Serialization
 

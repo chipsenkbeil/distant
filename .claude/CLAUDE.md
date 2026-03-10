@@ -52,6 +52,10 @@ cargo nextest run --profile ci --all-features --workspace --all-targets
 8. Outdated Rust patterns — prefer modern async/await over futures combinators
 9. Modifying workspace dependency versions without updating all members
 10. `SftpSession::new()` uses russh-sftp's 10s default — always use `new_opts` with the crate's unified SSH timeout constant
+11. Separator comments in tests (`// --- section ---`) — use flat test names instead
+12. Nested test modules with `_tests` suffix — flatten with subject prefix
+13. Inline type references when imports are available — import types at module top
+14. Module doc comments referencing implementation details — describe purpose, not provenance
 
 ## Agent Orchestration Guide
 

@@ -1184,16 +1184,7 @@ impl Ssh {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for the `distant-ssh` crate root: SSH option types, authentication types,
-    //! helper functions (`format_methods`, `clean_launch_output`), config building,
-    //! and `ClientHandler`.
-    //!
-    //! The `build_launch_args` function and port/user resolution logic are replicated
-    //! from the production `Ssh::launch` and `Ssh::connect` methods respectively,
-    //! since those methods require a live SSH connection. The mock handler tests
-    //! (`MockSshAuthHandler`, `ErrorSshAuthHandler`) verify that the `SshAuthHandler`
-    //! trait is implementable and callable -- they are infrastructure verification
-    //! rather than production logic tests.
+    use std::io::Write;
 
     use super::*;
 
@@ -1218,8 +1209,6 @@ mod tests {
         handler.on_error("test error").await;
         // These just log — verifying they don't panic is sufficient
     }
-
-    // --- format_methods tests ---
 
     #[test]
     fn format_methods_empty_returns_none() {
@@ -1271,8 +1260,6 @@ mod tests {
             "Expected 'keyboard-interactive' in '{result}'"
         );
     }
-
-    // --- SshOpts tests ---
 
     #[test]
     fn ssh_opts_default_values() {
@@ -1417,8 +1404,6 @@ mod tests {
         assert_eq!(keys, &["Alpha", "Middle", "Zebra"]);
     }
 
-    // --- SshFamily tests ---
-
     #[test]
     fn ssh_family_copy_clone() {
         let family = SshFamily::Unix;
@@ -1459,8 +1444,6 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 
-    // --- SshAuthPrompt tests ---
-
     #[test]
     fn ssh_auth_prompt_construction() {
         let prompt = SshAuthPrompt {
@@ -1491,8 +1474,6 @@ mod tests {
         assert!(debug.contains("test"), "Expected 'test' in '{debug}'");
         assert!(debug.contains("true"), "Expected 'true' in '{debug}'");
     }
-
-    // --- SshAuthEvent tests ---
 
     #[test]
     fn ssh_auth_event_construction() {
@@ -1557,8 +1538,6 @@ mod tests {
             "Expected 'testuser' in '{debug}'"
         );
     }
-
-    // --- LaunchOpts tests ---
 
     #[test]
     fn launch_opts_custom_values() {
@@ -1639,8 +1618,6 @@ mod tests {
         );
         assert!(debug.contains("120"), "Expected timeout in '{debug}'");
     }
-
-    // --- clean_launch_output tests ---
 
     #[test]
     fn clean_launch_output_both_empty() {
@@ -1776,14 +1753,10 @@ mod tests {
         assert!(result.contains("stderr: '"));
     }
 
-    // --- LocalSshAuthHandler construction ---
-
     #[test]
     fn local_ssh_auth_handler_can_be_constructed() {
         let _handler = LocalSshAuthHandler;
     }
-
-    // --- build_russh_config tests ---
 
     #[test]
     fn build_russh_config_default_params() {
@@ -1860,8 +1833,6 @@ mod tests {
         assert!(config.is_ok());
     }
 
-    // --- build_preferred_algorithms tests ---
-
     #[test]
     fn build_preferred_algorithms_returns_defaults() {
         use ssh2_config::DefaultAlgorithms;
@@ -1888,8 +1859,6 @@ mod tests {
         let default_preferred = russh::Preferred::default();
         assert_eq!(preferred.kex, default_preferred.kex);
     }
-
-    // --- parse_ssh_config tests ---
 
     #[test]
     fn parse_ssh_config_returns_host_params() {
@@ -1935,8 +1904,6 @@ mod tests {
         let result = Ssh::parse_ssh_config("::1");
         assert!(result.is_ok());
     }
-
-    // --- SshAuthHandler trait with custom implementation ---
 
     struct MockSshAuthHandler {
         responses: Vec<String>,
@@ -2063,8 +2030,6 @@ mod tests {
         assert!(answers.is_empty());
     }
 
-    // --- Error-returning SshAuthHandler ---
-
     struct ErrorSshAuthHandler;
 
     impl SshAuthHandler for ErrorSshAuthHandler {
@@ -2126,8 +2091,6 @@ mod tests {
         );
     }
 
-    // --- SshAuthEvent with complex prompt strings ---
-
     #[test]
     fn ssh_auth_event_multiline_prompt() {
         let event = SshAuthEvent {
@@ -2187,8 +2150,6 @@ mod tests {
         assert!(!event.prompts[9].echo);
     }
 
-    // --- format_methods edge cases ---
-
     #[test]
     fn format_methods_single_none() {
         let methods = russh::MethodSet::from([russh::MethodKind::None].as_slice());
@@ -2239,8 +2200,6 @@ mod tests {
         assert_eq!(parts.len(), 3);
     }
 
-    // --- ClientHandler tests ---
-
     #[test_log::test(tokio::test)]
     async fn client_handler_check_server_key_accepts_new_with_tofu() {
         use russh::client::Handler;
@@ -2269,8 +2228,6 @@ mod tests {
         assert!(result.unwrap());
     }
 
-    // --- SshFamily as_static_str exhaustive ---
-
     #[test]
     fn ssh_family_unix_static_str_is_lowercase() {
         let s = SshFamily::Unix.as_static_str();
@@ -2291,8 +2248,6 @@ mod tests {
         let s: &'static str = SshFamily::Windows.as_static_str();
         assert!(!s.is_empty());
     }
-
-    // --- LocalSshAuthHandler banner/error with various inputs ---
 
     #[test_log::test(tokio::test)]
     async fn local_ssh_auth_handler_on_banner_empty_string() {
@@ -2329,8 +2284,6 @@ mod tests {
         let handler = LocalSshAuthHandler;
         handler.on_error("Erreur: connexion refusee").await;
     }
-
-    // --- SshOpts with struct update syntax ---
 
     #[test]
     fn ssh_opts_struct_update_syntax() {
@@ -2393,8 +2346,6 @@ mod tests {
         assert_eq!(opts.user_known_hosts_files.len(), 2);
     }
 
-    // --- clean_launch_output with multibyte UTF-8 ---
-
     #[test]
     fn clean_launch_output_with_multibyte_utf8() {
         let result = Ssh::clean_launch_output("Server ready".as_bytes(), b"");
@@ -2423,8 +2374,6 @@ mod tests {
         let result = Ssh::clean_launch_output(b"", b"err\xff\xfeor");
         assert!(result.contains("stderr:"), "Expected stderr in '{result}'");
     }
-
-    // --- Additional edge case tests ---
 
     #[test]
     fn clean_launch_output_with_ansi_escape_sequences() {
@@ -2595,8 +2544,6 @@ mod tests {
         assert_eq!(config.preferred.cipher, default_preferred.cipher);
     }
 
-    // --- Mock handler with custom verify_host string test ---
-
     #[test_log::test(tokio::test)]
     async fn mock_ssh_auth_handler_on_verify_host_with_ip() {
         let handler = MockSshAuthHandler {
@@ -2638,8 +2585,6 @@ mod tests {
         handler.on_error("error text").await;
     }
 
-    // --- ClientHandler additional tests ---
-
     #[test_log::test(tokio::test)]
     async fn client_handler_check_server_key_ed25519_no_policy() {
         use russh::client::Handler;
@@ -2665,8 +2610,6 @@ mod tests {
         assert!(result.unwrap());
     }
 
-    // --- parse_ssh_config additional hosts ---
-
     #[test]
     fn parse_ssh_config_with_fqdn() {
         let result = Ssh::parse_ssh_config("server.example.co.uk");
@@ -2684,8 +2627,6 @@ mod tests {
         let result = Ssh::parse_ssh_config("my_server_01");
         assert!(result.is_ok());
     }
-
-    // --- Launch argument building tests ---
 
     use super::build_launch_args;
 
@@ -2768,9 +2709,6 @@ mod tests {
         assert!(cmd.contains("value with spaces"));
     }
 
-    // --- Authentication error message building tests ---
-    // These test the same logic used at the end of Ssh::authenticate
-
     #[test]
     fn auth_error_message_no_methods_tried() {
         let methods_tried: Vec<String> = Vec::new();
@@ -2839,8 +2777,6 @@ mod tests {
         assert!(accepts.contains("publickey"));
         assert!(accepts.contains("password"));
     }
-
-    // --- Server method detection logic tests ---
 
     #[test]
     fn server_accepts_pubkey_when_methods_unknown() {
@@ -2916,8 +2852,6 @@ mod tests {
         assert!(!accepts);
     }
 
-    // --- Key file discovery logic tests ---
-
     #[test]
     fn key_file_discovery_with_explicit_identity_files() {
         let opts = SshOpts {
@@ -2944,8 +2878,6 @@ mod tests {
         };
         assert!(key_files.is_empty());
     }
-
-    // --- expand_tilde tests ---
 
     #[test]
     fn expand_tilde_expands_home() {
@@ -2986,8 +2918,6 @@ mod tests {
         assert_eq!(expanded, single);
     }
 
-    // --- SshAuthEvent username fallback logic ---
-
     #[test]
     fn auth_event_username_fallback_when_name_empty() {
         let name = String::new();
@@ -3026,12 +2956,8 @@ mod tests {
         assert_eq!(result, "Custom instructions");
     }
 
-    // --- SSH config HostName resolution tests ---
-
     #[test]
     fn parse_ssh_config_returns_host_name_from_temp_config() {
-        use std::io::Write;
-
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config");
         let mut f = std::fs::File::create(&config_path).unwrap();
@@ -3054,8 +2980,6 @@ mod tests {
 
     #[test]
     fn parse_ssh_config_host_name_is_none_for_unmatched_host() {
-        use std::io::Write;
-
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config");
         let mut f = std::fs::File::create(&config_path).unwrap();
@@ -3069,8 +2993,6 @@ mod tests {
 
         assert!(params.host_name.is_none());
     }
-
-    // --- build_russh_config TCP keepalive fallback ---
 
     #[test]
     fn build_russh_config_tcp_keep_alive_sets_default_interval() {
@@ -3097,12 +3019,8 @@ mod tests {
         assert_eq!(config.keepalive_interval, Some(Duration::from_secs(30)));
     }
 
-    // --- build_preferred_algorithms with non-default algorithms ---
-
     /// Helper: parse a temp SSH config and return HostParams with algorithm overrides applied.
     fn parse_config_str(config_text: &str) -> HostParams {
-        use std::io::Write;
-
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config");
         let mut f = std::fs::File::create(&path).unwrap();
@@ -3170,245 +3088,235 @@ mod tests {
         assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
     }
 
-    // ---------------------------------------------------------------
-    // Host key verification tests
-    // ---------------------------------------------------------------
+    /// Generate an Ed25519 key pair for testing.
+    fn test_keypair() -> russh::keys::PublicKey {
+        let key = russh::keys::PrivateKey::random(
+            &mut rand::thread_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .expect("Failed to generate test key");
+        key.public_key().clone()
+    }
 
-    mod host_key_verification {
-        use std::io::Write;
-
-        use super::*;
-
-        /// Generate an Ed25519 key pair for testing.
-        fn test_keypair() -> russh::keys::PublicKey {
-            let key = russh::keys::PrivateKey::random(
-                &mut rand::thread_rng(),
-                russh::keys::Algorithm::Ed25519,
-            )
-            .expect("Failed to generate test key");
-            key.public_key().clone()
+    /// Write a known_hosts entry for the given host/port/key.
+    fn write_known_hosts(
+        path: &std::path::Path,
+        host: &str,
+        port: u16,
+        pubkey: &russh::keys::PublicKey,
+    ) {
+        let mut file = std::fs::File::create(path).expect("create known_hosts");
+        if port != 22 {
+            write!(file, "[{host}]:{port} ").expect("write host");
+        } else {
+            write!(file, "{host} ").expect("write host");
         }
+        file.write_all(pubkey.to_openssh().unwrap().as_bytes())
+            .expect("write key");
+        file.write_all(b"\n").expect("write newline");
+    }
 
-        /// Write a known_hosts entry for the given host/port/key.
-        fn write_known_hosts(
-            path: &std::path::Path,
-            host: &str,
-            port: u16,
-            pubkey: &russh::keys::PublicKey,
-        ) {
-            let mut file = std::fs::File::create(path).expect("create known_hosts");
-            if port != 22 {
-                write!(file, "[{host}]:{port} ").expect("write host");
-            } else {
-                write!(file, "{host} ").expect("write host");
-            }
-            file.write_all(pubkey.to_openssh().unwrap().as_bytes())
-                .expect("write key");
-            file.write_all(b"\n").expect("write newline");
-        }
+    #[test]
+    fn host_key_known_key_matches_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let pubkey = test_keypair();
 
-        #[test]
-        fn known_key_matches_is_accepted() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let pubkey = test_keypair();
+        write_known_hosts(&kh, "example.com", 22, &pubkey);
 
-            write_known_hosts(&kh, "example.com", 22, &pubkey);
+        let result = check_host_key("example.com", 22, &pubkey, &[kh], &HostKeyPolicy::Yes);
+        assert!(result.unwrap());
+    }
 
-            let result = check_host_key("example.com", 22, &pubkey, &[kh], &HostKeyPolicy::Yes);
-            assert!(result.unwrap());
-        }
+    #[test]
+    fn host_key_changed_key_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let original = test_keypair();
+        let different = test_keypair();
 
-        #[test]
-        fn changed_key_is_rejected() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let original = test_keypair();
-            let different = test_keypair();
+        write_known_hosts(&kh, "example.com", 22, &original);
 
-            write_known_hosts(&kh, "example.com", 22, &original);
+        let result = check_host_key(
+            "example.com",
+            22,
+            &different,
+            &[kh],
+            &HostKeyPolicy::AcceptNew,
+        );
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("changed"),
+            "Error should mention key changed: {err}"
+        );
+    }
 
-            let result = check_host_key(
-                "example.com",
-                22,
-                &different,
-                &[kh],
-                &HostKeyPolicy::AcceptNew,
-            );
-            assert!(result.is_err());
-            let err = format!("{}", result.unwrap_err());
-            assert!(
-                err.contains("changed"),
-                "Error should mention key changed: {err}"
-            );
-        }
+    #[test]
+    fn host_key_unknown_key_accept_new_accepts_and_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let pubkey = test_keypair();
 
-        #[test]
-        fn unknown_key_accept_new_accepts_and_records() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let pubkey = test_keypair();
+        // File doesn't exist yet
+        let result = check_host_key(
+            "newhost.example.com",
+            22,
+            &pubkey,
+            std::slice::from_ref(&kh),
+            &HostKeyPolicy::AcceptNew,
+        );
+        assert!(result.unwrap());
 
-            // File doesn't exist yet
-            let result = check_host_key(
-                "newhost.example.com",
-                22,
-                &pubkey,
-                std::slice::from_ref(&kh),
-                &HostKeyPolicy::AcceptNew,
-            );
-            assert!(result.unwrap());
+        // Now the file should exist and contain the key
+        assert!(kh.exists(), "known_hosts file should have been created");
 
-            // Now the file should exist and contain the key
-            assert!(kh.exists(), "known_hosts file should have been created");
+        // Verify the key was recorded correctly
+        let result2 = check_host_key(
+            "newhost.example.com",
+            22,
+            &pubkey,
+            &[kh],
+            &HostKeyPolicy::Yes,
+        );
+        assert!(result2.unwrap(), "Recorded key should match");
+    }
 
-            // Verify the key was recorded correctly
-            let result2 = check_host_key(
-                "newhost.example.com",
-                22,
-                &pubkey,
-                &[kh],
-                &HostKeyPolicy::Yes,
-            );
-            assert!(result2.unwrap(), "Recorded key should match");
-        }
+    #[test]
+    fn host_key_unknown_key_yes_policy_rejects() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let pubkey = test_keypair();
 
-        #[test]
-        fn unknown_key_yes_policy_rejects() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let pubkey = test_keypair();
+        // Empty known_hosts file
+        std::fs::write(&kh, "").unwrap();
 
-            // Empty known_hosts file
-            std::fs::write(&kh, "").unwrap();
+        let result = check_host_key(
+            "unknown.example.com",
+            22,
+            &pubkey,
+            &[kh],
+            &HostKeyPolicy::Yes,
+        );
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("not found"),
+            "Error should say key not found: {err}"
+        );
+    }
 
-            let result = check_host_key(
-                "unknown.example.com",
-                22,
-                &pubkey,
-                &[kh],
-                &HostKeyPolicy::Yes,
-            );
-            assert!(result.is_err());
-            let err = format!("{}", result.unwrap_err());
-            assert!(
-                err.contains("not found"),
-                "Error should say key not found: {err}"
-            );
-        }
+    #[test]
+    fn host_key_unknown_key_no_policy_accepts_without_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let pubkey = test_keypair();
 
-        #[test]
-        fn unknown_key_no_policy_accepts_without_recording() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let pubkey = test_keypair();
+        // No known_hosts file exists
+        let result = check_host_key(
+            "norecord.example.com",
+            22,
+            &pubkey,
+            std::slice::from_ref(&kh),
+            &HostKeyPolicy::No,
+        );
+        assert!(result.unwrap());
 
-            // No known_hosts file exists
-            let result = check_host_key(
-                "norecord.example.com",
-                22,
-                &pubkey,
-                std::slice::from_ref(&kh),
-                &HostKeyPolicy::No,
-            );
-            assert!(result.unwrap());
+        // File should NOT have been created
+        assert!(
+            !kh.exists(),
+            "known_hosts file should not be created with No policy"
+        );
+    }
 
-            // File should NOT have been created
-            assert!(
-                !kh.exists(),
-                "known_hosts file should not be created with No policy"
-            );
-        }
+    #[test]
+    fn host_key_policy_from_config_parses_correctly() {
+        assert!(matches!(
+            HostKeyPolicy::from_config("no"),
+            HostKeyPolicy::No
+        ));
+        assert!(matches!(
+            HostKeyPolicy::from_config("NO"),
+            HostKeyPolicy::No
+        ));
+        assert!(matches!(
+            HostKeyPolicy::from_config("yes"),
+            HostKeyPolicy::Yes
+        ));
+        assert!(matches!(
+            HostKeyPolicy::from_config("YES"),
+            HostKeyPolicy::Yes
+        ));
+        assert!(matches!(
+            HostKeyPolicy::from_config("accept-new"),
+            HostKeyPolicy::AcceptNew
+        ));
+        assert!(matches!(
+            HostKeyPolicy::from_config("anything_else"),
+            HostKeyPolicy::AcceptNew
+        ));
+    }
 
-        #[test]
-        fn host_key_policy_from_config_parses_correctly() {
-            assert!(matches!(
-                HostKeyPolicy::from_config("no"),
-                HostKeyPolicy::No
-            ));
-            assert!(matches!(
-                HostKeyPolicy::from_config("NO"),
-                HostKeyPolicy::No
-            ));
-            assert!(matches!(
-                HostKeyPolicy::from_config("yes"),
-                HostKeyPolicy::Yes
-            ));
-            assert!(matches!(
-                HostKeyPolicy::from_config("YES"),
-                HostKeyPolicy::Yes
-            ));
-            assert!(matches!(
-                HostKeyPolicy::from_config("accept-new"),
-                HostKeyPolicy::AcceptNew
-            ));
-            assert!(matches!(
-                HostKeyPolicy::from_config("anything_else"),
-                HostKeyPolicy::AcceptNew
-            ));
-        }
+    #[test]
+    fn host_key_nonstandard_port_uses_bracketed_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let kh = dir.path().join("known_hosts");
+        let pubkey = test_keypair();
 
-        #[test]
-        fn nonstandard_port_uses_bracketed_host() {
-            let dir = tempfile::tempdir().unwrap();
-            let kh = dir.path().join("known_hosts");
-            let pubkey = test_keypair();
+        // Write known_hosts with non-standard port format
+        write_known_hosts(&kh, "example.com", 2222, &pubkey);
 
-            // Write known_hosts with non-standard port format
-            write_known_hosts(&kh, "example.com", 2222, &pubkey);
+        let result = check_host_key("example.com", 2222, &pubkey, &[kh], &HostKeyPolicy::Yes);
+        assert!(result.unwrap());
+    }
 
-            let result = check_host_key("example.com", 2222, &pubkey, &[kh], &HostKeyPolicy::Yes);
-            assert!(result.unwrap());
-        }
+    /// Regression test for issue #162: known_hosts file in a directory path
+    /// containing whitespace (e.g. Windows username "fa fa" -> `C:\Users\fa fa\.ssh\`).
+    /// The old wezterm-ssh backend failed on such paths; russh + PathBuf handles them.
+    #[test]
+    fn host_key_known_hosts_in_path_with_whitespace() {
+        let base = tempfile::tempdir().unwrap();
+        let spaced_dir = base.path().join("user name with spaces").join(".ssh");
+        std::fs::create_dir_all(&spaced_dir).unwrap();
 
-        /// Regression test for issue #162: known_hosts file in a directory path
-        /// containing whitespace (e.g. Windows username "fa fa" → `C:\Users\fa fa\.ssh\`).
-        /// The old wezterm-ssh backend failed on such paths; russh + PathBuf handles them.
-        #[test]
-        fn known_hosts_in_path_with_whitespace() {
-            let base = tempfile::tempdir().unwrap();
-            let spaced_dir = base.path().join("user name with spaces").join(".ssh");
-            std::fs::create_dir_all(&spaced_dir).unwrap();
+        let kh = spaced_dir.join("known_hosts");
+        let pubkey = test_keypair();
 
-            let kh = spaced_dir.join("known_hosts");
-            let pubkey = test_keypair();
+        write_known_hosts(&kh, "example.com", 22, &pubkey);
 
-            write_known_hosts(&kh, "example.com", 22, &pubkey);
+        // Verify the key can be looked up through the spaced path
+        let result = check_host_key(
+            "example.com",
+            22,
+            &pubkey,
+            std::slice::from_ref(&kh),
+            &HostKeyPolicy::Yes,
+        );
+        assert!(result.unwrap(), "Should find known key via whitespace path");
 
-            // Verify the key can be looked up through the spaced path
-            let result = check_host_key(
-                "example.com",
-                22,
-                &pubkey,
-                std::slice::from_ref(&kh),
-                &HostKeyPolicy::Yes,
-            );
-            assert!(result.unwrap(), "Should find known key via whitespace path");
+        // Also verify TOFU learning works into the spaced path
+        let kh2 = spaced_dir.join("known_hosts2");
+        let new_key = test_keypair();
+        let result = check_host_key(
+            "new-host.example.com",
+            22,
+            &new_key,
+            std::slice::from_ref(&kh2),
+            &HostKeyPolicy::AcceptNew,
+        );
+        assert!(
+            result.unwrap(),
+            "AcceptNew should learn key into whitespace path"
+        );
 
-            // Also verify TOFU learning works into the spaced path
-            let kh2 = spaced_dir.join("known_hosts2");
-            let new_key = test_keypair();
-            let result = check_host_key(
-                "new-host.example.com",
-                22,
-                &new_key,
-                std::slice::from_ref(&kh2),
-                &HostKeyPolicy::AcceptNew,
-            );
-            assert!(
-                result.unwrap(),
-                "AcceptNew should learn key into whitespace path"
-            );
-
-            // The learned key should now be found on a second check
-            let result = check_host_key(
-                "new-host.example.com",
-                22,
-                &new_key,
-                &[kh2],
-                &HostKeyPolicy::Yes,
-            );
-            assert!(result.unwrap(), "Learned key should be found on re-check");
-        }
+        // The learned key should now be found on a second check
+        let result = check_host_key(
+            "new-host.example.com",
+            22,
+            &new_key,
+            &[kh2],
+            &HostKeyPolicy::Yes,
+        );
+        assert!(result.unwrap(), "Learned key should be found on re-check");
     }
 }

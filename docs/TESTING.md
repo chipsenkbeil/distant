@@ -179,3 +179,18 @@ Don't assume error cases are "obvious" — test them explicitly.
 - Prefer `assert_eq!` and `unwrap()` over `assert!(result.is_ok())` — validate the
   value inside Ok, not just success. When exact values are unpredictable, use
   `assert!` with descriptive messages explaining what was expected
+
+### Test Organization
+
+- **No separator comments**: Do not use `// --- section ---` or similar
+  dividers in test modules. Test function names provide sufficient organization.
+- **Flat test structure**: Prefer flat test functions with descriptive names
+  over nested test modules. Use `<subject>_should_<behavior>` naming.
+  Nested modules are acceptable only when they share substantial setup code
+  (fixtures, helper functions) that would be awkward at the top level.
+  Never suffix nested modules with `_tests`.
+- **Helper method coverage**: Every helper function (public, `pub(crate)`,
+  or private) must have unit tests covering each code path. When functions
+  depend on external types that can't be constructed in tests (e.g., network
+  handles), introduce a zero-cost trait abstraction and use a mock
+  implementation.

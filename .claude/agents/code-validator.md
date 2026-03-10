@@ -89,6 +89,12 @@ Run: `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targe
 - Import ordering follows convention (std → external → crate)
 - Formatting matches `rustfmt.toml` settings
 
+### Check 10: Import Hygiene (BLOCKING)
+- Types used in signatures and pattern matches are imported at module top
+- Only module-level function calls (e.g., `russh::keys::decode_secret_key()`)
+  or name-conflict cases use inline paths
+- Module doc comments describe purpose, not implementation provenance
+
 ## Report Format
 
 ```
@@ -120,7 +126,7 @@ Files Reviewed:
 
 == Summary ==
 
-Checks passed:  N/9
+Checks passed:  N/10
 Blocking issues: N
 Warnings:        N
 
