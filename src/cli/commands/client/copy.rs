@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 use distant_core::protocol::{FileType, RemotePath};
 use distant_core::{Channel, ChannelExt};
 use log::debug;
+use typed_path::Utf8WindowsPath;
 
 use crate::cli::common::Ui;
 
@@ -23,21 +24,30 @@ enum TransferDirection {
 /// Parse src and dst strings into a transfer direction.
 ///
 /// A leading `:` marks a path as remote. Exactly one of src/dst must be remote.
-fn parse_transfer_paths(src: &str, dst: &str) -> anyhow::Result<TransferDirection> {
+/// A bare `:` (empty remote path) resolves to `default_remote` (typically server CWD).
+fn parse_transfer_paths(
+    src: &str,
+    dst: &str,
+    default_remote: &str,
+) -> anyhow::Result<TransferDirection> {
     let src_path = parse_single_path(src);
     let dst_path = parse_single_path(dst);
 
     match (src_path, dst_path) {
         (TransferPath::Local(local), TransferPath::Remote(remote)) => {
-            if remote.is_empty() {
-                bail!("Remote path is empty (did you mean `:/path`?)");
-            }
+            let remote = if remote.is_empty() {
+                default_remote.to_string()
+            } else {
+                remote
+            };
             Ok(TransferDirection::Upload { local, remote })
         }
         (TransferPath::Remote(remote), TransferPath::Local(local)) => {
-            if remote.is_empty() {
-                bail!("Remote path is empty (did you mean `:/path`?)");
-            }
+            let remote = if remote.is_empty() {
+                default_remote.to_string()
+            } else {
+                remote
+            };
             Ok(TransferDirection::Download { remote, local })
         }
         (TransferPath::Local(_), TransferPath::Local(_)) => {
@@ -56,6 +66,35 @@ fn parse_single_path(s: &str) -> TransferPath {
         TransferPath::Remote(stripped.to_string())
     } else {
         TransferPath::Local(PathBuf::from(s))
+    }
+}
+
+/// Convert a local relative path to a remote path string.
+///
+/// Replaces local path separators with the remote's separator so that
+/// e.g. `sub\file.txt` on Windows becomes `sub/file.txt` for a Unix remote.
+fn to_remote_rel(local_rel: &Path, remote_sep: char) -> String {
+    let s = local_rel.to_string_lossy();
+    if remote_sep == '\\' {
+        s.replace('/', "\\")
+    } else {
+        s.replace('\\', "/")
+    }
+}
+
+/// Convert a remote relative path to a local `PathBuf`.
+///
+/// Parses the string using the remote's path encoding, then re-encodes for
+/// the local platform so that separators are correct.
+fn to_local_rel(remote_rel: &str, remote_is_windows: bool) -> PathBuf {
+    if remote_is_windows {
+        PathBuf::from(
+            Utf8WindowsPath::new(remote_rel)
+                .with_unix_encoding()
+                .to_string(),
+        )
+    } else {
+        PathBuf::from(remote_rel)
     }
 }
 
@@ -87,7 +126,14 @@ pub async fn run_copy(
     recursive: bool,
     ui: &Ui,
 ) -> anyhow::Result<()> {
-    let direction = parse_transfer_paths(src, dst)?;
+    let system_info = channel
+        .system_info()
+        .await
+        .context("Failed to retrieve remote system info")?;
+    let remote_sep = system_info.main_separator;
+    let remote_is_windows = system_info.family.eq_ignore_ascii_case("windows");
+
+    let direction = parse_transfer_paths(src, dst, system_info.current_dir.as_str())?;
 
     match direction {
         TransferDirection::Upload { local, remote } => {
@@ -102,9 +148,9 @@ pub async fn run_copy(
                         local.display()
                     );
                 }
-                upload_dir(channel, &local, &remote, ui).await
+                upload_dir(channel, &local, &remote, remote_sep, ui).await
             } else {
-                upload_file(channel, &local, &remote, ui).await
+                upload_file(channel, &local, &remote, remote_sep, ui).await
             }
         }
         TransferDirection::Download { remote, local } => {
@@ -117,7 +163,7 @@ pub async fn run_copy(
                 if !recursive {
                     bail!("{remote} is a directory (use -r to copy recursively)");
                 }
-                download_dir(channel, &remote, &local, ui).await
+                download_dir(channel, &remote, &local, remote_sep, remote_is_windows, ui).await
             } else {
                 download_file(channel, &remote, &local, meta.len, ui).await
             }
@@ -129,14 +175,18 @@ pub async fn run_copy(
 ///
 /// Like cp/scp: if dst is an existing directory, place the source inside it
 /// with its original filename. Otherwise treat dst as the target path.
-async fn resolve_remote_dst(channel: &mut Channel, remote: &str, local_name: &str) -> String {
+async fn resolve_remote_dst(
+    channel: &mut Channel,
+    remote: &str,
+    local_name: &str,
+    remote_sep: char,
+) -> String {
     // Check if remote path is an existing directory
     if let Ok(meta) = channel.metadata(RemotePath::new(remote), false, true).await
         && meta.file_type == FileType::Dir
     {
         // Place inside the directory
-        let separator = if remote.contains('\\') { '\\' } else { '/' };
-        return format!("{remote}{separator}{local_name}");
+        return format!("{remote}{remote_sep}{local_name}");
     }
     remote.to_string()
 }
@@ -165,6 +215,7 @@ async fn upload_file(
     channel: &mut Channel,
     local: &Path,
     remote: &str,
+    remote_sep: char,
     ui: &Ui,
 ) -> anyhow::Result<()> {
     let local_name = local
@@ -172,7 +223,7 @@ async fn upload_file(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let remote = resolve_remote_dst(channel, remote, &local_name).await;
+    let remote = resolve_remote_dst(channel, remote, &local_name, remote_sep).await;
 
     let data = tokio::fs::read(local)
         .await
@@ -276,6 +327,7 @@ async fn upload_dir(
     channel: &mut Channel,
     local: &Path,
     remote: &str,
+    remote_sep: char,
     ui: &Ui,
 ) -> anyhow::Result<()> {
     let local_name = local
@@ -283,12 +335,7 @@ async fn upload_dir(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| local.display().to_string());
 
-    let remote_base = resolve_remote_dst(channel, remote, &local_name).await;
-    let separator = if remote_base.contains('\\') {
-        "\\"
-    } else {
-        "/"
-    };
+    let remote_base = resolve_remote_dst(channel, remote, &local_name, remote_sep).await;
 
     let entries = walk_local_dir(local).await?;
     let file_entries: Vec<_> = entries.iter().filter(|(_, is_dir)| !*is_dir).collect();
@@ -313,8 +360,8 @@ async fn upload_dir(
     // Create subdirectories
     for (rel_path, _) in &dir_entries {
         let remote_dir = format!(
-            "{remote_base}{separator}{}",
-            rel_path.to_string_lossy().replace('\\', separator)
+            "{remote_base}{remote_sep}{}",
+            to_remote_rel(rel_path, remote_sep)
         );
         channel
             .create_dir(RemotePath::new(&remote_dir), true)
@@ -327,8 +374,8 @@ async fn upload_dir(
     for (i, (rel_path, _)) in file_entries.iter().enumerate() {
         let local_file = local.join(rel_path);
         let remote_file = format!(
-            "{remote_base}{separator}{}",
-            rel_path.to_string_lossy().replace('\\', separator)
+            "{remote_base}{remote_sep}{}",
+            to_remote_rel(rel_path, remote_sep)
         );
 
         let data = tokio::fs::read(&local_file)
@@ -358,6 +405,8 @@ async fn download_dir(
     channel: &mut Channel,
     remote: &str,
     local: &Path,
+    remote_sep: char,
+    remote_is_windows: bool,
     ui: &Ui,
 ) -> anyhow::Result<()> {
     let remote_name = path_file_name(remote);
@@ -402,12 +451,9 @@ async fn download_dir(
         .await
         .with_context(|| format!("Failed to create directory {}", local_base.display()))?;
 
-    // Determine separator for building remote paths
-    let separator = if remote.contains('\\') { "\\" } else { "/" };
-
     // Create subdirectories
     for dir_entry in &dirs {
-        let local_dir = local_base.join(dir_entry.path.as_str());
+        let local_dir = local_base.join(to_local_rel(dir_entry.path.as_str(), remote_is_windows));
         tokio::fs::create_dir_all(&local_dir)
             .await
             .with_context(|| format!("Failed to create directory {}", local_dir.display()))?;
@@ -416,7 +462,7 @@ async fn download_dir(
     // Download files
     let mut total_size: u64 = 0;
     for (i, file_entry) in files.iter().enumerate() {
-        let local_file = local_base.join(file_entry.path.as_str());
+        let local_file = local_base.join(to_local_rel(file_entry.path.as_str(), remote_is_windows));
 
         // Ensure parent directory exists
         if let Some(parent) = local_file.parent() {
@@ -424,10 +470,7 @@ async fn download_dir(
         }
 
         // Build full remote path from base + relative entry path
-        let remote_file_path = format!(
-            "{remote}{separator}{}",
-            file_entry.path.as_str().replace('\\', separator)
-        );
+        let remote_file_path = format!("{remote}{remote_sep}{}", file_entry.path.as_str());
         let data = channel
             .read_file(RemotePath::new(&remote_file_path))
             .await
@@ -455,128 +498,119 @@ async fn download_dir(
 mod tests {
     use super::*;
 
-    mod parse_transfer_paths {
-        use super::*;
-
-        #[test]
-        fn upload_local_to_remote() {
-            let dir = parse_transfer_paths("./local.txt", ":/remote/file.txt").unwrap();
-            match dir {
-                TransferDirection::Upload { local, remote } => {
-                    assert_eq!(local, PathBuf::from("./local.txt"));
-                    assert_eq!(remote, "/remote/file.txt");
-                }
-                _ => panic!("Expected Upload"),
+    #[test]
+    fn parse_transfer_paths_should_return_upload_when_local_then_remote() {
+        let dir = parse_transfer_paths("./local.txt", ":/remote/file.txt", "/default").unwrap();
+        match dir {
+            TransferDirection::Upload { local, remote } => {
+                assert_eq!(local, PathBuf::from("./local.txt"));
+                assert_eq!(remote, "/remote/file.txt");
             }
-        }
-
-        #[test]
-        fn download_remote_to_local() {
-            let dir = parse_transfer_paths(":/remote/file.txt", "./local.txt").unwrap();
-            match dir {
-                TransferDirection::Download { remote, local } => {
-                    assert_eq!(remote, "/remote/file.txt");
-                    assert_eq!(local, PathBuf::from("./local.txt"));
-                }
-                _ => panic!("Expected Download"),
-            }
-        }
-
-        #[test]
-        fn both_local_is_error() {
-            let err = parse_transfer_paths("./a", "./b").unwrap_err();
-            assert!(
-                err.to_string().contains("Both paths are local"),
-                "Unexpected error: {err}"
-            );
-        }
-
-        #[test]
-        fn both_remote_is_error() {
-            let err = parse_transfer_paths(":/a", ":/b").unwrap_err();
-            assert!(
-                err.to_string().contains("Both paths are remote"),
-                "Unexpected error: {err}"
-            );
-        }
-
-        #[test]
-        fn colon_only_is_error() {
-            let err = parse_transfer_paths("./file", ":").unwrap_err();
-            assert!(
-                err.to_string().contains("Remote path is empty"),
-                "Unexpected error: {err}"
-            );
-        }
-
-        #[test]
-        fn remote_windows_path() {
-            let dir = parse_transfer_paths(":C:\\Users\\test\\file.txt", "./local.txt").unwrap();
-            match dir {
-                TransferDirection::Download { remote, .. } => {
-                    assert_eq!(remote, "C:\\Users\\test\\file.txt");
-                }
-                _ => panic!("Expected Download"),
-            }
+            _ => panic!("Expected Upload"),
         }
     }
 
-    mod format_bytes {
-        use super::*;
-
-        #[test]
-        fn zero_bytes() {
-            assert_eq!(format_bytes(0), "0 B");
-        }
-
-        #[test]
-        fn bytes_below_kb() {
-            assert_eq!(format_bytes(1023), "1023 B");
-        }
-
-        #[test]
-        fn exactly_one_kb() {
-            assert_eq!(format_bytes(1024), "1.0 KB");
-        }
-
-        #[test]
-        fn megabytes() {
-            assert_eq!(format_bytes(1_572_864), "1.5 MB");
-        }
-
-        #[test]
-        fn gigabytes() {
-            assert_eq!(format_bytes(2_147_483_648), "2.0 GB");
-        }
-
-        #[test]
-        fn terabytes() {
-            assert_eq!(format_bytes(1_099_511_627_776), "1.0 TB");
+    #[test]
+    fn parse_transfer_paths_should_return_download_when_remote_then_local() {
+        let dir = parse_transfer_paths(":/remote/file.txt", "./local.txt", "/default").unwrap();
+        match dir {
+            TransferDirection::Download { remote, local } => {
+                assert_eq!(remote, "/remote/file.txt");
+                assert_eq!(local, PathBuf::from("./local.txt"));
+            }
+            _ => panic!("Expected Download"),
         }
     }
 
-    mod path_file_name {
-        use super::*;
+    #[test]
+    fn parse_transfer_paths_should_error_when_both_local() {
+        let err = parse_transfer_paths("./a", "./b", "/default").unwrap_err();
+        assert!(
+            err.to_string().contains("Both paths are local"),
+            "Unexpected error: {err}"
+        );
+    }
 
-        #[test]
-        fn unix_path() {
-            assert_eq!(path_file_name("/home/user/file.txt"), "file.txt");
-        }
+    #[test]
+    fn parse_transfer_paths_should_error_when_both_remote() {
+        let err = parse_transfer_paths(":/a", ":/b", "/default").unwrap_err();
+        assert!(
+            err.to_string().contains("Both paths are remote"),
+            "Unexpected error: {err}"
+        );
+    }
 
-        #[test]
-        fn windows_path() {
-            assert_eq!(path_file_name("C:\\Users\\test\\file.txt"), "file.txt");
+    #[test]
+    fn parse_transfer_paths_should_use_default_for_bare_colon() {
+        let dir = parse_transfer_paths("./file", ":", "/home/user").unwrap();
+        match dir {
+            TransferDirection::Upload { remote, .. } => {
+                assert_eq!(remote, "/home/user");
+            }
+            _ => panic!("Expected Upload"),
         }
+    }
 
-        #[test]
-        fn bare_name() {
-            assert_eq!(path_file_name("file.txt"), "file.txt");
+    #[test]
+    fn parse_transfer_paths_should_handle_windows_remote_path() {
+        let dir =
+            parse_transfer_paths(":C:\\Users\\test\\file.txt", "./local.txt", "/default").unwrap();
+        match dir {
+            TransferDirection::Download { remote, .. } => {
+                assert_eq!(remote, "C:\\Users\\test\\file.txt");
+            }
+            _ => panic!("Expected Download"),
         }
+    }
 
-        #[test]
-        fn trailing_slash_returns_whole_path() {
-            // trailing slash means empty last component, so we return the whole path
-            assert_eq!(path_file_name("/home/user/"), "/home/user/");
-        }
+    #[test]
+    fn format_bytes_should_format_zero() {
+        assert_eq!(format_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn format_bytes_should_format_bytes() {
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_bytes_should_format_kb() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+    }
+
+    #[test]
+    fn format_bytes_should_format_mb() {
+        assert_eq!(format_bytes(1_572_864), "1.5 MB");
+    }
+
+    #[test]
+    fn format_bytes_should_format_gb() {
+        assert_eq!(format_bytes(2_147_483_648), "2.0 GB");
+    }
+
+    #[test]
+    fn format_bytes_should_format_tb() {
+        assert_eq!(format_bytes(1_099_511_627_776), "1.0 TB");
+    }
+
+    #[test]
+    fn path_file_name_should_extract_from_unix_path() {
+        assert_eq!(path_file_name("/home/user/file.txt"), "file.txt");
+    }
+
+    #[test]
+    fn path_file_name_should_extract_from_windows_path() {
+        assert_eq!(path_file_name("C:\\Users\\test\\file.txt"), "file.txt");
+    }
+
+    #[test]
+    fn path_file_name_should_return_bare_name() {
+        assert_eq!(path_file_name("file.txt"), "file.txt");
+    }
+
+    #[test]
+    fn path_file_name_should_return_whole_path_for_trailing_slash() {
+        // trailing slash means empty last component, so we return the whole path
+        assert_eq!(path_file_name("/home/user/"), "/home/user/");
     }
 }
