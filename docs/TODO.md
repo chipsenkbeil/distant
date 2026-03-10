@@ -172,29 +172,6 @@ authentication flow in `lib.rs` only loads keys from files via
 
 ---
 
-### Issue #233: Exited Unexpectedly: exit code 1
-
-- **Type:** Bug (UX)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/233
-
-**Problem:** `distant launch` or `:DistantConnect` from neovim plugin fails
-with "Exited unexpectedly: exit code 1" with no helpful error message. Root
-cause in reported cases: the distant server starts on the remote but listens
-on a port not reachable from the client (e.g. Azure VM without port exposed).
-
-**Codebase context:** The `launch` command SSHs into the remote, starts a
-distant server, then tries to connect back to the server's port. If that port
-is firewalled, the connection times out with a generic error.
-
-**Work needed:**
-1. Improve error messages for connection timeouts during launch — suggest
-   checking firewall/port accessibility
-2. Consider using SSH port forwarding during launch to avoid needing open
-   ports (related to [#165](#issue-165))
-3. Document common failure modes and troubleshooting steps
-
----
-
 ### Issue #229: Distant client-server hangs when switching networks
 
 - **Type:** Bug
@@ -356,32 +333,6 @@ operations transmit raw bytes without integrity verification.
 2. Decide on checksum algorithm (sha256 is suggested)
 3. Server computes checksum on read; validates checksum on write
 4. Protocol change — backwards compatible if optional
-
----
-
-### Issue #165: Support TCP forwarding
-
-- **Type:** Enhancement / Refactor (Breaking)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/165
-
-**Problem:** Need TCP forwarding for jump host scenarios (e.g. laptop →
-server1 → server2). Also enables SSH ProxyJump equivalent.
-
-**Codebase context:** Capability constants `CAP_TCP_TUNNEL` and
-`CAP_TCP_REV_TUNNEL` are defined but commented out in
-`distant-core/src/protocol/common/version.rs`. No TCP forwarding operations
-exist in the `Api` trait or request/response types.
-
-**Work needed:**
-1. Add request/response types mirroring process I/O: TcpOpen, TcpWrite,
-   TcpRead, TcpClose
-2. Add `Api` trait methods for TCP forwarding
-3. Implement server-side TCP connection management in `distant-host`
-4. Add `distant proxy` CLI command to listen locally and forward
-5. Support reverse proxy (server notifies client of incoming connections)
-6. Enable jump host workflow: TCP forward + connect through forwarded port
-7. Large feature with significant complexity — detailed design in issue
-   comments
 
 ---
 
@@ -552,29 +503,6 @@ behind feature flags.
 2. Split `distant-core` non-wasm code into optional features
 3. Create wasm-bindgen client that uses WebSocket transport
 4. Large scope — requires significant refactoring of core
-
----
-
-### Issue #26: Support SSH client tunneling natively
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/26
-
-**Problem:** Tunnel distant traffic through SSH (like `ssh -L`) to avoid
-needing additional open ports. Currently requires separate port allocation on
-the remote.
-
-**Codebase context:** `russh` supports `channel_direct_tcpip` which could be
-used for tunneling. This is related to [#165](#issue-165) (TCP forwarding)
-and would eliminate the need for the distant server to listen on an
-externally-accessible port.
-
-**Work needed:**
-1. Use `russh::Channel::channel_direct_tcpip()` to create a tunnel
-2. Route distant protocol traffic through the SSH channel
-3. Eliminates need for open ports on remote — solves [#233](#issue-233)
-   firewall issues too
-4. Previously blocked on wezterm-ssh; now feasible with russh
 
 ---
 
