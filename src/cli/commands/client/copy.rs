@@ -4,7 +4,7 @@ use anyhow::{Context, bail};
 use distant_core::protocol::{FileType, RemotePath};
 use distant_core::{Channel, ChannelExt};
 use log::debug;
-use typed_path::Utf8WindowsPath;
+use typed_path::{PathType, Utf8TypedPath, Utf8TypedPathBuf};
 
 use crate::cli::common::Ui;
 
@@ -69,35 +69,6 @@ fn parse_single_path(s: &str) -> TransferPath {
     }
 }
 
-/// Convert a local relative path to a remote path string.
-///
-/// Replaces local path separators with the remote's separator so that
-/// e.g. `sub\file.txt` on Windows becomes `sub/file.txt` for a Unix remote.
-fn to_remote_rel(local_rel: &Path, remote_sep: char) -> String {
-    let s = local_rel.to_string_lossy();
-    if remote_sep == '\\' {
-        s.replace('/', "\\")
-    } else {
-        s.replace('\\', "/")
-    }
-}
-
-/// Convert a remote relative path to a local `PathBuf`.
-///
-/// Parses the string using the remote's path encoding, then re-encodes for
-/// the local platform so that separators are correct.
-fn to_local_rel(remote_rel: &str, remote_is_windows: bool) -> PathBuf {
-    if remote_is_windows {
-        PathBuf::from(
-            Utf8WindowsPath::new(remote_rel)
-                .with_unix_encoding()
-                .to_string(),
-        )
-    } else {
-        PathBuf::from(remote_rel)
-    }
-}
-
 /// Format a byte count as a human-readable string.
 fn format_bytes(n: u64) -> String {
     const KB: u64 = 1024;
@@ -130,13 +101,17 @@ pub async fn run_copy(
         .system_info()
         .await
         .context("Failed to retrieve remote system info")?;
-    let remote_sep = system_info.main_separator;
-    let remote_is_windows = system_info.family.eq_ignore_ascii_case("windows");
+    let path_type = if system_info.family.eq_ignore_ascii_case("windows") {
+        PathType::Windows
+    } else {
+        PathType::Unix
+    };
 
     let direction = parse_transfer_paths(src, dst, system_info.current_dir.as_str())?;
 
     match direction {
         TransferDirection::Upload { local, remote } => {
+            let remote = Utf8TypedPath::new(&remote, path_type);
             let meta = tokio::fs::metadata(&local)
                 .await
                 .with_context(|| format!("Failed to read {}", local.display()))?;
@@ -148,24 +123,28 @@ pub async fn run_copy(
                         local.display()
                     );
                 }
-                upload_dir(channel, &local, &remote, remote_sep, ui).await
+                upload_dir(channel, &local, remote, ui).await
             } else {
-                upload_file(channel, &local, &remote, remote_sep, ui).await
+                upload_file(channel, &local, remote, ui).await
             }
         }
         TransferDirection::Download { remote, local } => {
+            let remote = Utf8TypedPath::new(&remote, path_type);
             let meta = channel
-                .metadata(RemotePath::new(&remote), false, true)
+                .metadata(RemotePath::new(remote.as_str()), false, true)
                 .await
-                .with_context(|| format!("Failed to read remote path {remote}"))?;
+                .with_context(|| format!("Failed to read remote path {}", remote.as_str()))?;
 
             if meta.file_type == FileType::Dir {
                 if !recursive {
-                    bail!("{remote} is a directory (use -r to copy recursively)");
+                    bail!(
+                        "{} is a directory (use -r to copy recursively)",
+                        remote.as_str()
+                    );
                 }
-                download_dir(channel, &remote, &local, remote_sep, remote_is_windows, ui).await
+                download_dir(channel, remote, &local, ui).await
             } else {
-                download_file(channel, &remote, &local, meta.len, ui).await
+                download_file(channel, remote, &local, meta.len, ui).await
             }
         }
     }
@@ -177,18 +156,17 @@ pub async fn run_copy(
 /// with its original filename. Otherwise treat dst as the target path.
 async fn resolve_remote_dst(
     channel: &mut Channel,
-    remote: &str,
+    remote: Utf8TypedPath<'_>,
     local_name: &str,
-    remote_sep: char,
-) -> String {
-    // Check if remote path is an existing directory
-    if let Ok(meta) = channel.metadata(RemotePath::new(remote), false, true).await
+) -> Utf8TypedPathBuf {
+    if let Ok(meta) = channel
+        .metadata(RemotePath::new(remote.as_str()), false, true)
+        .await
         && meta.file_type == FileType::Dir
     {
-        // Place inside the directory
-        return format!("{remote}{remote_sep}{local_name}");
+        return remote.join(local_name);
     }
-    remote.to_string()
+    remote.to_path_buf()
 }
 
 async fn resolve_local_dst(local: &Path, remote_name: &str) -> PathBuf {
@@ -200,22 +178,10 @@ async fn resolve_local_dst(local: &Path, remote_name: &str) -> PathBuf {
     local.to_path_buf()
 }
 
-/// Extract the last component of a path (works for both local and remote paths).
-fn path_file_name(path: &str) -> &str {
-    // Handle both / and \ separators
-    let name = path
-        .rsplit_once('/')
-        .map(|(_, name)| name)
-        .or_else(|| path.rsplit_once('\\').map(|(_, name)| name))
-        .unwrap_or(path);
-    if name.is_empty() { path } else { name }
-}
-
 async fn upload_file(
     channel: &mut Channel,
     local: &Path,
-    remote: &str,
-    remote_sep: char,
+    remote: Utf8TypedPath<'_>,
     ui: &Ui,
 ) -> anyhow::Result<()> {
     let local_name = local
@@ -223,7 +189,7 @@ async fn upload_file(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let remote = resolve_remote_dst(channel, remote, &local_name, remote_sep).await;
+    let remote = resolve_remote_dst(channel, remote, &local_name).await;
 
     let data = tokio::fs::read(local)
         .await
@@ -235,14 +201,14 @@ async fn upload_file(
         "Uploading {} ({}) to {}",
         local.display(),
         format_bytes(size),
-        remote
+        remote.as_str()
     );
     let sp = ui.spinner(&format!("Uploading {name} ({})...", format_bytes(size)));
 
     channel
-        .write_file(RemotePath::new(&remote), data)
+        .write_file(RemotePath::new(remote.as_str()), data)
         .await
-        .with_context(|| format!("Failed to write remote file {remote}"))?;
+        .with_context(|| format!("Failed to write remote file {}", remote.as_str()))?;
 
     sp.done(&format!("Uploaded {name} ({})", format_bytes(size)));
     Ok(())
@@ -250,17 +216,17 @@ async fn upload_file(
 
 async fn download_file(
     channel: &mut Channel,
-    remote: &str,
+    remote: Utf8TypedPath<'_>,
     local: &Path,
     size: u64,
     ui: &Ui,
 ) -> anyhow::Result<()> {
-    let remote_name = path_file_name(remote);
+    let remote_name = remote.file_name().unwrap_or(remote.as_str());
     let local = resolve_local_dst(local, remote_name).await;
 
     debug!(
         "Downloading {} ({}) to {}",
-        remote,
+        remote.as_str(),
         format_bytes(size),
         local.display()
     );
@@ -270,9 +236,9 @@ async fn download_file(
     ));
 
     let data = channel
-        .read_file(RemotePath::new(remote))
+        .read_file(RemotePath::new(remote.as_str()))
         .await
-        .with_context(|| format!("Failed to read remote file {remote}"))?;
+        .with_context(|| format!("Failed to read remote file {}", remote.as_str()))?;
 
     // Create parent directories if needed
     if let Some(parent) = local.parent() {
@@ -326,8 +292,7 @@ async fn walk_local_dir(base: &Path) -> anyhow::Result<Vec<(PathBuf, bool)>> {
 async fn upload_dir(
     channel: &mut Channel,
     local: &Path,
-    remote: &str,
-    remote_sep: char,
+    remote: Utf8TypedPath<'_>,
     ui: &Ui,
 ) -> anyhow::Result<()> {
     let local_name = local
@@ -335,7 +300,7 @@ async fn upload_dir(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| local.display().to_string());
 
-    let remote_base = resolve_remote_dst(channel, remote, &local_name, remote_sep).await;
+    let remote_base = resolve_remote_dst(channel, remote, &local_name).await;
 
     let entries = walk_local_dir(local).await?;
     let file_entries: Vec<_> = entries.iter().filter(|(_, is_dir)| !*is_dir).collect();
@@ -347,36 +312,42 @@ async fn upload_dir(
         local.display(),
         total_files,
         dir_entries.len(),
-        remote_base
+        remote_base.as_str()
     );
     let sp = ui.spinner(&format!("Uploading {local_name} ({total_files} files)..."));
 
     // Create the base remote directory
     channel
-        .create_dir(RemotePath::new(&remote_base), true)
+        .create_dir(RemotePath::new(remote_base.as_str()), true)
         .await
-        .with_context(|| format!("Failed to create remote directory {remote_base}"))?;
+        .with_context(|| format!("Failed to create remote directory {}", remote_base.as_str()))?;
 
     // Create subdirectories
     for (rel_path, _) in &dir_entries {
-        let remote_dir = format!(
-            "{remote_base}{remote_sep}{}",
-            to_remote_rel(rel_path, remote_sep)
-        );
+        let mut remote_dir = remote_base.clone();
+        for component in rel_path.components() {
+            if let std::path::Component::Normal(name) = component {
+                remote_dir.push(name.to_string_lossy().as_ref());
+            }
+        }
         channel
-            .create_dir(RemotePath::new(&remote_dir), true)
+            .create_dir(RemotePath::new(remote_dir.as_str()), true)
             .await
-            .with_context(|| format!("Failed to create remote directory {remote_dir}"))?;
+            .with_context(|| {
+                format!("Failed to create remote directory {}", remote_dir.as_str())
+            })?;
     }
 
     // Upload files
     let mut total_size: u64 = 0;
     for (i, (rel_path, _)) in file_entries.iter().enumerate() {
         let local_file = local.join(rel_path);
-        let remote_file = format!(
-            "{remote_base}{remote_sep}{}",
-            to_remote_rel(rel_path, remote_sep)
-        );
+        let mut remote_file = remote_base.clone();
+        for component in rel_path.components() {
+            if let std::path::Component::Normal(name) = component {
+                remote_file.push(name.to_string_lossy().as_ref());
+            }
+        }
 
         let data = tokio::fs::read(&local_file)
             .await
@@ -384,9 +355,9 @@ async fn upload_dir(
         total_size += data.len() as u64;
 
         channel
-            .write_file(RemotePath::new(&remote_file), data)
+            .write_file(RemotePath::new(remote_file.as_str()), data)
             .await
-            .with_context(|| format!("Failed to write remote file {remote_file}"))?;
+            .with_context(|| format!("Failed to write remote file {}", remote_file.as_str()))?;
 
         sp.set_message(format!(
             "Uploading {local_name} ({}/{total_files} files)...",
@@ -403,20 +374,19 @@ async fn upload_dir(
 
 async fn download_dir(
     channel: &mut Channel,
-    remote: &str,
+    remote: Utf8TypedPath<'_>,
     local: &Path,
-    remote_sep: char,
-    remote_is_windows: bool,
     ui: &Ui,
 ) -> anyhow::Result<()> {
-    let remote_name = path_file_name(remote);
+    let remote_name = remote.file_name().unwrap_or(remote.as_str());
     let local_base = resolve_local_dst(local, remote_name).await;
+    let is_windows = remote.is_windows();
 
     // Read the full remote directory listing (depth 0 = unlimited, relative paths, no root)
     let (dir_entries, failures) = channel
-        .read_dir(RemotePath::new(remote), 0, false, false, false)
+        .read_dir(RemotePath::new(remote.as_str()), 0, false, false, false)
         .await
-        .with_context(|| format!("Failed to list remote directory {remote}"))?;
+        .with_context(|| format!("Failed to list remote directory {}", remote.as_str()))?;
 
     if !failures.is_empty() {
         debug!(
@@ -437,7 +407,7 @@ async fn download_dir(
 
     debug!(
         "Downloading directory {} ({} files, {} subdirs) to {}",
-        remote,
+        remote.as_str(),
         total_files,
         dirs.len(),
         local_base.display()
@@ -453,7 +423,13 @@ async fn download_dir(
 
     // Create subdirectories
     for dir_entry in &dirs {
-        let local_dir = local_base.join(to_local_rel(dir_entry.path.as_str(), remote_is_windows));
+        let entry_typed = if is_windows {
+            Utf8TypedPath::windows(dir_entry.path.as_str())
+        } else {
+            Utf8TypedPath::unix(dir_entry.path.as_str())
+        };
+        let local_rel: PathBuf = entry_typed.components().map(|c| c.as_str()).collect();
+        let local_dir = local_base.join(local_rel);
         tokio::fs::create_dir_all(&local_dir)
             .await
             .with_context(|| format!("Failed to create directory {}", local_dir.display()))?;
@@ -462,7 +438,13 @@ async fn download_dir(
     // Download files
     let mut total_size: u64 = 0;
     for (i, file_entry) in files.iter().enumerate() {
-        let local_file = local_base.join(to_local_rel(file_entry.path.as_str(), remote_is_windows));
+        let entry_typed = if is_windows {
+            Utf8TypedPath::windows(file_entry.path.as_str())
+        } else {
+            Utf8TypedPath::unix(file_entry.path.as_str())
+        };
+        let local_rel: PathBuf = entry_typed.components().map(|c| c.as_str()).collect();
+        let local_file = local_base.join(local_rel);
 
         // Ensure parent directory exists
         if let Some(parent) = local_file.parent() {
@@ -472,9 +454,9 @@ async fn download_dir(
         }
 
         // Build full remote path from base + relative entry path
-        let remote_file_path = format!("{remote}{remote_sep}{}", file_entry.path.as_str());
+        let remote_file = remote.join(file_entry.path.as_str());
         let data = channel
-            .read_file(RemotePath::new(&remote_file_path))
+            .read_file(RemotePath::new(remote_file.as_str()))
             .await
             .with_context(|| format!("Failed to read remote file {}", file_entry.path))?;
         total_size += data.len() as u64;
@@ -499,6 +481,15 @@ async fn download_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Extract the `PathType` from a `Utf8TypedPath`.
+    fn path_type_of(path: Utf8TypedPath<'_>) -> PathType {
+        if path.is_windows() {
+            PathType::Windows
+        } else {
+            PathType::Unix
+        }
+    }
 
     #[test]
     fn parse_transfer_paths_should_return_upload_when_local_then_remote() {
@@ -596,27 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn path_file_name_should_extract_from_unix_path() {
-        assert_eq!(path_file_name("/home/user/file.txt"), "file.txt");
-    }
-
-    #[test]
-    fn path_file_name_should_extract_from_windows_path() {
-        assert_eq!(path_file_name("C:\\Users\\test\\file.txt"), "file.txt");
-    }
-
-    #[test]
-    fn path_file_name_should_return_bare_name() {
-        assert_eq!(path_file_name("file.txt"), "file.txt");
-    }
-
-    #[test]
-    fn path_file_name_should_return_whole_path_for_trailing_slash() {
-        // trailing slash means empty last component, so we return the whole path
-        assert_eq!(path_file_name("/home/user/"), "/home/user/");
-    }
-
-    #[test]
     fn parse_transfer_paths_should_use_default_for_bare_colon_as_source() {
         let dir = parse_transfer_paths(":", "./file", "/home/user").unwrap();
         match dir {
@@ -628,38 +598,14 @@ mod tests {
     }
 
     #[test]
-    fn to_remote_rel_should_convert_backslash_to_forward_slash() {
-        assert_eq!(
-            to_remote_rel(Path::new("sub\\file.txt"), '/'),
-            "sub/file.txt"
-        );
+    fn path_type_of_should_return_unix() {
+        let path = Utf8TypedPath::unix("/home/user/file.txt");
+        assert!(matches!(path_type_of(path), PathType::Unix));
     }
 
     #[test]
-    fn to_remote_rel_should_convert_forward_slash_to_backslash() {
-        assert_eq!(
-            to_remote_rel(Path::new("sub/file.txt"), '\\'),
-            "sub\\file.txt"
-        );
-    }
-
-    #[test]
-    fn to_remote_rel_should_pass_through_matching_separator() {
-        assert_eq!(
-            to_remote_rel(Path::new("sub/file.txt"), '/'),
-            "sub/file.txt"
-        );
-    }
-
-    #[test]
-    fn to_local_rel_should_convert_windows_backslash() {
-        let result = to_local_rel("sub\\file.txt", true);
-        assert_eq!(result, PathBuf::from("sub").join("file.txt"));
-    }
-
-    #[test]
-    fn to_local_rel_should_pass_through_unix_path() {
-        let result = to_local_rel("sub/file.txt", false);
-        assert_eq!(result, PathBuf::from("sub/file.txt"));
+    fn path_type_of_should_return_windows() {
+        let path = Utf8TypedPath::windows("C:\\Users\\test\\file.txt");
+        assert!(matches!(path_type_of(path), PathType::Windows));
     }
 }
