@@ -466,7 +466,9 @@ async fn download_dir(
 
         // Ensure parent directory exists
         if let Some(parent) = local_file.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         }
 
         // Build full remote path from base + relative entry path
@@ -612,5 +614,52 @@ mod tests {
     fn path_file_name_should_return_whole_path_for_trailing_slash() {
         // trailing slash means empty last component, so we return the whole path
         assert_eq!(path_file_name("/home/user/"), "/home/user/");
+    }
+
+    #[test]
+    fn parse_transfer_paths_should_use_default_for_bare_colon_as_source() {
+        let dir = parse_transfer_paths(":", "./file", "/home/user").unwrap();
+        match dir {
+            TransferDirection::Download { remote, .. } => {
+                assert_eq!(remote, "/home/user");
+            }
+            _ => panic!("Expected Download"),
+        }
+    }
+
+    #[test]
+    fn to_remote_rel_should_convert_backslash_to_forward_slash() {
+        assert_eq!(
+            to_remote_rel(Path::new("sub\\file.txt"), '/'),
+            "sub/file.txt"
+        );
+    }
+
+    #[test]
+    fn to_remote_rel_should_convert_forward_slash_to_backslash() {
+        assert_eq!(
+            to_remote_rel(Path::new("sub/file.txt"), '\\'),
+            "sub\\file.txt"
+        );
+    }
+
+    #[test]
+    fn to_remote_rel_should_pass_through_matching_separator() {
+        assert_eq!(
+            to_remote_rel(Path::new("sub/file.txt"), '/'),
+            "sub/file.txt"
+        );
+    }
+
+    #[test]
+    fn to_local_rel_should_convert_windows_backslash() {
+        let result = to_local_rel("sub\\file.txt", true);
+        assert_eq!(result, PathBuf::from("sub").join("file.txt"));
+    }
+
+    #[test]
+    fn to_local_rel_should_pass_through_unix_path() {
+        let result = to_local_rel("sub/file.txt", false);
+        assert_eq!(result, PathBuf::from("sub/file.txt"));
     }
 }
