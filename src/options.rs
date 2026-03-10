@@ -191,6 +191,14 @@ impl Options {
                     ) => {
                         network.merge(config.client.network);
                     }
+                    ClientSubcommand::Tunnel(
+                        ClientTunnelSubcommand::Open { network, .. }
+                        | ClientTunnelSubcommand::Listen { network, .. }
+                        | ClientTunnelSubcommand::Close { network, .. }
+                        | ClientTunnelSubcommand::List { network, .. },
+                    ) => {
+                        network.merge(config.client.network);
+                    }
                     ClientSubcommand::Launch {
                         distant_args,
                         distant_bin,
@@ -424,6 +432,10 @@ pub enum ClientSubcommand {
     /// Subcommands for file system operations
     #[clap(subcommand, name = "fs")]
     FileSystem(ClientFileSystemSubcommand),
+
+    /// TCP tunnel operations
+    #[clap(subcommand, name = "tunnel")]
+    Tunnel(ClientTunnelSubcommand),
 
     /// Launches the server-portion of the binary on a remote machine
     Launch {
@@ -727,6 +739,7 @@ impl ClientSubcommand {
         match self {
             Self::Connect { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
+            Self::Tunnel(sub) => sub.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
@@ -745,6 +758,7 @@ impl ClientSubcommand {
         match self {
             Self::Connect { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
+            Self::Tunnel(sub) => sub.network_settings(),
             Self::Launch { network, .. } => network,
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
@@ -766,6 +780,7 @@ impl ClientSubcommand {
             Self::Api { .. } => Format::Json,
             Self::Connect { format, .. } => *format,
             Self::FileSystem(fs) => fs.format(),
+            Self::Tunnel(sub) => sub.format(),
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
@@ -1173,6 +1188,135 @@ impl ClientFileSystemSubcommand {
             Self::SetPermissions { network, .. } => network,
             Self::Watch { network, .. } => network,
             Self::Write { network, .. } => network,
+        }
+    }
+
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        Format::Shell
+    }
+}
+
+/// Subcommands for `distant tunnel`.
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
+pub enum ClientTunnelSubcommand {
+    /// Open a forward tunnel (local port -> remote host:port)
+    Open {
+        /// Tunnel spec in format LOCAL_PORT:REMOTE_HOST:REMOTE_PORT (e.g. 8080:db-host:5432)
+        #[clap(value_name = "SPEC")]
+        spec: String,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// Open a reverse tunnel (remote port -> local host:port)
+    Listen {
+        /// Tunnel spec in format REMOTE_PORT:LOCAL_HOST:LOCAL_PORT (e.g. 9090:localhost:3000)
+        #[clap(value_name = "SPEC")]
+        spec: String,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// Close an active tunnel by ID
+    Close {
+        /// ID of the tunnel to close
+        id: u32,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// List active tunnels
+    List {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+}
+
+impl ClientTunnelSubcommand {
+    /// Returns the cache file path for this subcommand.
+    pub fn cache_path(&self) -> &Path {
+        match self {
+            Self::Open { cache, .. }
+            | Self::Listen { cache, .. }
+            | Self::Close { cache, .. }
+            | Self::List { cache, .. } => cache.as_path(),
+        }
+    }
+
+    /// Returns the network settings for this subcommand.
+    pub fn network_settings(&self) -> &NetworkSettings {
+        match self {
+            Self::Open { network, .. }
+            | Self::Listen { network, .. }
+            | Self::Close { network, .. }
+            | Self::List { network, .. } => network,
+        }
+    }
+
+    /// Returns the optional connection ID for this subcommand.
+    pub fn connection_id(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Open { connection, .. }
+            | Self::Listen { connection, .. }
+            | Self::Close { connection, .. }
+            | Self::List { connection, .. } => *connection,
         }
     }
 
