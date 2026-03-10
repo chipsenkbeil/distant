@@ -152,6 +152,11 @@ pub struct LaunchOpts {
 
     /// Timeout to use when connecting to the distant server
     pub timeout: Duration,
+
+    /// If true, the client will connect to the distant server through the SSH
+    /// channel (direct-tcpip) instead of directly via TCP. This eliminates the
+    /// need for the server port to be accessible from the client.
+    pub tunneled: bool,
 }
 
 impl Default for LaunchOpts {
@@ -160,6 +165,7 @@ impl Default for LaunchOpts {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(15),
+            tunneled: false,
         }
     }
 }
@@ -463,13 +469,21 @@ pub struct Ssh {
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
-fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::Result<String> {
+///
+/// `host_bind` controls the `--host` argument passed to the server (e.g. `"ssh"` for the normal
+/// flow or `"127.0.0.1"` for tunneled mode where the server only needs to listen on localhost).
+fn build_launch_args(
+    family: SshFamily,
+    binary: &str,
+    extra_args: &str,
+    host_bind: &str,
+) -> io::Result<String> {
     let mut args = vec![
         String::from("server"),
         String::from("listen"),
         String::from("--daemon"),
         String::from("--host"),
-        String::from("ssh"),
+        String::from(host_bind),
     ];
     args.extend(match family {
         SshFamily::Windows => winsplit::split(extra_args),
@@ -1158,9 +1172,12 @@ impl Ssh {
         Ok((client, server_ref))
     }
 
-    /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
-    /// for connecting to the launched server.
-    pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
+    /// Launch a distant server on the remote machine without consuming the [`Ssh`] handle,
+    /// returning credentials for connecting to the launched server.
+    ///
+    /// `host_bind` controls the `--host` argument to the distant server (e.g. `"ssh"` for the
+    /// normal flow, `"127.0.0.1"` for tunneled mode).
+    async fn launch_impl(&self, opts: &LaunchOpts, host_bind: &str) -> io::Result<Credentials> {
         debug!("Launching distant server: {} {}", opts.binary, opts.args);
 
         let family = self.detect_family().await?;
@@ -1173,7 +1190,7 @@ impl Ssh {
             .parse::<Host>()
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        let cmd = build_launch_args(family, &opts.binary, &opts.args)?;
+        let cmd = build_launch_args(family, &opts.binary, &opts.args, host_bind)?;
         debug!("Executing launch command: {}", cmd);
 
         // Use channel exec instead of PTY + shell to avoid interference
@@ -1257,6 +1274,12 @@ impl Ssh {
         }
     }
 
+    /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
+    /// for connecting to the launched server.
+    pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
+        self.launch_impl(&opts, "ssh").await
+    }
+
     /// Clean and format the output from a failed launch attempt for error messages.
     fn clean_launch_output(stdout: &[u8], stderr: &[u8]) -> String {
         fn clean_bytes(bytes: &[u8]) -> String {
@@ -1279,7 +1302,15 @@ impl Ssh {
     }
 
     /// Consume [`Ssh`] and launch a distant server, then connect to it as a client.
+    ///
+    /// When [`LaunchOpts::tunneled`] is true, connects through an SSH tunnel (direct-tcpip channel)
+    /// instead of directly via TCP. This eliminates the need for the server port to be accessible
+    /// from the client.
     pub async fn launch_and_connect(self, opts: LaunchOpts) -> io::Result<Client> {
+        if opts.tunneled {
+            return self.launch_and_connect_tunneled(opts).await;
+        }
+
         trace!("ssh::launch_and_connect({:?})", opts);
 
         let timeout = opts.timeout;
@@ -1305,7 +1336,7 @@ impl Ssh {
             ));
         }
 
-        let credentials = self.launch(opts).await?;
+        let credentials = self.launch_impl(&opts, "ssh").await?;
         let key = credentials.key;
 
         // Try each IP address with the same port to see if one works
@@ -1329,7 +1360,106 @@ impl Ssh {
             }
         }
 
-        Err(err.expect("Err set above"))
+        // Safety: candidate_ips is non-empty so at least one iteration ran
+        Err(err.expect("at least one connection attempt was made"))
+    }
+
+    /// Launch a distant server and connect to it through an SSH tunnel.
+    ///
+    /// The server is launched with `--host 127.0.0.1` so it only listens on localhost.
+    /// A `direct-tcpip` SSH channel is then opened to `127.0.0.1:<server_port>` and
+    /// bridged to an [`InmemoryTransport`], which is used as the client's transport.
+    ///
+    /// The SSH connection and relay task are kept alive for the lifetime of the client
+    /// by moving ownership into a background task.
+    async fn launch_and_connect_tunneled(self, opts: LaunchOpts) -> io::Result<Client> {
+        trace!("ssh::launch_and_connect_tunneled({:?})", opts);
+
+        // Launch with localhost-only binding
+        let credentials = self.launch_impl(&opts, "127.0.0.1").await?;
+        debug!(
+            "Server launched on 127.0.0.1:{}, opening SSH tunnel",
+            credentials.port
+        );
+
+        // Open direct-tcpip channel to the server through SSH
+        let channel = self
+            .handle
+            .channel_open_direct_tcpip("127.0.0.1", credentials.port as u32, "127.0.0.1", 0)
+            .await
+            .map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to open SSH tunnel to 127.0.0.1:{}: {e}",
+                    credentials.port
+                ))
+            })?;
+
+        let stream = channel.into_stream();
+
+        // Bridge the SSH ChannelStream to an InmemoryTransport using a relay task.
+        //
+        // `incoming_tx` sends data INTO the transport (SSH -> client).
+        // `outgoing_rx` receives data FROM the transport (client -> SSH).
+        let (incoming_tx, mut outgoing_rx, transport) = InmemoryTransport::make(100);
+
+        // Spawn a relay task that shuttles bytes between the SSH channel and the
+        // InmemoryTransport channels. This task also holds ownership of `self` (the
+        // Ssh handle), keeping the SSH connection alive for the client's lifetime.
+        tokio::spawn(async move {
+            // Keep the Ssh handle alive by moving it into this task's scope.
+            let _ssh = self;
+
+            let (mut read_half, mut write_half) = tokio::io::split(stream);
+
+            // SSH channel -> InmemoryTransport (so the client can read it)
+            let tx_task = tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    match read_half.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if incoming_tx.send(buf[..n].to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            debug!("SSH tunnel read error: {e}");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // InmemoryTransport -> SSH channel (what the client writes)
+            let rx_task = tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                while let Some(data) = outgoing_rx.recv().await {
+                    if write_half.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let _ = tokio::join!(tx_task, rx_task);
+            debug!("SSH tunnel relay task exiting");
+        });
+
+        // Connect the client through the tunneled transport
+        let client = NetClient::build()
+            .auth_handler(AuthHandlerMap::new().with_static_key(credentials.key))
+            .connector(transport)
+            .connect_timeout(opts.timeout)
+            .version(Version::new(
+                PROTOCOL_VERSION.major,
+                PROTOCOL_VERSION.minor,
+                PROTOCOL_VERSION.patch,
+            ))
+            .connect()
+            .await
+            .map_err(io::Error::other)?;
+
+        Ok(client)
     }
 }
 
@@ -1360,6 +1490,7 @@ mod tests {
         assert_eq!(opts.binary, "distant");
         assert!(opts.args.is_empty());
         assert_eq!(opts.timeout, Duration::from_secs(15));
+        assert!(!opts.tunneled);
     }
 
     #[tokio::test]
@@ -1717,6 +1848,7 @@ mod tests {
             binary: String::from("/usr/local/bin/distant"),
             args: String::from("--port 8080"),
             timeout: Duration::from_secs(30),
+            ..Default::default()
         };
         assert_eq!(opts.binary, "/usr/local/bin/distant");
         assert_eq!(opts.args, "--port 8080");
@@ -1736,6 +1868,7 @@ mod tests {
             binary: String::from("custom-distant"),
             args: String::from("--flag"),
             timeout: Duration::from_secs(60),
+            ..Default::default()
         };
         let cloned = opts.clone();
         assert_eq!(cloned.binary, "custom-distant");
@@ -1768,6 +1901,7 @@ mod tests {
             binary: String::new(),
             args: String::from("--daemon"),
             timeout: Duration::from_millis(500),
+            ..Default::default()
         };
         let cloned = opts.clone();
         assert!(cloned.binary.is_empty());
@@ -1781,6 +1915,7 @@ mod tests {
             binary: String::from("my-binary"),
             args: String::from("--arg1 --arg2"),
             timeout: Duration::from_secs(120),
+            ..Default::default()
         };
         let debug = format!("{:?}", opts);
         assert!(debug.contains("my-binary"), "Expected binary in '{debug}'");
@@ -2638,6 +2773,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(0),
+            ..Default::default()
         };
         assert_eq!(opts.timeout, Duration::ZERO);
     }
@@ -2648,6 +2784,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(3600),
+            ..Default::default()
         };
         assert_eq!(opts.timeout.as_secs(), 3600);
     }
@@ -2658,6 +2795,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::from("--port 8080 --host 0.0.0.0 --log-level trace"),
             timeout: Duration::from_secs(15),
+            ..Default::default()
         };
         assert!(opts.args.contains("--port"));
         assert!(opts.args.contains("--host"));
@@ -2670,6 +2808,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::from("--config '/path/to/config file.toml'"),
             timeout: Duration::from_secs(15),
+            ..Default::default()
         };
         assert!(opts.args.contains("config file.toml"));
     }
@@ -2842,32 +2981,37 @@ mod tests {
 
     #[test]
     fn launch_args_unix_empty_extra() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", "ssh").unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn launch_args_windows_empty_extra() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "", "ssh").unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn launch_args_unix_with_port() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "--port 8080").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "--port 8080", "ssh").unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
     #[test]
     fn launch_args_windows_with_port() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "--port 8080").unwrap();
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "--port 8080", "ssh").unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
     #[test]
     fn launch_args_unix_with_multiple_flags() {
-        let cmd =
-            build_launch_args(SshFamily::Unix, "distant", "--port 8080 --log-level trace").unwrap();
+        let cmd = build_launch_args(
+            SshFamily::Unix,
+            "distant",
+            "--port 8080 --log-level trace",
+            "ssh",
+        )
+        .unwrap();
         assert!(cmd.contains("--port 8080"));
         assert!(cmd.contains("--log-level trace"));
     }
@@ -2878,6 +3022,7 @@ mod tests {
             SshFamily::Unix,
             "distant",
             "--config '/path/to/config file.toml'",
+            "ssh",
         )
         .unwrap();
         // shell_words::split removes quotes and keeps the value
@@ -2887,7 +3032,7 @@ mod tests {
     #[test]
     fn launch_args_unix_invalid_quoting() {
         // Unmatched quote should produce an error
-        let result = build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed");
+        let result = build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed", "ssh");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
@@ -2899,6 +3044,7 @@ mod tests {
             SshFamily::Windows,
             "distant.exe",
             "--config \"C:\\path\\to\\config file.toml\"",
+            "ssh",
         )
         .unwrap();
         assert!(cmd.contains("distant.exe"));
@@ -2907,16 +3053,27 @@ mod tests {
 
     #[test]
     fn launch_args_custom_binary() {
-        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "", "ssh").unwrap();
         assert!(cmd.starts_with("/usr/local/bin/distant"));
         assert!(cmd.contains("server listen"));
     }
 
     #[test]
     fn launch_args_unix_double_quoted() {
-        let cmd =
-            build_launch_args(SshFamily::Unix, "distant", "--key \"value with spaces\"").unwrap();
+        let cmd = build_launch_args(
+            SshFamily::Unix,
+            "distant",
+            "--key \"value with spaces\"",
+            "ssh",
+        )
+        .unwrap();
         assert!(cmd.contains("value with spaces"));
+    }
+
+    #[test]
+    fn launch_args_tunneled_host_bind() {
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", "127.0.0.1").unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host 127.0.0.1");
     }
 
     // --- Authentication error message building tests ---
