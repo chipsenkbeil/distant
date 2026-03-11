@@ -62,7 +62,7 @@ impl FromStr for TunnelSpec {
 /// Binds a local TCP listener on `localhost:LOCAL_PORT` and for each accepted
 /// connection, opens a remote tunnel to `REMOTE_HOST:REMOTE_PORT` and relays
 /// data bidirectionally until Ctrl+C.
-pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
+pub async fn handle_open(channel: Channel, spec: &str, foreground: bool) -> CliResult {
     let spec: TunnelSpec = spec.parse().context("Failed to parse tunnel spec")?;
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", spec.bind_port))
@@ -78,8 +78,23 @@ pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
         "Forwarding 127.0.0.1:{actual_port} -> {}:{}",
         spec.host, spec.peer_port
     );
-    println!("Press Ctrl+C to stop");
 
+    if foreground {
+        println!("Press Ctrl+C to stop");
+        run_open_loop(channel, listener, spec).await
+    } else {
+        println!("Use 'distant tunnel close <id>' to stop");
+        tokio::spawn(async move {
+            if let Err(e) = run_open_loop(channel, listener, spec).await {
+                debug!("Tunnel accept loop error: {e}");
+            }
+        });
+        Ok(())
+    }
+}
+
+/// Accept loop for forward tunnel: accepts local connections and relays them.
+async fn run_open_loop(mut channel: Channel, listener: TcpListener, spec: TunnelSpec) -> CliResult {
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -128,7 +143,7 @@ pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
 /// Opens a remote listener on `REMOTE_PORT` and for each incoming connection,
 /// connects locally to `LOCAL_HOST:LOCAL_PORT` and relays data bidirectionally
 /// until Ctrl+C.
-pub async fn handle_listen(mut channel: Channel, spec: &str) -> CliResult {
+pub async fn handle_listen(channel: Channel, spec: &str, foreground: bool) -> CliResult {
     let spec: TunnelSpec = spec.parse().context("Failed to parse tunnel spec")?;
 
     let mut listener =
@@ -147,8 +162,30 @@ pub async fn handle_listen(mut channel: Channel, spec: &str) -> CliResult {
         spec.host,
         spec.peer_port
     );
-    println!("Press Ctrl+C to stop");
 
+    if foreground {
+        println!("Press Ctrl+C to stop");
+        run_listen_loop(channel, &mut listener, spec).await?;
+        let _ = listener.close().await;
+        Ok(())
+    } else {
+        println!("Use 'distant tunnel close <id>' to stop");
+        tokio::spawn(async move {
+            if let Err(e) = run_listen_loop(channel, &mut listener, spec).await {
+                debug!("Tunnel listen loop error: {e}");
+            }
+            let _ = listener.close().await;
+        });
+        Ok(())
+    }
+}
+
+/// Accept loop for reverse tunnel: accepts incoming connections and relays them locally.
+async fn run_listen_loop(
+    mut channel: Channel,
+    listener: &mut RemoteTunnelListener,
+    spec: TunnelSpec,
+) -> CliResult {
     loop {
         tokio::select! {
             incoming = listener.next() => {
@@ -203,7 +240,6 @@ pub async fn handle_listen(mut channel: Channel, spec: &str) -> CliResult {
             }
             _ = tokio::signal::ctrl_c() => {
                 println!("\nShutting down listener");
-                let _ = listener.close().await;
                 break;
             }
         }

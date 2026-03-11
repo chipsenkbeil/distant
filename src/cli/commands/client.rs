@@ -1547,11 +1547,15 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .into_channel();
 
             match sub {
-                ClientTunnelSubcommand::Open { spec, .. } => {
-                    tunnel::handle_open(channel, &spec).await?;
+                ClientTunnelSubcommand::Open {
+                    spec, foreground, ..
+                } => {
+                    tunnel::handle_open(channel, &spec, foreground).await?;
                 }
-                ClientTunnelSubcommand::Listen { spec, .. } => {
-                    tunnel::handle_listen(channel, &spec).await?;
+                ClientTunnelSubcommand::Listen {
+                    spec, foreground, ..
+                } => {
+                    tunnel::handle_listen(channel, &spec, foreground).await?;
                 }
                 ClientTunnelSubcommand::Close { id, .. } => {
                     tunnel::handle_close(channel, id).await?;
