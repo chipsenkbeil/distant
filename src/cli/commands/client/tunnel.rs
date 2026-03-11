@@ -194,10 +194,8 @@ pub async fn handle_close(mut channel: Channel, id: u32) -> CliResult {
 
 /// Handles `distant tunnel list` — lists all active tunnels and listeners.
 pub async fn handle_list(mut channel: Channel) -> CliResult {
-    let entries = channel
-        .tunnel_list()
-        .await
-        .context("Failed to list tunnels")?;
+    let info = channel.status().await.context("Failed to get status")?;
+    let entries = info.tunnels;
 
     if entries.is_empty() {
         println!("No active tunnels");

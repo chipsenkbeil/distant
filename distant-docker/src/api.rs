@@ -13,8 +13,8 @@ use distant_core::net::server::Reply;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
     ProcessId, PtySize, RemotePath, Response, SearchId, SearchQuery, SearchQueryTarget,
-    SetPermissionsOptions, SystemInfo, TunnelDirection, TunnelId, TunnelInfo, UnixMetadata,
-    Version,
+    SetPermissionsOptions, StatusInfo, SystemInfo, TunnelDirection, TunnelId, TunnelInfo,
+    UnixMetadata, Version,
 };
 use distant_core::{Api, Ctx};
 use futures::StreamExt;
@@ -1125,13 +1125,15 @@ impl Api for DockerApi {
         }
     }
 
-    fn tunnel_list(
+    fn status(
         &self,
         _ctx: Ctx,
-    ) -> impl std::future::Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
+    ) -> impl std::future::Future<Output = io::Result<StatusInfo>> + Send {
         async move {
             let tunnels = self.tunnels.read().await;
-            Ok(tunnels.values().map(|t| t.info.clone()).collect())
+            Ok(StatusInfo {
+                tunnels: tunnels.values().map(|t| t.info.clone()).collect(),
+            })
         }
     }
 }

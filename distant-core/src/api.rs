@@ -8,7 +8,7 @@ use log::*;
 
 use crate::protocol::{
     self, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelId, TunnelInfo,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId,
     Version,
 };
 
@@ -476,12 +476,12 @@ pub trait Api {
         async { unsupported("tunnel_close") }
     }
 
-    /// Lists all active tunnels and listeners.
+    /// Returns aggregated status information from the server.
     ///
-    /// *Override this, otherwise it will return "unsupported" as an error.*
+    /// The default implementation returns an empty [`StatusInfo`].
     #[allow(unused_variables)]
-    fn tunnel_list(&self, ctx: Ctx) -> impl Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
-        async { unsupported("tunnel_list") }
+    fn status(&self, ctx: Ctx) -> impl Future<Output = io::Result<StatusInfo>> + Send {
+        async { Ok(StatusInfo::default()) }
     }
 }
 
@@ -794,10 +794,10 @@ where
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::TunnelList {} => api
-            .tunnel_list(ctx)
+        protocol::Request::Status {} => api
+            .status(ctx)
             .await
-            .map(|entries| protocol::Response::TunnelEntries { entries })
+            .map(protocol::Response::StatusInfo)
             .unwrap_or_else(protocol::Response::from),
     }
 }
@@ -1160,11 +1160,11 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn default_tunnel_list_returns_unsupported() {
+    async fn default_status_returns_empty() {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
-        let err = api.tunnel_list(ctx).await.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let info = api.status(ctx).await.unwrap();
+        assert_eq!(info, StatusInfo::default());
     }
 
     #[test_log::test(tokio::test)]

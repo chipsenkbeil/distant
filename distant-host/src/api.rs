@@ -5,7 +5,7 @@ use std::{env, io};
 use distant_core::protocol::{
     ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION,
     Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SetPermissionsOptions,
-    SystemInfo, TunnelId, TunnelInfo, Version, semver,
+    StatusInfo, SystemInfo, TunnelId, Version, semver,
 };
 use distant_core::{Api as DistantApi, Ctx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
@@ -654,8 +654,9 @@ impl DistantApi for Api {
         self.state.tunnel.close(id).await
     }
 
-    async fn tunnel_list(&self, _ctx: Ctx) -> io::Result<Vec<TunnelInfo>> {
-        self.state.tunnel.list().await
+    async fn status(&self, _ctx: Ctx) -> io::Result<StatusInfo> {
+        let tunnels = self.state.tunnel.list().await?;
+        Ok(StatusInfo { tunnels })
     }
 
     async fn system_info(&self, ctx: Ctx) -> io::Result<SystemInfo> {

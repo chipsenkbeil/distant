@@ -11,7 +11,7 @@ use crate::client::{
 };
 use crate::protocol::{
     self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelId, TunnelInfo,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId,
     Version,
 };
 
@@ -181,8 +181,8 @@ pub trait ChannelExt {
     /// Closes an active tunnel or listener
     fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()>;
 
-    /// Lists all active tunnels and listeners
-    fn tunnel_list(&mut self) -> AsyncReturn<'_, Vec<TunnelInfo>>;
+    /// Returns aggregated status information from the server
+    fn status(&mut self) -> AsyncReturn<'_, StatusInfo>;
 }
 
 macro_rules! make_body {
@@ -560,9 +560,9 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn tunnel_list(&mut self) -> AsyncReturn<'_, Vec<TunnelInfo>> {
-        make_body!(self, protocol::Request::TunnelList {}, |data| match data {
-            protocol::Response::TunnelEntries { entries } => Ok(entries),
+    fn status(&mut self) -> AsyncReturn<'_, StatusInfo> {
+        make_body!(self, protocol::Request::Status {}, |data| match data {
+            protocol::Response::StatusInfo(info) => Ok(info),
             protocol::Response::Error(x) => Err(io::Error::from(x)),
             _ => Err(mismatched_response()),
         })
@@ -579,7 +579,8 @@ mod tests {
     use crate::Client;
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use crate::protocol::{
-        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, SystemInfo, Version,
+        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, StatusInfo,
+        SystemInfo, Version,
     };
     use test_log::test;
 
@@ -1714,51 +1715,51 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // tunnel_list
+    // status
     // ------------------------------------------------------------------
 
     #[test(tokio::test)]
-    async fn tunnel_list_should_return_entries_on_success() {
-        use crate::protocol::TunnelDirection;
+    async fn status_should_return_status_info_on_success() {
+        use crate::protocol::{TunnelDirection, TunnelInfo};
 
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move { channel.tunnel_list().await });
+        let task = tokio::spawn(async move { channel.status().await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::TunnelList {} => {}
+            protocol::Request::Status {} => {}
             x => panic!("Unexpected request: {:?}", x),
         }
 
-        let entries = vec![TunnelInfo {
-            id: 1,
-            direction: TunnelDirection::Forward,
-            host: String::from("localhost"),
-            port: 8080,
-        }];
+        let expected = StatusInfo {
+            tunnels: vec![TunnelInfo {
+                id: 1,
+                direction: TunnelDirection::Forward,
+                host: String::from("localhost"),
+                port: 8080,
+            }],
+        };
 
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                protocol::Response::TunnelEntries {
-                    entries: entries.clone(),
-                },
+                protocol::Response::StatusInfo(expected.clone()),
             ))
             .await
             .unwrap();
 
         let result = task.await.unwrap().unwrap();
-        assert_eq!(result, entries);
+        assert_eq!(result, expected);
     }
 
     #[test(tokio::test)]
-    async fn tunnel_list_should_return_error_on_error_response() {
+    async fn status_should_return_error_on_error_response() {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move { channel.tunnel_list().await });
+        let task = tokio::spawn(async move { channel.status().await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -1766,7 +1767,7 @@ mod tests {
                 req.id,
                 protocol::Response::Error(protocol::Error {
                     kind: protocol::ErrorKind::Other,
-                    description: String::from("list failed"),
+                    description: String::from("status failed"),
                 }),
             ))
             .await
@@ -1777,11 +1778,11 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn tunnel_list_should_return_error_on_mismatched_response() {
+    async fn status_should_return_error_on_mismatched_response() {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move { channel.tunnel_list().await });
+        let task = tokio::spawn(async move { channel.status().await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport

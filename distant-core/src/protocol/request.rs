@@ -290,8 +290,8 @@ pub enum Request {
         id: TunnelId,
     },
 
-    /// Lists all active tunnels and listeners
-    TunnelList {},
+    /// Requests aggregated status information from the server
+    Status {},
 
     /// Retrieve information about the server's protocol version
     Version {},
@@ -3289,18 +3289,18 @@ mod tests {
         }
     }
 
-    mod tunnel_list {
+    mod status {
         use super::*;
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
-            let payload = Request::TunnelList {};
+            let payload = Request::Status {};
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "tunnel_list",
+                    "type": "status",
                 })
             );
         }
@@ -3308,16 +3308,16 @@ mod tests {
         #[test]
         fn should_be_able_to_deserialize_from_json() {
             let value = serde_json::json!({
-                "type": "tunnel_list",
+                "type": "status",
             });
 
             let payload: Request = serde_json::from_value(value).unwrap();
-            assert_eq!(payload, Request::TunnelList {});
+            assert_eq!(payload, Request::Status {});
         }
 
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::TunnelList {};
+            let payload = Request::Status {};
 
             // NOTE: We don't actually check the output here because it's an implementation detail
             // and could change as we change how serialization is done. This is merely to verify
@@ -3332,10 +3332,10 @@ mod tests {
             // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::TunnelList {}).unwrap();
+            let buf = rmp_serde::encode::to_vec_named(&Request::Status {}).unwrap();
 
             let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(payload, Request::TunnelList {});
+            assert_eq!(payload, Request::Status {});
         }
     }
 }

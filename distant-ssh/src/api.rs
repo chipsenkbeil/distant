@@ -9,8 +9,8 @@ use distant_core::constants::{TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE}
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
-    Response, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, TunnelDirection, TunnelId,
-    TunnelInfo, Version,
+    Response, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo,
+    TunnelDirection, TunnelId, TunnelInfo, Version,
 };
 use distant_core::{Api, Ctx};
 use log::*;
@@ -1219,10 +1219,12 @@ impl Api for SshApi {
         }
     }
 
-    fn tunnel_list(&self, _ctx: Ctx) -> impl Future<Output = io::Result<Vec<TunnelInfo>>> + Send {
+    fn status(&self, _ctx: Ctx) -> impl Future<Output = io::Result<StatusInfo>> + Send {
         async move {
             let tunnels = self.tunnels.read().await;
-            Ok(tunnels.values().map(|t| t.info.clone()).collect())
+            Ok(StatusInfo {
+                tunnels: tunnels.values().map(|t| t.info.clone()).collect(),
+            })
         }
     }
 

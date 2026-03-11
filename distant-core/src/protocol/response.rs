@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumDiscriminants, EnumIter, EnumMessage, EnumString};
 
 use crate::protocol::common::{
-    Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, SystemInfo, TunnelId,
-    TunnelInfo, Version,
+    Change, DirEntry, Error, Metadata, ProcessId, SearchId, SearchQueryMatch, StatusInfo,
+    SystemInfo, TunnelId, Version,
 };
 
 /// Represents the payload of a successful response
@@ -176,11 +176,8 @@ pub enum Response {
         id: TunnelId,
     },
 
-    /// Response to listing active tunnels
-    TunnelEntries {
-        /// List of active tunnels and listeners
-        entries: Vec<TunnelInfo>,
-    },
+    /// Response containing aggregated status information
+    StatusInfo(StatusInfo),
 }
 
 impl From<io::Error> for Response {
@@ -2523,27 +2520,27 @@ mod tests {
         }
     }
 
-    mod tunnel_entries {
+    mod status_info {
         use super::*;
-        use crate::protocol::TunnelDirection;
+        use crate::protocol::{TunnelDirection, TunnelInfo};
 
         #[test]
         fn should_be_able_to_serialize_to_json() {
-            let payload = Response::TunnelEntries {
-                entries: vec![TunnelInfo {
+            let payload = Response::StatusInfo(StatusInfo {
+                tunnels: vec![TunnelInfo {
                     id: 1,
                     direction: TunnelDirection::Forward,
                     host: String::from("localhost"),
                     port: 8080,
                 }],
-            };
+            });
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "tunnel_entries",
-                    "entries": [
+                    "type": "status_info",
+                    "tunnels": [
                         {
                             "id": 1,
                             "direction": "forward",
@@ -2558,8 +2555,8 @@ mod tests {
         #[test]
         fn should_be_able_to_deserialize_from_json() {
             let value = serde_json::json!({
-                "type": "tunnel_entries",
-                "entries": [
+                "type": "status_info",
+                "tunnels": [
                     {
                         "id": 1,
                         "direction": "forward",
@@ -2572,41 +2569,41 @@ mod tests {
             let payload: Response = serde_json::from_value(value).unwrap();
             assert_eq!(
                 payload,
-                Response::TunnelEntries {
-                    entries: vec![TunnelInfo {
+                Response::StatusInfo(StatusInfo {
+                    tunnels: vec![TunnelInfo {
                         id: 1,
                         direction: TunnelDirection::Forward,
                         host: String::from("localhost"),
                         port: 8080,
                     }],
-                }
+                })
             );
         }
 
         #[test]
-        fn should_be_able_to_serialize_empty_entries_to_json() {
-            let payload = Response::TunnelEntries { entries: vec![] };
+        fn should_be_able_to_serialize_empty_tunnels_to_json() {
+            let payload = Response::StatusInfo(StatusInfo { tunnels: vec![] });
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "tunnel_entries",
-                    "entries": [],
+                    "type": "status_info",
+                    "tunnels": [],
                 })
             );
         }
 
         #[test]
         fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Response::TunnelEntries {
-                entries: vec![TunnelInfo {
+            let payload = Response::StatusInfo(StatusInfo {
+                tunnels: vec![TunnelInfo {
                     id: 1,
                     direction: TunnelDirection::Forward,
                     host: String::from("localhost"),
                     port: 8080,
                 }],
-            };
+            });
 
             // NOTE: We don't actually check the output here because it's an implementation detail
             // and could change as we change how serialization is done. This is merely to verify
@@ -2621,27 +2618,27 @@ mod tests {
             // verify that we are not corrupting or causing issues when serializing on a
             // client/server and then trying to deserialize on the other side. This has happened
             // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Response::TunnelEntries {
-                entries: vec![TunnelInfo {
+            let buf = rmp_serde::encode::to_vec_named(&Response::StatusInfo(StatusInfo {
+                tunnels: vec![TunnelInfo {
                     id: 1,
                     direction: TunnelDirection::Forward,
                     host: String::from("localhost"),
                     port: 8080,
                 }],
-            })
+            }))
             .unwrap();
 
             let payload: Response = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 payload,
-                Response::TunnelEntries {
-                    entries: vec![TunnelInfo {
+                Response::StatusInfo(StatusInfo {
+                    tunnels: vec![TunnelInfo {
                         id: 1,
                         direction: TunnelDirection::Forward,
                         host: String::from("localhost"),
                         port: 8080,
                     }],
-                }
+                })
             );
         }
     }
