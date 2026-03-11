@@ -125,7 +125,9 @@ impl RemoteTunnel {
         let res_task = tokio::spawn(async move {
             tokio::select! {
                 _ = abort_res_task_rx.recv() => {
-                    panic!("killed");
+                    // Abort signal received; panic is caught by tokio::spawn
+                    // as a JoinError and does not crash the process.
+                    panic!("tunnel response task aborted");
                 }
                 res = process_tunnel_incoming(id, mailbox, reader_tx, close_tx_2) => {
                     res
@@ -138,7 +140,9 @@ impl RemoteTunnel {
         let req_task = tokio::spawn(async move {
             tokio::select! {
                 _ = abort_req_task_rx.recv() => {
-                    panic!("killed");
+                    // Abort signal received; panic is caught by tokio::spawn
+                    // as a JoinError and does not crash the process.
+                    panic!("tunnel request task aborted");
                 }
                 res = process_tunnel_outgoing(id, channel, writer_rx, close_rx) => {
                     res
@@ -205,8 +209,8 @@ impl RemoteTunnel {
 
 /// Writer half for sending data through a [`RemoteTunnel`].
 ///
-/// Obtained via [`RemoteTunnel::writer`]. Wraps an `mpsc::Sender<Vec<u8>>`
-/// that feeds data to the outgoing request task.
+/// Obtained via [`RemoteTunnel::writer`]. Queues outgoing data for
+/// transmission through the tunnel's SSH or host channel.
 #[derive(Clone, Debug)]
 pub struct RemoteTunnelWriter(mpsc::Sender<Vec<u8>>);
 
@@ -245,8 +249,8 @@ impl RemoteTunnelWriter {
 
 /// Reader half for receiving data from a [`RemoteTunnel`].
 ///
-/// Obtained via [`RemoteTunnel::reader`]. Wraps an `mpsc::Receiver<Vec<u8>>`
-/// that receives data from the incoming response task.
+/// Obtained via [`RemoteTunnel::reader`]. Yields data chunks arriving
+/// through the tunnel from the remote side.
 #[derive(Debug)]
 pub struct RemoteTunnelReader(mpsc::Receiver<Vec<u8>>);
 
