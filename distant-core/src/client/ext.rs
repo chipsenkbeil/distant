@@ -175,9 +175,6 @@ pub trait ChannelExt {
         port: u16,
     ) -> AsyncReturn<'_, RemoteTunnelListener>;
 
-    /// Writes data to an active tunnel
-    fn tunnel_write(&mut self, id: TunnelId, data: impl Into<Vec<u8>>) -> AsyncReturn<'_, ()>;
-
     /// Closes an active tunnel or listener
     fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()>;
 
@@ -544,14 +541,6 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         Box::pin(async move { RemoteTunnelListener::listen(self.clone(), host, port).await })
     }
 
-    fn tunnel_write(&mut self, id: TunnelId, data: impl Into<Vec<u8>>) -> AsyncReturn<'_, ()> {
-        make_body!(
-            self,
-            protocol::Request::TunnelWrite { id, data: data.into() },
-            @ok
-        )
-    }
-
     fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
@@ -590,10 +579,6 @@ mod tests {
         let (t1, t2) = FramedTransport::pair(100);
         (t1, Client::spawn_inmemory(t2, Default::default()))
     }
-
-    // ------------------------------------------------------------------
-    // append_file
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn append_file_should_send_correct_request_and_return_ok() {
@@ -665,10 +650,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // append_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn append_file_text_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -694,10 +675,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // copy
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn copy_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -722,10 +699,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // create_dir
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn create_dir_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -749,10 +722,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // exists
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn exists_should_return_true_when_response_is_true() {
@@ -815,10 +784,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.to_string(), "Mismatched response");
     }
-
-    // ------------------------------------------------------------------
-    // is_compatible
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn is_compatible_should_return_true_for_matching_protocol_version() {
@@ -891,10 +856,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
-    // ------------------------------------------------------------------
-    // metadata
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn metadata_should_send_correct_request_and_return_metadata() {
         let (mut transport, session) = make_session();
@@ -963,10 +924,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    // ------------------------------------------------------------------
-    // set_permissions
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn set_permissions_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1005,10 +962,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // cancel_search
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn cancel_search_should_send_correct_request_and_return_ok() {
@@ -1055,10 +1008,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
-
-    // ------------------------------------------------------------------
-    // read_dir
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn read_dir_should_send_correct_request_and_return_entries() {
@@ -1126,10 +1075,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // read_file
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn read_file_should_send_correct_request_and_return_data() {
         let (mut transport, session) = make_session();
@@ -1182,10 +1127,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
-    // ------------------------------------------------------------------
-    // read_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn read_file_text_should_send_correct_request_and_return_string() {
         let (mut transport, session) = make_session();
@@ -1237,10 +1178,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // remove
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn remove_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1265,10 +1202,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // rename
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn rename_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1292,10 +1225,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // unwatch
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn unwatch_should_send_correct_request_and_return_ok() {
@@ -1342,10 +1271,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
-
-    // ------------------------------------------------------------------
-    // system_info
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn system_info_should_return_system_info_on_success() {
@@ -1422,10 +1347,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // version
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn version_should_return_version_on_success() {
         let (mut transport, session) = make_session();
@@ -1497,10 +1418,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // protocol_version
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn protocol_version_should_return_current_protocol_version() {
         let (_transport, session) = make_session();
@@ -1509,10 +1426,6 @@ mod tests {
         let version = channel.protocol_version();
         assert_eq!(version, protocol::PROTOCOL_VERSION);
     }
-
-    // ------------------------------------------------------------------
-    // write_file
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn write_file_should_send_correct_request_and_return_ok() {
@@ -1563,10 +1476,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
-    // ------------------------------------------------------------------
-    // write_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn write_file_text_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1612,111 +1521,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.to_string(), "Mismatched response");
     }
-
-    // ------------------------------------------------------------------
-    // tunnel_write
-    // ------------------------------------------------------------------
-
-    #[test(tokio::test)]
-    async fn tunnel_write_should_send_correct_request_and_return_ok() {
-        let (mut transport, session) = make_session();
-        let mut channel = session.clone_channel();
-
-        let task = tokio::spawn(async move { channel.tunnel_write(7, vec![104, 101]).await });
-
-        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
-        match req.payload {
-            protocol::Request::TunnelWrite { id, data } => {
-                assert_eq!(id, 7);
-                assert_eq!(data, [104, 101]);
-            }
-            x => panic!("Unexpected request: {:?}", x),
-        }
-
-        transport
-            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
-            .await
-            .unwrap();
-
-        task.await.unwrap().unwrap();
-    }
-
-    #[test(tokio::test)]
-    async fn tunnel_write_should_return_error_on_error_response() {
-        let (mut transport, session) = make_session();
-        let mut channel = session.clone_channel();
-
-        let task = tokio::spawn(async move { channel.tunnel_write(7, vec![1, 2]).await });
-
-        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
-        transport
-            .write_frame_for(&Response::new(
-                req.id,
-                protocol::Response::Error(protocol::Error {
-                    kind: protocol::ErrorKind::NotFound,
-                    description: String::from("tunnel not found"),
-                }),
-            ))
-            .await
-            .unwrap();
-
-        let err = task.await.unwrap().unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::NotFound);
-    }
-
-    // ------------------------------------------------------------------
-    // tunnel_close
-    // ------------------------------------------------------------------
-
-    #[test(tokio::test)]
-    async fn tunnel_close_should_send_correct_request_and_return_ok() {
-        let (mut transport, session) = make_session();
-        let mut channel = session.clone_channel();
-
-        let task = tokio::spawn(async move { channel.tunnel_close(42).await });
-
-        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
-        match req.payload {
-            protocol::Request::TunnelClose { id } => {
-                assert_eq!(id, 42);
-            }
-            x => panic!("Unexpected request: {:?}", x),
-        }
-
-        transport
-            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
-            .await
-            .unwrap();
-
-        task.await.unwrap().unwrap();
-    }
-
-    #[test(tokio::test)]
-    async fn tunnel_close_should_return_error_on_error_response() {
-        let (mut transport, session) = make_session();
-        let mut channel = session.clone_channel();
-
-        let task = tokio::spawn(async move { channel.tunnel_close(99).await });
-
-        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
-        transport
-            .write_frame_for(&Response::new(
-                req.id,
-                protocol::Response::Error(protocol::Error {
-                    kind: protocol::ErrorKind::Other,
-                    description: String::from("no such tunnel"),
-                }),
-            ))
-            .await
-            .unwrap();
-
-        let err = task.await.unwrap().unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Other);
-    }
-
-    // ------------------------------------------------------------------
-    // status
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn status_should_return_status_info_on_success() {
