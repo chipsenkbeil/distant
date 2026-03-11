@@ -15,12 +15,13 @@ use super::RemoteProcessLink;
 ///
 /// When connecting to a remote host (especially Windows with ConPTY), the remote
 /// terminal may emit escape sequences that cause problems when forwarded to the
-/// local terminal emulator. This struct defines a set of DEC private modes to
-/// strip from output, preventing issues like:
+/// local terminal emulator. This struct defines DEC private modes, resize
+/// sequences, and terminal queries to strip, preventing issues like:
 ///
 /// - Mouse tracking sequences being echoed as raw text
 /// - Focus tracking events generating noise
 /// - Window resize sequences causing feedback loops
+/// - Terminal query responses (DA, DSR, OSC color queries) polluting stdin
 ///
 /// # Examples
 ///
@@ -36,6 +37,9 @@ pub struct TerminalSanitizer {
     blocked_modes: &'static [u32],
     /// Whether to strip XTWINOPS resize sequences (`ESC[8;<rows>;<cols>t`).
     strip_xtwinops: bool,
+    /// Whether to strip terminal query sequences (DA1, DA2, DA3, DSR, DECRQM,
+    /// XTVERSION, and OSC queries ending with `?`).
+    strip_queries: bool,
 }
 
 impl TerminalSanitizer {
@@ -55,13 +59,15 @@ impl TerminalSanitizer {
             1015, // URXVT mouse mode
         ],
         strip_xtwinops: true,
+        strip_queries: true,
     };
 
     /// Filter remote output bytes, stripping blocked sequences.
     ///
-    /// Scans `input` for escape sequences matching blocked DEC private modes
-    /// and XTWINOPS resize sequences. All other bytes (including standard
-    /// CSI sequences like SGR colors and cursor movement) are passed through
+    /// Scans `input` for escape sequences matching blocked DEC private modes,
+    /// XTWINOPS resize sequences, and terminal query sequences (when
+    /// `strip_queries` is enabled). All other bytes (including standard CSI
+    /// sequences like SGR colors and cursor movement) are passed through
     /// unchanged into `out`.
     pub fn filter(&self, input: &[u8], out: &mut Vec<u8>) {
         let mut i = 0;
@@ -75,6 +81,16 @@ impl TerminalSanitizer {
                     "Filtered terminal sequence: {:02x?}",
                     &input[i..i + seq_len]
                 );
+                i += seq_len;
+                continue;
+            }
+            if input[i] == 0x1b
+                && i + 1 < input.len()
+                && input[i + 1] == b']'
+                && self.strip_queries
+                && let Some(seq_len) = self.scan_osc_query(&input[i..])
+            {
+                trace!("Filtered terminal query: {:02x?}", &input[i..i + seq_len]);
                 i += seq_len;
                 continue;
             }
@@ -94,6 +110,48 @@ impl TerminalSanitizer {
             seq.extend_from_slice(format!("\x1b[?{mode}l").as_bytes());
         }
         seq
+    }
+
+    /// Scan for an OSC query sequence starting at `buf[0] == ESC, buf[1] == ']'`.
+    ///
+    /// Matches OSC sequences whose content ends with `?` before the string
+    /// terminator (either BEL `\x07` or ST `ESC \`). These are terminal queries
+    /// (e.g., color queries like `\x1b]10;?\x07`) that would cause the local
+    /// terminal to respond with unwanted input.
+    ///
+    /// Returns the total byte length of the sequence if it is a query, or `None`
+    /// if it is a non-query OSC or the sequence is incomplete.
+    fn scan_osc_query(&self, buf: &[u8]) -> Option<usize> {
+        if buf.len() < 2 || buf[0] != 0x1b || buf[1] != b']' {
+            return None;
+        }
+
+        let mut j = 2;
+        while j < buf.len() {
+            match buf[j] {
+                // BEL terminator
+                0x07 => {
+                    if j > 2 && buf[j - 1] == b'?' {
+                        return Some(j + 1);
+                    }
+                    return None;
+                }
+                // Possible ST terminator (ESC \)
+                0x1b => {
+                    if j + 1 < buf.len() && buf[j + 1] == b'\\' {
+                        if j > 2 && buf[j - 1] == b'?' {
+                            return Some(j + 2);
+                        }
+                        return None;
+                    }
+                    return None;
+                }
+                _ => j += 1,
+            }
+        }
+
+        // Incomplete — no terminator found, pass through
+        None
     }
 
     /// Scan for a blocked sequence starting at `buf[0] == ESC, buf[1] == '['`.
@@ -121,7 +179,40 @@ impl TerminalSanitizer {
                     return Some(j + 1);
                 }
             }
+            // DECRQM: ESC[?<digits>$p
+            if self.strip_queries && buf[j] == b'$' && j + 1 < buf.len() && buf[j + 1] == b'p' {
+                return Some(j + 2);
+            }
             return None;
+        }
+
+        // CSI query sequences (DA1, DA2, DA3, DSR, XTVERSION)
+        if self.strip_queries {
+            // DA1: ESC[c or ESC[0c
+            if buf[2] == b'c' {
+                return Some(3);
+            }
+            if buf[2] == b'0' && buf.len() > 3 && buf[3] == b'c' {
+                return Some(4);
+            }
+            // DA2: ESC[>c or ESC[>0c
+            // XTVERSION: ESC[>q or ESC[>0q
+            if buf[2] == b'>' && buf.len() > 3 {
+                if buf[3] == b'c' || buf[3] == b'q' {
+                    return Some(4);
+                }
+                if buf[3] == b'0' && buf.len() > 4 && (buf[4] == b'c' || buf[4] == b'q') {
+                    return Some(5);
+                }
+            }
+            // DA3: ESC[=c
+            if buf[2] == b'=' && buf.len() > 3 && buf[3] == b'c' {
+                return Some(4);
+            }
+            // DSR: ESC[5n or ESC[6n
+            if (buf[2] == b'5' || buf[2] == b'6') && buf.len() > 3 && buf[3] == b'n' {
+                return Some(4);
+            }
         }
 
         // ESC[8;<digits>;<digits>t — XTWINOPS resize
@@ -267,10 +358,8 @@ async fn input_loop(
 mod tests {
     use super::*;
 
-    // ─── TerminalSanitizer::filter tests ───
-
     #[test]
-    fn filter_strips_focus_tracking_enable() {
+    fn filter_should_strip_focus_tracking_enable() {
         let input = b"\x1b[?1004h";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -278,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_focus_tracking_disable() {
+    fn filter_should_strip_focus_tracking_disable() {
         let input = b"\x1b[?1004l";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -286,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_win32_input_mode_enable() {
+    fn filter_should_strip_win32_input_mode_enable() {
         let input = b"\x1b[?9001h";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -294,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_win32_input_mode_disable() {
+    fn filter_should_strip_win32_input_mode_disable() {
         let input = b"\x1b[?9001l";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -302,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_xtwinops_resize() {
+    fn filter_should_strip_xtwinops_resize() {
         let input = b"\x1b[8;24;80t";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -310,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_passes_through_normal_text() {
+    fn filter_should_pass_through_normal_text() {
         let input = b"hello world";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
@@ -318,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_passes_through_standard_csi_sequences() {
+    fn filter_should_pass_through_standard_csi_sequences() {
         // SGR color: ESC[1;31m
         let input = b"\x1b[1;31m";
         let mut out = Vec::new();
@@ -333,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_handles_mixed_content() {
+    fn filter_should_strip_blocked_from_mixed_content() {
         let mut input = Vec::new();
         input.extend_from_slice(b"hello");
         input.extend_from_slice(b"\x1b[?1004h");
@@ -345,14 +434,14 @@ mod tests {
     }
 
     #[test]
-    fn filter_handles_empty_input() {
+    fn filter_should_pass_through_empty_input() {
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(b"", &mut out);
         assert!(out.is_empty());
     }
 
     #[test]
-    fn filter_handles_multiple_sequences() {
+    fn filter_should_strip_multiple_sequences() {
         let mut input = Vec::new();
         input.extend_from_slice(b"\x1b[?9001h");
         input.extend_from_slice(b"\x1b[?1004h");
@@ -365,17 +454,15 @@ mod tests {
     }
 
     #[test]
-    fn filter_passes_incomplete_esc_at_end() {
+    fn filter_should_pass_through_incomplete_esc_at_end() {
         let input = b"text\x1b";
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
         assert_eq!(out, input.to_vec());
     }
 
-    // ─── Mouse tracking mode tests ───
-
     #[test]
-    fn filter_strips_normal_mouse_tracking() {
+    fn filter_should_strip_normal_mouse_tracking() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'0', b'0', suffix];
             let mut out = Vec::new();
@@ -389,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_button_event_mouse_tracking() {
+    fn filter_should_strip_button_event_mouse_tracking() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'0', b'2', suffix];
             let mut out = Vec::new();
@@ -403,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_any_event_mouse_tracking() {
+    fn filter_should_strip_any_event_mouse_tracking() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'0', b'3', suffix];
             let mut out = Vec::new();
@@ -417,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_utf8_mouse_mode() {
+    fn filter_should_strip_utf8_mouse_mode() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'0', b'5', suffix];
             let mut out = Vec::new();
@@ -431,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_sgr_extended_mouse_mode() {
+    fn filter_should_strip_sgr_extended_mouse_mode() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'0', b'6', suffix];
             let mut out = Vec::new();
@@ -445,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_urxvt_mouse_mode() {
+    fn filter_should_strip_urxvt_mouse_mode() {
         for suffix in [b'h', b'l'] {
             let input = [0x1b, b'[', b'?', b'1', b'0', b'1', b'5', suffix];
             let mut out = Vec::new();
@@ -459,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_strips_mouse_modes_in_mixed_content() {
+    fn filter_should_strip_mouse_modes_in_mixed_content() {
         let mut input = Vec::new();
         input.extend_from_slice(b"prompt$ ");
         input.extend_from_slice(b"\x1b[?1000h");
@@ -472,16 +559,14 @@ mod tests {
         assert_eq!(out, b"prompt$ \x1b[1;32mhello");
     }
 
-    // ─── scan_sequence tests ───
-
     #[test]
-    fn scan_returns_none_for_non_csi() {
+    fn scan_sequence_should_return_none_for_non_csi() {
         assert!(TerminalSanitizer::CONPTY.scan_sequence(b"hello").is_none());
         assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1bO").is_none());
     }
 
     #[test]
-    fn scan_returns_none_for_standard_private_modes() {
+    fn scan_sequence_should_return_none_for_unblocked_modes() {
         // ?25h (show cursor) — not a blocked mode
         assert!(
             TerminalSanitizer::CONPTY
@@ -497,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_length_for_1004h() {
+    fn scan_sequence_should_return_length_for_1004h() {
         assert_eq!(
             TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1004h"),
             Some(8)
@@ -505,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_length_for_9001l() {
+    fn scan_sequence_should_return_length_for_9001l() {
         assert_eq!(
             TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?9001l"),
             Some(8)
@@ -513,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_length_for_mouse_modes() {
+    fn scan_sequence_should_return_length_for_mouse_modes() {
         assert_eq!(
             TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1000h"),
             Some(8)
@@ -541,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_length_for_xtwinops() {
+    fn scan_sequence_should_return_length_for_xtwinops() {
         assert_eq!(
             TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[8;24;80t"),
             Some(10)
@@ -553,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_returns_none_for_incomplete_sequence() {
+    fn scan_sequence_should_return_none_for_incomplete_sequence() {
         assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[").is_none());
         assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?").is_none());
         assert!(
@@ -563,10 +648,8 @@ mod tests {
         );
     }
 
-    // ─── reset_sequence tests ───
-
     #[test]
-    fn reset_sequence_disables_all_blocked_modes() {
+    fn reset_sequence_should_disable_all_blocked_modes() {
         let reset = TerminalSanitizer::CONPTY.reset_sequence();
         let reset_str = String::from_utf8(reset).unwrap();
 
@@ -580,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_sequence_uses_l_suffix() {
+    fn reset_sequence_should_use_l_suffix() {
         let reset = TerminalSanitizer::CONPTY.reset_sequence();
         let reset_str = String::from_utf8(reset).unwrap();
 
@@ -589,5 +672,183 @@ mod tests {
             !reset_str.contains('h'),
             "reset should only use 'l' (disable) suffix"
         );
+    }
+
+    #[test]
+    fn filter_should_strip_osc_foreground_query_bel() {
+        let input = b"\x1b]10;?\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip OSC 10 query (BEL): {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_osc_foreground_query_st() {
+        let input = b"\x1b]10;?\x1b\\";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip OSC 10 query (ST): {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_osc_background_query() {
+        let input = b"\x1b]11;?\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip OSC 11 query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_osc_cursor_color_query() {
+        let input = b"\x1b]12;?\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip OSC 12 query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_osc_palette_query() {
+        let input = b"\x1b]4;5;?\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip OSC 4 palette query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_pass_through_osc_title_set() {
+        let input = b"\x1b]0;My Title\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "OSC title set should pass through");
+    }
+
+    #[test]
+    fn filter_should_pass_through_osc_clipboard() {
+        let input = b"\x1b]52;c;data\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "OSC clipboard should pass through");
+    }
+
+    #[test]
+    fn filter_should_pass_through_osc_color_set() {
+        let input = b"\x1b]10;rgb:ff/ff/ff\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "OSC color set should pass through");
+    }
+
+    #[test]
+    fn filter_should_strip_da1() {
+        let input = b"\x1b[c";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DA1: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_da1_with_zero() {
+        let input = b"\x1b[0c";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DA1 with 0: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_da2() {
+        let input = b"\x1b[>c";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DA2: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_da2_with_zero() {
+        let input = b"\x1b[>0c";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DA2 with 0: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_da3() {
+        let input = b"\x1b[=c";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DA3: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_dsr_device_status() {
+        let input = b"\x1b[5n";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DSR device status: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_dsr_cursor() {
+        let input = b"\x1b[6n";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DSR cursor position: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_xtversion() {
+        let input = b"\x1b[>q";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip XTVERSION: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_xtversion_with_zero() {
+        let input = b"\x1b[>0q";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip XTVERSION with 0: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_decrqm() {
+        let input = b"\x1b[?2026$p";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DECRQM ?2026: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_decrqm_other_modes() {
+        for mode in ["2027", "2031", "2048"] {
+            let input = format!("\x1b[?{mode}$p");
+            let mut out = Vec::new();
+            TerminalSanitizer::CONPTY.filter(input.as_bytes(), &mut out);
+            assert!(out.is_empty(), "should strip DECRQM ?{mode}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn filter_should_strip_queries_in_mixed_content() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"\x1b[1;32m"); // SGR green — pass through
+        input.extend_from_slice(b"hello");
+        input.extend_from_slice(b"\x1b[c"); // DA1 — strip
+        input.extend_from_slice(b"\x1b]11;?\x07"); // OSC 11 query — strip
+        input.extend_from_slice(b" world");
+        input.extend_from_slice(b"\x1b[?2026$p"); // DECRQM — strip
+        input.extend_from_slice(b"\x1b[6n"); // DSR — strip
+
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(&input, &mut out);
+        assert_eq!(out, b"\x1b[1;32mhello world");
+    }
+
+    #[test]
+    fn filter_should_pass_through_incomplete_osc_at_end() {
+        let input = b"text\x1b]10;";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "incomplete OSC should pass through");
     }
 }
