@@ -569,22 +569,36 @@ pub struct Ssh {
     tunnel_state: Arc<SshTunnelSharedState>,
 }
 
+/// Controls which address the remote distant server binds to.
+enum HostBind {
+    /// Bind to the SSH host address (normal flow).
+    Ssh,
+    /// Bind to localhost only (tunneled flow, no exposed port).
+    Localhost,
+}
+
+impl HostBind {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Ssh => "ssh",
+            Self::Localhost => "127.0.0.1",
+        }
+    }
+}
+
 /// Build the command-line arguments for launching a distant server remotely.
-///
-/// `host_bind` controls the `--host` argument passed to the server (e.g. `"ssh"` for the normal
-/// flow or `"127.0.0.1"` for tunneled mode where the server only needs to listen on localhost).
 fn build_launch_args(
     family: SshFamily,
     binary: &str,
     extra_args: &str,
-    host_bind: &str,
+    host_bind: HostBind,
 ) -> io::Result<String> {
     let mut args = vec![
         String::from("server"),
         String::from("listen"),
         String::from("--daemon"),
         String::from("--host"),
-        String::from(host_bind),
+        String::from(host_bind.as_str()),
     ];
     args.extend(match family {
         SshFamily::Windows => winsplit::split(extra_args),
@@ -1279,9 +1293,8 @@ impl Ssh {
     /// Launch a distant server on the remote machine without consuming the [`Ssh`] handle,
     /// returning credentials for connecting to the launched server.
     ///
-    /// `host_bind` controls the `--host` argument to the distant server (e.g. `"ssh"` for the
-    /// normal flow, `"127.0.0.1"` for tunneled mode).
-    async fn launch_impl(&self, opts: &LaunchOpts, host_bind: &str) -> io::Result<Credentials> {
+    /// `host_bind` controls the `--host` argument to the distant server.
+    async fn launch_impl(&self, opts: &LaunchOpts, host_bind: HostBind) -> io::Result<Credentials> {
         debug!("Launching distant server: {} {}", opts.binary, opts.args);
 
         let family = self.detect_family().await?;
@@ -1381,7 +1394,7 @@ impl Ssh {
     /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
     /// for connecting to the launched server.
     pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
-        self.launch_impl(&opts, "ssh").await
+        self.launch_impl(&opts, HostBind::Ssh).await
     }
 
     /// Clean and format the output from a failed launch attempt for error messages.
@@ -1440,7 +1453,7 @@ impl Ssh {
             ));
         }
 
-        let credentials = self.launch_impl(&opts, "ssh").await?;
+        let credentials = self.launch_impl(&opts, HostBind::Ssh).await?;
         let key = credentials.key;
 
         // Try each IP address with the same port to see if one works
@@ -1480,13 +1493,14 @@ impl Ssh {
         trace!("ssh::launch_and_connect_tunneled({:?})", opts);
 
         // Launch with localhost-only binding
-        let credentials = self.launch_impl(&opts, "127.0.0.1").await?;
+        let credentials = self.launch_impl(&opts, HostBind::Localhost).await?;
         debug!(
             "Server launched on 127.0.0.1:{}, opening SSH tunnel",
             credentials.port
         );
 
-        // Open direct-tcpip channel to the server through SSH
+        // Open direct-tcpip channel to the server through SSH.
+        // Originator port 0: OS-assigned ephemeral port, only used for logging.
         let channel = self
             .handle
             .channel_open_direct_tcpip("127.0.0.1", credentials.port as u32, "127.0.0.1", 0)
@@ -3084,29 +3098,31 @@ mod tests {
 
     // --- Launch argument building tests ---
 
-    use super::build_launch_args;
+    use super::{HostBind, build_launch_args};
 
     #[test]
     fn launch_args_unix_empty_extra() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "", "ssh").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn launch_args_windows_empty_extra() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "", "ssh").unwrap();
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn launch_args_unix_with_port() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "--port 8080", "ssh").unwrap();
+        let cmd =
+            build_launch_args(SshFamily::Unix, "distant", "--port 8080", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
     #[test]
     fn launch_args_windows_with_port() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "--port 8080", "ssh").unwrap();
+        let cmd =
+            build_launch_args(SshFamily::Windows, "distant", "--port 8080", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
@@ -3116,7 +3132,7 @@ mod tests {
             SshFamily::Unix,
             "distant",
             "--port 8080 --log-level trace",
-            "ssh",
+            HostBind::Ssh,
         )
         .unwrap();
         assert!(cmd.contains("--port 8080"));
@@ -3129,7 +3145,7 @@ mod tests {
             SshFamily::Unix,
             "distant",
             "--config '/path/to/config file.toml'",
-            "ssh",
+            HostBind::Ssh,
         )
         .unwrap();
         // shell_words::split removes quotes and keeps the value
@@ -3139,7 +3155,8 @@ mod tests {
     #[test]
     fn launch_args_unix_invalid_quoting() {
         // Unmatched quote should produce an error
-        let result = build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed", "ssh");
+        let result =
+            build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed", HostBind::Ssh);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
@@ -3151,7 +3168,7 @@ mod tests {
             SshFamily::Windows,
             "distant.exe",
             "--config \"C:\\path\\to\\config file.toml\"",
-            "ssh",
+            HostBind::Ssh,
         )
         .unwrap();
         assert!(cmd.contains("distant.exe"));
@@ -3160,7 +3177,8 @@ mod tests {
 
     #[test]
     fn launch_args_custom_binary() {
-        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "", "ssh").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "", HostBind::Ssh)
+            .unwrap();
         assert!(cmd.starts_with("/usr/local/bin/distant"));
         assert!(cmd.contains("server listen"));
     }
@@ -3171,7 +3189,7 @@ mod tests {
             SshFamily::Unix,
             "distant",
             "--key \"value with spaces\"",
-            "ssh",
+            HostBind::Ssh,
         )
         .unwrap();
         assert!(cmd.contains("value with spaces"));
@@ -3179,7 +3197,7 @@ mod tests {
 
     #[test]
     fn launch_args_tunneled_host_bind() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "", "127.0.0.1").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", HostBind::Localhost).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host 127.0.0.1");
     }
 
