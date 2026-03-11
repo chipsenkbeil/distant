@@ -13,6 +13,12 @@ use super::stdin;
 /// Maximum time to wait for stdout/stderr to drain after process exit.
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// A boxed closure that filters stdout bytes before writing to the local terminal.
+///
+/// Receives raw bytes from the remote process and writes filtered output into the
+/// provided `Vec`. If the filter produces empty output, the write is skipped.
+pub(crate) type StdoutFilter = Box<dyn Fn(&[u8], &mut Vec<u8>) + Send>;
+
 /// Represents a link between a remote process' stdin/stdout/stderr and this process'
 /// stdin/stdout/stderr
 pub struct RemoteProcessLink {
@@ -43,7 +49,7 @@ macro_rules! from_pipes {
             stdin_thread = Some(thread);
             stdin_task = Some(task);
         }
-        let stdout_filter: Option<fn(&[u8], &mut Vec<u8>)> = $stdout_filter;
+        let stdout_filter: Option<StdoutFilter> = $stdout_filter;
         let stdout_task = tokio::spawn(async move {
             let handle = io::stdout();
             let mut filtered_buf = if stdout_filter.is_some() {
@@ -59,7 +65,7 @@ macro_rules! from_pipes {
                             output.len(),
                             &output[..output.len().min(64)]
                         );
-                        if let Some(filter) = stdout_filter {
+                        if let Some(ref filter) = stdout_filter {
                             filtered_buf.clear();
                             filter(&output, &mut filtered_buf);
                             if !filtered_buf.is_empty() {
@@ -132,7 +138,7 @@ impl RemoteProcessLink {
         mut stdout: RemoteStdout,
         mut stderr: RemoteStderr,
         max_pipe_chunk_size: usize,
-        stdout_filter: fn(&[u8], &mut Vec<u8>),
+        stdout_filter: StdoutFilter,
     ) -> Self {
         from_pipes!(
             stdin,

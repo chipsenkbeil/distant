@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -9,7 +10,8 @@ use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
 use termwiz::terminal::{Terminal, new_terminal};
 use tokio::task::JoinHandle;
 
-use super::RemoteProcessLink;
+use super::predict::{PredictMode, PredictionAction, PredictionEngine};
+use super::{RemoteProcessLink, StdoutFilter};
 
 /// Configures which terminal escape sequences to strip from remote output.
 ///
@@ -267,7 +269,11 @@ impl TerminalSession {
     ///
     /// Returns an error if terminal capabilities cannot be loaded or the
     /// terminal cannot be created or set to raw mode.
-    pub fn start(proc: &mut RemoteProcess, max_chunk_size: usize) -> anyhow::Result<Self> {
+    pub fn start(
+        proc: &mut RemoteProcess,
+        max_chunk_size: usize,
+        predict_mode: PredictMode,
+    ) -> anyhow::Result<Self> {
         let mut terminal = new_terminal(
             Capabilities::new_from_env().context("Failed to load terminal capabilities")?,
         )
@@ -276,18 +282,40 @@ impl TerminalSession {
 
         let mut stdin = proc.stdin.take().unwrap();
         let resizer = proc.clone_resizer();
+
+        let (engine_for_input, engine_for_output) = if predict_mode != PredictMode::Off {
+            let engine = Arc::new(Mutex::new(PredictionEngine::new(predict_mode)));
+            (Some(Arc::clone(&engine)), Some(engine))
+        } else {
+            (None, None)
+        };
+
         let input_task = tokio::spawn(async move {
-            input_loop(&mut terminal, &mut stdin, resizer).await;
+            input_loop(&mut terminal, &mut stdin, resizer, engine_for_input).await;
         });
 
-        // Create output link with ConPTY filter.
-        // The closure is non-capturing so it coerces to a fn pointer.
+        // Create output link with ConPTY sanitizer and optional prediction filter.
+        let stdout_filter: StdoutFilter = if let Some(engine_out) = engine_for_output {
+            Box::new(move |input, out| {
+                let mut sanitized = Vec::with_capacity(input.len());
+                TerminalSanitizer::CONPTY.filter(input, &mut sanitized);
+                // Safety: lock poisoning indicates a panic in the other task;
+                // propagating the panic here is the correct response.
+                engine_out
+                    .lock()
+                    .expect("prediction engine lock poisoned")
+                    .process_server_output(&sanitized, out);
+            })
+        } else {
+            Box::new(|input, out| TerminalSanitizer::CONPTY.filter(input, out))
+        };
+
         let link = RemoteProcessLink::from_remote_pipes_filtered(
             None,
             proc.stdout.take().unwrap(),
             proc.stderr.take().unwrap(),
             max_chunk_size,
-            |input, out| TerminalSanitizer::CONPTY.filter(input, out),
+            stdout_filter,
         );
 
         Ok(Self {
@@ -316,15 +344,21 @@ impl TerminalSession {
 }
 
 /// Input handling loop: reads terminal events and forwards them to the remote process.
+///
+/// When `engine` is `Some`, keystrokes are fed to the prediction engine and
+/// speculative local echo is written to stdout before the server round-trip
+/// completes. Resize events are also forwarded to the engine so it can track
+/// terminal width.
 async fn input_loop(
     terminal: &mut impl Terminal,
     stdin: &mut RemoteStdin,
     resizer: RemoteProcessResizer,
+    engine: Option<Arc<Mutex<PredictionEngine>>>,
 ) {
     while let Ok(input) = terminal.poll_input(Some(Duration::new(0, 0))) {
         match input {
             Some(InputEvent::Key(ev)) => {
-                if let Ok(input) = ev.key.encode(
+                if let Ok(encoded) = ev.key.encode(
                     ev.modifiers,
                     KeyCodeEncodeModes {
                         encoding: KeyboardEncoding::Xterm,
@@ -333,13 +367,52 @@ async fn input_loop(
                         modify_other_keys: None,
                     },
                     /* is_down */ true,
-                ) && let Err(x) = stdin.write_str(input).await
-                {
-                    error!("Failed to write to stdin of remote process: {}", x);
-                    break;
+                ) {
+                    // Feed the encoded keystroke to the prediction engine.
+                    if let Some(ref engine) = engine {
+                        let mut guard = engine.lock().expect("prediction engine lock poisoned");
+                        let action = guard.on_keystroke(&encoded);
+                        let should_display = guard.should_display();
+                        let should_underline = guard.should_underline();
+                        drop(guard);
+
+                        if should_display {
+                            use std::io::Write;
+                            let stdout = std::io::stdout();
+                            let mut out = stdout.lock();
+                            match action {
+                                PredictionAction::DisplayChar(ch) => {
+                                    if should_underline {
+                                        let _ = out.write_all(b"\x1b[4m");
+                                        let _ = write!(out, "{}", ch);
+                                        let _ = out.write_all(b"\x1b[24m");
+                                    } else {
+                                        let _ = write!(out, "{}", ch);
+                                    }
+                                    let _ = out.flush();
+                                }
+                                PredictionAction::DisplayBackspace => {
+                                    let _ = out.write_all(b"\x1b[D\x1b[K");
+                                    let _ = out.flush();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    if let Err(x) = stdin.write_str(encoded).await {
+                        error!("Failed to write to stdin of remote process: {}", x);
+                        break;
+                    }
                 }
             }
             Some(InputEvent::Resized { cols, rows }) => {
+                if let Some(ref engine) = engine {
+                    engine
+                        .lock()
+                        .expect("prediction engine lock poisoned")
+                        .resize(cols);
+                }
                 if let Err(x) = resizer
                     .resize(PtySize::from_rows_and_cols(rows as u16, cols as u16))
                     .await

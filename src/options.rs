@@ -18,6 +18,7 @@ use distant_core::net::server::Shutdown;
 use distant_core::protocol::ChangeKind;
 use service_manager::ServiceManagerKind;
 
+use crate::cli::PredictMode;
 use crate::constants;
 use crate::constants::user::CACHE_FILE_PATH_STR;
 
@@ -545,6 +546,11 @@ pub enum ClientSubcommand {
         #[clap(long, default_value_t)]
         environment: Map,
 
+        /// Predictive local echo mode for reduced perceived latency.
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        #[clap(long, default_value = "adaptive", value_enum)]
+        predict: PredictMode,
+
         /// Optional command to run instead of $SHELL
         #[clap(name = "CMD", last = true)]
         cmd: Option<Vec<String>>,
@@ -591,6 +597,11 @@ pub enum ClientSubcommand {
         /// Environment variables to provide to the shell
         #[clap(long, default_value_t)]
         environment: Map,
+
+        /// Predictive local echo mode for PTY sessions.
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        #[clap(long, default_value = "adaptive", value_enum)]
+        predict: PredictMode,
 
         /// If present, commands are read from the provided string
         #[clap(short = 'c', long = "cmd", conflicts_with = "CMD")]
@@ -683,6 +694,11 @@ pub enum ClientSubcommand {
         /// Environment variables to provide to the remote shell
         #[clap(long, default_value_t)]
         environment: Map,
+
+        /// Predictive local echo mode for reduced perceived latency.
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        #[clap(long, default_value = "adaptive", value_enum)]
+        predict: PredictMode,
 
         /// Force a new connection even if one to the same destination already exists
         #[clap(long)]
@@ -2052,6 +2068,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 cmd: None,
             }),
         };
@@ -2089,6 +2106,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
+                    predict: PredictMode::Adaptive,
                     cmd: None,
                 }),
             }
@@ -2113,6 +2131,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: map!(),
+                predict: PredictMode::Adaptive,
                 cmd: None,
             }),
         };
@@ -2150,6 +2169,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
+                    predict: PredictMode::Adaptive,
                     cmd: None,
                 }),
             }
@@ -2174,6 +2194,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: map!(),
+                predict: PredictMode::Adaptive,
                 lsp: Some(None),
                 shell: Some(None),
                 pty: true,
@@ -2215,6 +2236,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
+                    predict: PredictMode::Adaptive,
                     lsp: Some(None),
                     shell: Some(None),
                     pty: true,
@@ -2243,6 +2265,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: map!(),
+                predict: PredictMode::Adaptive,
                 lsp: Some(None),
                 shell: Some(None),
                 pty: true,
@@ -2284,6 +2307,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: map!(),
+                    predict: PredictMode::Adaptive,
                     lsp: Some(None),
                     shell: Some(None),
                     pty: true,
@@ -4733,6 +4757,7 @@ mod tests {
             network: NetworkSettings::default(),
             current_dir: None,
             environment: Default::default(),
+            predict: PredictMode::Adaptive,
             cmd: None,
         };
         assert_eq!(cmd.format(), Format::Shell);
@@ -4746,6 +4771,7 @@ mod tests {
             network: NetworkSettings::default(),
             current_dir: None,
             environment: Default::default(),
+            predict: PredictMode::Adaptive,
             lsp: None,
             shell: None,
             pty: false,
@@ -4764,6 +4790,7 @@ mod tests {
             network: NetworkSettings::default(),
             current_dir: None,
             environment: Default::default(),
+            predict: PredictMode::Adaptive,
             new: false,
             destination: "test://host".to_string(),
             cmd: None,
@@ -4963,6 +4990,7 @@ mod tests {
                 network: net.clone(),
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 cmd: None,
             },
             ClientSubcommand::Spawn {
@@ -4971,6 +4999,7 @@ mod tests {
                 network: net.clone(),
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 lsp: None,
                 shell: None,
                 pty: false,
@@ -4995,6 +5024,7 @@ mod tests {
                 network: net.clone(),
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 new: false,
                 destination: "test://host".to_string(),
                 cmd: None,
@@ -5170,6 +5200,7 @@ mod tests {
                 network: net.clone(),
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 new: false,
                 destination: "test://host".to_string(),
                 cmd: None,
@@ -5467,6 +5498,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 new: false,
                 destination: "test://host".to_string(),
                 cmd: None,
@@ -5509,6 +5541,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: Default::default(),
+                    predict: PredictMode::Adaptive,
                     new: false,
                     destination: "test://host".to_string(),
                     cmd: None,
@@ -5536,6 +5569,7 @@ mod tests {
                 },
                 current_dir: None,
                 environment: Default::default(),
+                predict: PredictMode::Adaptive,
                 new: false,
                 destination: "test://host".to_string(),
                 cmd: None,
@@ -5578,6 +5612,7 @@ mod tests {
                     },
                     current_dir: None,
                     environment: Default::default(),
+                    predict: PredictMode::Adaptive,
                     new: false,
                     destination: "test://host".to_string(),
                     cmd: None,

@@ -5,6 +5,7 @@ use distant_core::protocol::{Environment, PtySize, RemotePath};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use terminal_size::{Height, Width, terminal_size};
 
+use super::super::common::predict::PredictMode;
 use super::super::common::terminal::TerminalSession;
 use super::{CliError, CliResult};
 
@@ -40,6 +41,7 @@ impl Shell {
         mut environment: Environment,
         current_dir: Option<PathBuf>,
         max_chunk_size: usize,
+        predict_mode: PredictMode,
     ) -> CliResult {
         ensure_term_env(&mut environment);
 
@@ -68,7 +70,7 @@ impl Shell {
             .await
             .with_context(|| format!("Failed to spawn {cmd}"))?;
 
-        let session = TerminalSession::start(&mut proc, max_chunk_size)?;
+        let session = TerminalSession::start(&mut proc, max_chunk_size, predict_mode)?;
         let status = proc.wait().await.context("Failed to wait for process")?;
         session.shutdown().await;
 

@@ -1,5 +1,5 @@
 pub mod client;
-mod common;
+pub(crate) mod common;
 pub mod generate;
 pub mod manager;
 #[cfg(feature = "host")]

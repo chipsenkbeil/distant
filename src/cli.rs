@@ -6,6 +6,8 @@ use crate::{CliResult, Options};
 mod commands;
 mod common;
 
+pub(crate) use commands::common::predict::PredictMode;
+
 pub(crate) use common::Manager;
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
