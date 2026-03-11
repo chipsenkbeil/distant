@@ -78,7 +78,7 @@ All checks are **BLOCKING** unless marked otherwise.
 - Platform-specific dependencies in correct `target` cfg sections
 
 ### Check 8: Compilation & Linting (BLOCKING)
-Run: `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targets`
+Run: `cargo clippy --all-features --workspace --all-targets`
 - Zero warnings
 - Zero errors
 - Pay attention to `#[cfg(windows)]` blocks that may have issues
@@ -88,6 +88,12 @@ Run: `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targe
 - New code matches patterns in surrounding files
 - Import ordering follows convention (std → external → crate)
 - Formatting matches `rustfmt.toml` settings
+
+### Check 10: Import Hygiene (BLOCKING)
+- Types used in signatures and pattern matches are imported at module top
+- Only module-level function calls (e.g., `russh::keys::decode_secret_key()`)
+  or name-conflict cases use inline paths
+- Module doc comments describe purpose, not implementation provenance
 
 ## Report Format
 
@@ -120,7 +126,7 @@ Files Reviewed:
 
 == Summary ==
 
-Checks passed:  N/9
+Checks passed:  N/10
 Blocking issues: N
 Warnings:        N
 

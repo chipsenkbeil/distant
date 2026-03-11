@@ -49,5 +49,5 @@ test-log = "0.2.19"
 which = "8.0.0"
 whoami = "2.1.1"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
+[lints]
+workspace = true

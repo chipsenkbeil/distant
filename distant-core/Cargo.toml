@@ -44,6 +44,9 @@ tokio = { version = "1.50.0", features = ["full"] }
 libc = "0.2"
 socket2 = "0.6"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 env_logger = "0.11.9"
 tempfile = "3.26.0"

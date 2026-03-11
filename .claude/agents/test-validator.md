@@ -43,7 +43,7 @@ Do not validate against assumptions — validate against the actual project stat
 
 ## 2. Validation Checks
 
-Run ALL 10 checks against every test file under review. **BLOCKING** means the
+Run ALL 13 checks against every test file under review. **BLOCKING** means the
 main agent cannot proceed until the issue is fixed.
 
 ### Check 1: Smoke Tests (BLOCKING)
@@ -119,6 +119,22 @@ Analyze failures:
 - Every `Child` from `spawn()` has a `.kill()` call or `Drop`-implementing wrapper
 - No orphaned processes
 
+### Check 11: Separator Comments (BLOCKING)
+
+Search for `// ---` or `// ===` patterns in test code. Flag any section
+separator comments.
+
+### Check 12: Test Module Organization (BLOCKING)
+
+Flag nested test modules with `_tests` suffix. Verify test names follow
+`<subject>_should_<behavior>` flat naming convention.
+
+### Check 13: Helper Function Coverage (BLOCKING)
+
+For each helper function (public, `pub(crate)`, or private) in new/modified
+modules, verify unit tests exist covering each code path. Flag untested
+functions or uncovered branches.
+
 ## 3. Process Cleanup Validation (Deep Check)
 
 1. Find all `spawn()` calls in test code
@@ -152,7 +168,7 @@ Files Reviewed:
 
 == Summary ==
 
-Checks passed:  N/10
+Checks passed:  N/13
 Blocking issues: N
 Warnings:        N
 

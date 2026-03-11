@@ -39,5 +39,5 @@ predicates = "3.1.4"
 rstest = "0.26.1"
 test-log = "0.2.19"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
+[lints]
+workspace = true

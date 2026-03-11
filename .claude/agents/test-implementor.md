@@ -178,6 +178,9 @@ All tests: PASS / FAIL (details)
 - [ ] All container paths cleaned up before and after
 - [ ] All spawned processes killed and waited on
 - [ ] No `#[ignore]` without platform-gated justification
+- [ ] No separator comments (`// --- section ---`)
+- [ ] No nested test modules with `_tests` suffix — prefer flat names
+- [ ] All helper functions have per-code-path unit tests
 - [ ] `cargo fmt --all` passes
 - [ ] `cargo clippy --all-features --workspace --all-targets` passes
 - [ ] `cargo test --all-features -p <crate>` passes
