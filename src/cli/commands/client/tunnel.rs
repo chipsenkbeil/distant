@@ -1,4 +1,5 @@
 use std::io;
+use std::str::FromStr;
 
 use anyhow::Context;
 use distant_core::constants::TUNNEL_RELAY_BUFFER_SIZE;
@@ -10,27 +11,50 @@ use tokio::net::TcpListener;
 
 use super::CliResult;
 
-/// Parses a tunnel spec in the format `PORT:HOST:PORT`.
+/// Parsed tunnel spec from the `PORT:HOST:PORT` format.
 ///
-/// Uses `rfind(':')` to handle IPv6 hosts like `[::1]`.
-fn parse_tunnel_spec(spec: &str) -> io::Result<(u16, String, u16)> {
-    let first_colon = spec
-        .find(':')
-        .ok_or_else(|| io::Error::other(format!("Invalid tunnel spec: {spec}")))?;
-    let local_port: u16 = spec[..first_colon]
-        .parse()
-        .map_err(|e| io::Error::other(format!("Invalid local port: {e}")))?;
+/// Field semantics depend on the command:
+/// - `tunnel open`: `bind_port` is local, `host`:`peer_port` is remote target
+/// - `tunnel listen`: `bind_port` is remote, `host`:`peer_port` is local target
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelSpec {
+    /// The port on the side that binds/listens (left side of spec).
+    pub bind_port: u16,
+    /// The host to connect to (middle of spec).
+    pub host: String,
+    /// The port to connect to on the host (right side of spec).
+    pub peer_port: u16,
+}
 
-    let rest = &spec[first_colon + 1..];
-    let last_colon = rest
-        .rfind(':')
-        .ok_or_else(|| io::Error::other(format!("Invalid tunnel spec: {spec}")))?;
-    let host = rest[..last_colon].to_string();
-    let remote_port: u16 = rest[last_colon + 1..]
-        .parse()
-        .map_err(|e| io::Error::other(format!("Invalid remote port: {e}")))?;
+impl FromStr for TunnelSpec {
+    type Err = io::Error;
 
-    Ok((local_port, host, remote_port))
+    /// Parses a tunnel spec in the format `PORT:HOST:PORT`.
+    ///
+    /// Uses `rfind(':')` to handle IPv6 hosts like `[::1]`.
+    fn from_str(spec: &str) -> Result<Self, Self::Err> {
+        let first_colon = spec
+            .find(':')
+            .ok_or_else(|| io::Error::other(format!("Invalid tunnel spec: {spec}")))?;
+        let bind_port: u16 = spec[..first_colon]
+            .parse()
+            .map_err(|e| io::Error::other(format!("Invalid bind port: {e}")))?;
+
+        let rest = &spec[first_colon + 1..];
+        let last_colon = rest
+            .rfind(':')
+            .ok_or_else(|| io::Error::other(format!("Invalid tunnel spec: {spec}")))?;
+        let host = rest[..last_colon].to_string();
+        let peer_port: u16 = rest[last_colon + 1..]
+            .parse()
+            .map_err(|e| io::Error::other(format!("Invalid peer port: {e}")))?;
+
+        Ok(Self {
+            bind_port,
+            host,
+            peer_port,
+        })
+    }
 }
 
 /// Handles `distant tunnel open` — local port forwarding.
@@ -39,19 +63,21 @@ fn parse_tunnel_spec(spec: &str) -> io::Result<(u16, String, u16)> {
 /// connection, opens a remote tunnel to `REMOTE_HOST:REMOTE_PORT` and relays
 /// data bidirectionally until Ctrl+C.
 pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
-    let (local_port, remote_host, remote_port) =
-        parse_tunnel_spec(spec).context("Failed to parse tunnel spec")?;
+    let spec: TunnelSpec = spec.parse().context("Failed to parse tunnel spec")?;
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{local_port}"))
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", spec.bind_port))
         .await
-        .with_context(|| format!("Failed to bind local listener on port {local_port}"))?;
+        .with_context(|| format!("Failed to bind local listener on port {}", spec.bind_port))?;
 
     let actual_port = listener
         .local_addr()
         .context("Failed to get local address")?
         .port();
 
-    println!("Forwarding 127.0.0.1:{actual_port} -> {remote_host}:{remote_port}");
+    println!(
+        "Forwarding 127.0.0.1:{actual_port} -> {}:{}",
+        spec.host, spec.peer_port
+    );
     println!("Press Ctrl+C to stop");
 
     loop {
@@ -61,15 +87,16 @@ pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
                     .context("Failed to accept local connection")?;
                 debug!("Accepted local connection from {peer_addr}");
 
-                let host = remote_host.clone();
+                let host = spec.host.clone();
+                let port = spec.peer_port;
                 let mut tunnel = channel
-                    .tunnel_open(host.clone(), remote_port)
+                    .tunnel_open(host.clone(), port)
                     .await
                     .with_context(|| {
-                        format!("Failed to open tunnel to {host}:{remote_port}")
+                        format!("Failed to open tunnel to {host}:{port}")
                     })?;
 
-                debug!("Tunnel {} opened to {host}:{remote_port}", tunnel.id());
+                debug!("Tunnel {} opened to {host}:{port}", tunnel.id());
 
                 // Take writer and reader from the tunnel
                 let writer = tunnel.writer.take()
@@ -102,19 +129,23 @@ pub async fn handle_open(mut channel: Channel, spec: &str) -> CliResult {
 /// connects locally to `LOCAL_HOST:LOCAL_PORT` and relays data bidirectionally
 /// until Ctrl+C.
 pub async fn handle_listen(mut channel: Channel, spec: &str) -> CliResult {
-    let (remote_port, local_host, local_port) =
-        parse_tunnel_spec(spec).context("Failed to parse tunnel spec")?;
+    let spec: TunnelSpec = spec.parse().context("Failed to parse tunnel spec")?;
 
     let mut listener =
-        RemoteTunnelListener::listen(channel.clone(), local_host.clone(), remote_port)
+        RemoteTunnelListener::listen(channel.clone(), spec.host.clone(), spec.bind_port)
             .await
             .with_context(|| {
-                format!("Failed to start remote listener on {local_host}:{remote_port}")
+                format!(
+                    "Failed to start remote listener on {}:{}",
+                    spec.host, spec.bind_port
+                )
             })?;
 
     println!(
-        "Listening on remote port {} -> {local_host}:{local_port}",
-        listener.port()
+        "Listening on remote port {} -> {}:{}",
+        listener.port(),
+        spec.host,
+        spec.peer_port
     );
     println!("Press Ctrl+C to stop");
 
@@ -138,14 +169,14 @@ pub async fn handle_listen(mut channel: Channel, spec: &str) -> CliResult {
                 // Open a tunnel for this incoming connection using the tunnel_id
                 // The server has already created a sub-tunnel; we need to open it
                 let mut tunnel = channel
-                    .tunnel_open(local_host.clone(), local_port)
+                    .tunnel_open(spec.host.clone(), spec.peer_port)
                     .await
                     .with_context(|| {
                         format!("Failed to open tunnel for incoming connection {}", incoming.tunnel_id)
                     })?;
 
-                let host = local_host.clone();
-                let port = local_port;
+                let host = spec.host.clone();
+                let port = spec.peer_port;
 
                 // Take writer and reader from the tunnel
                 let writer = tunnel.writer.take()
@@ -282,50 +313,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_tunnel_spec_simple() {
-        let (local, host, remote) = parse_tunnel_spec("8080:db-host:5432").unwrap();
-        assert_eq!(local, 8080);
-        assert_eq!(host, "db-host");
-        assert_eq!(remote, 5432);
+    fn tunnel_spec_simple() {
+        let spec: TunnelSpec = "8080:db-host:5432".parse().unwrap();
+        assert_eq!(spec.bind_port, 8080);
+        assert_eq!(spec.host, "db-host");
+        assert_eq!(spec.peer_port, 5432);
     }
 
     #[test]
-    fn parse_tunnel_spec_localhost() {
-        let (local, host, remote) = parse_tunnel_spec("3000:localhost:3000").unwrap();
-        assert_eq!(local, 3000);
-        assert_eq!(host, "localhost");
-        assert_eq!(remote, 3000);
+    fn tunnel_spec_localhost() {
+        let spec: TunnelSpec = "3000:localhost:3000".parse().unwrap();
+        assert_eq!(spec.bind_port, 3000);
+        assert_eq!(spec.host, "localhost");
+        assert_eq!(spec.peer_port, 3000);
     }
 
     #[test]
-    fn parse_tunnel_spec_ipv6() {
-        let (local, host, remote) = parse_tunnel_spec("8080:[::1]:5432").unwrap();
-        assert_eq!(local, 8080);
-        assert_eq!(host, "[::1]");
-        assert_eq!(remote, 5432);
+    fn tunnel_spec_ipv6() {
+        let spec: TunnelSpec = "8080:[::1]:5432".parse().unwrap();
+        assert_eq!(spec.bind_port, 8080);
+        assert_eq!(spec.host, "[::1]");
+        assert_eq!(spec.peer_port, 5432);
     }
 
     #[test]
-    fn parse_tunnel_spec_missing_colon() {
-        let result = parse_tunnel_spec("8080");
-        assert!(result.is_err());
+    fn tunnel_spec_missing_colon() {
+        assert!("8080".parse::<TunnelSpec>().is_err());
     }
 
     #[test]
-    fn parse_tunnel_spec_invalid_local_port() {
-        let result = parse_tunnel_spec("abc:host:5432");
-        assert!(result.is_err());
+    fn tunnel_spec_invalid_bind_port() {
+        assert!("abc:host:5432".parse::<TunnelSpec>().is_err());
     }
 
     #[test]
-    fn parse_tunnel_spec_invalid_remote_port() {
-        let result = parse_tunnel_spec("8080:host:abc");
-        assert!(result.is_err());
+    fn tunnel_spec_invalid_peer_port() {
+        assert!("8080:host:abc".parse::<TunnelSpec>().is_err());
     }
 
     #[test]
-    fn parse_tunnel_spec_only_one_colon() {
-        let result = parse_tunnel_spec("8080:host");
-        assert!(result.is_err());
+    fn tunnel_spec_only_one_colon() {
+        assert!("8080:host".parse::<TunnelSpec>().is_err());
     }
 }
