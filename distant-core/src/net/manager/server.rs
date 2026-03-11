@@ -347,6 +347,13 @@ async fn handle_reconnection(
         }
     };
 
+    // Check if reconnection is disabled for this connection
+    if options.get("no_reconnect").is_some_and(|v| v == "true") {
+        info!("[Conn {id}] Reconnection disabled (--no-reconnect)");
+        notify_state_change(event_tx, id, ConnectionState::Disconnected);
+        return;
+    }
+
     // Look up the plugin by scheme
     let scheme = match extract_scheme(&destination) {
         Some(scheme) => scheme.to_lowercase(),

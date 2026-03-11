@@ -108,6 +108,8 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             current_dir,
             watch,
             daemon: _,
+            heartbeat_interval,
+            max_heartbeat_failures,
             key_from_stdin,
             output_to_local_pipe,
         } => {
@@ -156,6 +158,8 @@ async fn async_run(cmd: ServerSubcommand, _is_forked: bool) -> CliResult {
             let server = Server::tcp()
                 .config(NetServerConfig {
                     shutdown: shutdown.into_inner(),
+                    connection_heartbeat: std::time::Duration::from_secs(heartbeat_interval),
+                    max_heartbeat_failures,
                     ..Default::default()
                 })
                 .handler(handler)

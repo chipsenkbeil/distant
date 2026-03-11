@@ -68,9 +68,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             destination,
             format,
             network,
-            options,
+            mut options,
             new,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -201,7 +205,11 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             format,
             network,
             mut options,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -1147,14 +1155,18 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         ClientSubcommand::Ssh {
             cache,
             destination,
-            options,
+            mut options,
             network,
             current_dir,
             environment,
             predict,
             new,
+            no_reconnect,
             cmd,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager (auto-start enabled)");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
