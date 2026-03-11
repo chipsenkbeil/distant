@@ -15,20 +15,23 @@ use std::io::{self, BufReader, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use distant_core::constants::{TUNNEL_RELAY_BUFFER_SIZE, TUNNEL_TRANSPORT_CAPACITY};
+use distant_core::constants::{
+    TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE, TUNNEL_TRANSPORT_CAPACITY,
+};
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
-use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::protocol::{PROTOCOL_VERSION, Response};
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
 use russh::keys::PrivateKey;
 use ssh2_config::{HostParams, ParseRule, SshConfig};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 mod api;
 mod plugin;
@@ -38,7 +41,7 @@ mod utils;
 pub use plugin::SshPlugin;
 pub use utils::SftpPathBuf;
 
-use api::SshApi;
+use api::{SshApi, SshTunnelSharedState};
 
 /// Format a `MethodSet` as a comma-separated string of method names.
 fn format_methods(methods: &russh::MethodSet) -> String {
@@ -422,6 +425,9 @@ struct ClientHandler {
 
     /// Host key verification policy.
     policy: HostKeyPolicy,
+
+    /// Shared state for reverse tunnel listener routing.
+    tunnel_state: Arc<SshTunnelSharedState>,
 }
 
 impl client::Handler for ClientHandler {
@@ -452,6 +458,98 @@ impl client::Handler for ClientHandler {
             Ok(())
         }
     }
+
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut russh::client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let connected_address = connected_address.to_string();
+        let originator_address = originator_address.to_string();
+        let tunnel_state = Arc::clone(&self.tunnel_state);
+
+        async move {
+            let listeners = tunnel_state.listeners.read().await;
+            let listener = match listeners.get(&(connected_address.clone(), connected_port)) {
+                Some(l) => l,
+                None => {
+                    debug!(
+                        "No listener for forwarded connection to {}:{}",
+                        connected_address, connected_port
+                    );
+                    return Ok(());
+                }
+            };
+
+            let tunnel_id = api::NEXT_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+            let listener_id = listener.id;
+
+            // Notify the client about the new incoming connection
+            let _ = listener.reply.send(Response::TunnelIncoming {
+                listener_id,
+                tunnel_id,
+                peer_addr: Some(format!("{}:{}", originator_address, originator_port)),
+            });
+
+            // Set up bidirectional relay for the forwarded channel
+            let reply = listener.reply.clone_reply();
+            let stream = channel.into_stream();
+            let (read_half, mut write_half) = tokio::io::split(stream);
+
+            let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
+
+            // Stash the write sender so tunnel_write can reach this sub-tunnel.
+            // (Currently unused — future work will register it in the SshApi tunnel map.)
+            drop(write_tx);
+
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+                // Forward queued write data from the client to the SSH channel
+                let write_task = tokio::spawn(async move {
+                    while let Some(data) = write_rx.recv().await {
+                        if write_half.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                // Forward data arriving on the SSH channel back to the client
+                let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
+                let mut read_half = read_half;
+                loop {
+                    match read_half.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let data = buf[..n].to_vec();
+                            if reply
+                                .send(Response::TunnelData {
+                                    id: tunnel_id,
+                                    data,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            debug!("[Tunnel {tunnel_id}] Read error: {e}");
+                            break;
+                        }
+                    }
+                }
+
+                let _ = reply.send(Response::TunnelClosed { id: tunnel_id });
+                write_task.abort();
+            });
+
+            Ok(())
+        }
+    }
 }
 
 /// Represents an ssh2 client
@@ -467,6 +565,8 @@ pub struct Ssh {
     remote_sshid: Arc<Mutex<Option<String>>>,
     /// Identity files from SSH config, used as fallback if opts.identity_files is empty.
     ssh_config_identity_files: Option<Vec<PathBuf>>,
+    /// Shared state for reverse tunnel listeners (passed to SshApi on conversion).
+    tunnel_state: Arc<SshTunnelSharedState>,
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
@@ -587,12 +687,14 @@ impl Ssh {
         );
 
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let tunnel_state = Arc::new(SshTunnelSharedState::new());
         let handler = ClientHandler {
             remote_sshid: Arc::clone(&remote_sshid),
             host: host.as_ref().to_string(),
             port,
             known_hosts_files,
             policy,
+            tunnel_state: Arc::clone(&tunnel_state),
         };
         let connect_result =
             russh::client::connect(Arc::new(config), (connect_host, port), handler).await;
@@ -644,6 +746,7 @@ impl Ssh {
             cached_family: Mutex::new(None),
             remote_sshid,
             ssh_config_identity_files: ssh_config.identity_file.clone(),
+            tunnel_state,
         })
     }
 
@@ -1124,7 +1227,7 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let api = SshApi::new(self.handle, family, self.tunnel_state);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -1150,7 +1253,7 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let api = SshApi::new(self.handle, family, self.tunnel_state);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -2542,6 +2645,7 @@ mod tests {
             port: 22,
             known_hosts_files: vec![kh],
             policy: HostKeyPolicy::AcceptNew,
+            tunnel_state: Arc::new(SshTunnelSharedState::new()),
         };
 
         // Generate a test public key by creating a keypair
@@ -2942,6 +3046,7 @@ mod tests {
             port: 22,
             known_hosts_files: vec![],
             policy: HostKeyPolicy::No,
+            tunnel_state: Arc::new(SshTunnelSharedState::new()),
         };
 
         // Generate an Ed25519 key

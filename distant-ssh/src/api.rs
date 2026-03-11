@@ -24,7 +24,7 @@ use crate::utils::{SSH_TIMEOUT_SECS, SftpPathBuf};
 use crate::{ClientHandler, SshFamily};
 
 /// Global counter for generating unique tunnel IDs across all SSH connections.
-static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
+pub(crate) static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Internal state for a single active SSH tunnel (forward connection).
 struct SshTunnel {
@@ -36,10 +36,34 @@ struct SshTunnel {
     task: JoinHandle<()>,
 }
 
+/// State for a registered reverse tunnel listener.
+pub(crate) struct SshForwardListener {
+    /// Id of this listener.
+    pub id: TunnelId,
+    /// Reply channel for sending tunnel events back to the client.
+    pub reply: Box<dyn Reply<Data = Response>>,
+}
+
+/// Shared state between [`SshApi`] and [`ClientHandler`](crate::ClientHandler) for reverse tunnels.
+pub(crate) struct SshTunnelSharedState {
+    /// Registered forward listeners keyed by (host, port).
+    pub listeners: RwLock<HashMap<(String, u32), SshForwardListener>>,
+}
+
+impl SshTunnelSharedState {
+    /// Creates a new empty shared state.
+    pub fn new() -> Self {
+        Self {
+            listeners: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
-    /// Active SSH session handle.
-    session: Handle<ClientHandler>,
+    /// Active SSH session handle, behind a mutex for `tcpip_forward` which
+    /// requires `&mut self`.
+    session: Mutex<Handle<ClientHandler>>,
 
     /// Lazy-cached SFTP session (created on first file operation).
     sftp: Arc<Mutex<Option<Arc<SftpSession>>>>,
@@ -49,6 +73,9 @@ pub struct SshApi {
 
     /// Active TCP tunnels (forward connections via SSH direct-tcpip).
     tunnels: Arc<RwLock<HashMap<TunnelId, SshTunnel>>>,
+
+    /// Shared state for reverse tunnel listeners (also held by [`ClientHandler`](crate::ClientHandler)).
+    tunnel_state: Arc<SshTunnelSharedState>,
 
     /// Remote system family (Unix/Windows).
     family: SshFamily,
@@ -64,12 +91,18 @@ pub struct SshApi {
 }
 
 impl SshApi {
-    pub fn new(session: Handle<ClientHandler>, family: SshFamily) -> Self {
+    /// Creates a new SSH API instance.
+    pub fn new(
+        session: Handle<ClientHandler>,
+        family: SshFamily,
+        tunnel_state: Arc<SshTunnelSharedState>,
+    ) -> Self {
         Self {
-            session,
+            session: Mutex::new(session),
             sftp: Arc::new(Mutex::new(None)),
             processes: Arc::new(RwLock::new(HashMap::new())),
             tunnels: Arc::new(RwLock::new(HashMap::new())),
+            tunnel_state,
             family,
             cached_current_dir: OnceCell::new(),
             cached_username: OnceCell::new(),
@@ -88,6 +121,8 @@ impl SshApi {
         debug!("Creating new SFTP session");
         let channel = self
             .session
+            .lock()
+            .await
             .channel_open_session()
             .await
             .map_err(io::Error::other)?;
@@ -652,7 +687,6 @@ impl Api for SshApi {
         dst: RemotePath,
     ) -> impl Future<Output = io::Result<()>> + Send {
         let family = self.family;
-        let session = &self.session;
         async move {
             debug!("[Conn {}] Copying {} to {}", ctx.connection_id, src, dst);
 
@@ -672,7 +706,8 @@ impl Api for SshApi {
                 format!("cp -r \"{}\" \"{}\"", src_str, dst_str)
             };
 
-            let output = execute_output(session, &command, None).await?;
+            let session = self.session.lock().await;
+            let output = execute_output(&session, &command, None).await?;
 
             if !output.success {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -922,7 +957,6 @@ impl Api for SshApi {
         current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> impl Future<Output = io::Result<ProcessId>> + Send {
-        let session = &self.session;
         let processes = &self.processes;
         let global_processes = Arc::downgrade(processes);
         async move {
@@ -942,6 +976,7 @@ impl Api for SshApi {
                 }
             };
 
+            let session = self.session.lock().await;
             let SpawnResult {
                 id,
                 stdin,
@@ -950,7 +985,7 @@ impl Api for SshApi {
             } = match pty {
                 None => {
                     spawn_simple(
-                        session,
+                        &session,
                         &cmd,
                         environment,
                         current_dir,
@@ -961,7 +996,7 @@ impl Api for SshApi {
                 }
                 Some(size) => {
                     spawn_pty(
-                        session,
+                        &session,
                         &cmd,
                         environment,
                         current_dir,
@@ -1098,16 +1133,16 @@ impl Api for SshApi {
                 .await?
                 .clone();
 
-            let session = &self.session;
+            let session = self.session.lock().await;
             let username = self
                 .cached_username
-                .get_or_try_init(crate::utils::query_username(session, is_windows))
+                .get_or_try_init(crate::utils::query_username(&session, is_windows))
                 .await?
                 .clone();
 
             let shell = self
                 .cached_shell
-                .get_or_try_init(crate::utils::query_shell(session, is_windows))
+                .get_or_try_init(crate::utils::query_shell(&session, is_windows))
                 .await?
                 .clone();
 
@@ -1147,6 +1182,8 @@ impl Api for SshApi {
 
             let channel = self
                 .session
+                .lock()
+                .await
                 .channel_open_direct_tcpip(&host, port as u32, "127.0.0.1", 0)
                 .await
                 .map_err(|e| {
@@ -1190,6 +1227,60 @@ impl Api for SshApi {
         }
     }
 
+    fn tunnel_listen(
+        &self,
+        ctx: Ctx,
+        host: String,
+        port: u16,
+    ) -> impl Future<Output = io::Result<(TunnelId, u16)>> + Send {
+        async move {
+            debug!(
+                "[Conn {}] Starting reverse tunnel listener on {host}:{port}",
+                ctx.connection_id
+            );
+
+            let actual_port = self
+                .session
+                .lock()
+                .await
+                .tcpip_forward(&host, port as u32)
+                .await
+                .map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to start tcpip_forward on {host}:{port}: {e}"
+                    ))
+                })?;
+
+            let id = NEXT_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+
+            // Register the listener so incoming forwarded connections can be routed
+            self.tunnel_state.listeners.write().await.insert(
+                (host.clone(), actual_port),
+                SshForwardListener {
+                    id,
+                    reply: ctx.reply.clone_reply(),
+                },
+            );
+
+            let mut tunnels = self.tunnels.write().await;
+            tunnels.insert(
+                id,
+                SshTunnel {
+                    info: TunnelInfo {
+                        id,
+                        direction: TunnelDirection::Reverse,
+                        host,
+                        port: actual_port as u16,
+                    },
+                    write_tx: mpsc::channel(1).0, // placeholder, not used for listeners
+                    task: tokio::spawn(async {}), // placeholder
+                },
+            );
+
+            Ok((id, actual_port as u16))
+        }
+    }
+
     fn tunnel_write(
         &self,
         _ctx: Ctx,
@@ -1215,6 +1306,21 @@ impl Api for SshApi {
                 .remove(&id)
                 .ok_or_else(|| io::Error::other(format!("No tunnel found with id {id}")))?;
             tunnel.task.abort();
+
+            // If this was a reverse tunnel listener, unregister it
+            if tunnel.info.direction == TunnelDirection::Reverse {
+                let mut listeners = self.tunnel_state.listeners.write().await;
+                listeners.retain(|_, listener| listener.id != id);
+
+                // Tell the server to stop forwarding on this address:port
+                let _ = self
+                    .session
+                    .lock()
+                    .await
+                    .cancel_tcpip_forward(&tunnel.info.host, tunnel.info.port as u32)
+                    .await;
+            }
+
             Ok(())
         }
     }
@@ -1237,6 +1343,7 @@ impl Api for SshApi {
                 Version::CAP_FS_IO.to_string(),
                 Version::CAP_SYS_INFO.to_string(),
                 Version::CAP_TCP_TUNNEL.to_string(),
+                Version::CAP_TCP_REV_TUNNEL.to_string(),
             ];
 
             use distant_core::protocol::semver;
