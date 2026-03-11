@@ -7,7 +7,7 @@ pub use client::*;
 mod credentials;
 pub use credentials::*;
 
-mod constants;
+pub mod constants;
 mod serde_str;
 
 /// Authentication functionality.

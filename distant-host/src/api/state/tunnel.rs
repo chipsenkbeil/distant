@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use distant_core::constants::TUNNEL_RELAY_BUFFER_SIZE;
 use distant_core::net::server::Reply;
 use distant_core::protocol::{Response, TunnelDirection, TunnelId, TunnelInfo};
 use log::*;
@@ -426,7 +427,7 @@ async fn connection_task(
     });
 
     // Read loop
-    let mut buf = vec![0u8; 8192];
+    let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
     loop {
         match read_half.read(&mut buf).await {
             Ok(0) => break,

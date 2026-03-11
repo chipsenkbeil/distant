@@ -8,6 +8,7 @@ use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use distant_core::constants::TUNNEL_CHANNEL_CAPACITY;
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
@@ -1040,7 +1041,7 @@ impl Api for DockerApi {
 
             match start_result {
                 StartExecResults::Attached { output, input } => {
-                    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(1024);
+                    let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
                     let reply = ctx.reply.clone_reply();
                     let tunnels_task = Arc::clone(&tunnels);
 

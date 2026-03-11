@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
+use distant_core::constants::{TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE};
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
@@ -1158,7 +1159,7 @@ impl Api for SshApi {
             let stream = channel.into_stream();
             let (read_half, write_half) = tokio::io::split(stream);
 
-            let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(1024);
+            let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
             let reply = ctx.reply.clone_reply();
             let tunnels_task = Arc::clone(&tunnels);
 
@@ -1279,7 +1280,7 @@ async fn tunnel_relay_task(
 ) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // Spawn writer sub-task
+    // Forward queued write data from the client to the SSH channel
     let write_task = tokio::spawn(async move {
         while let Some(data) = write_rx.recv().await {
             if write_half.write_all(&data).await.is_err() {
@@ -1288,8 +1289,8 @@ async fn tunnel_relay_task(
         }
     });
 
-    // Read loop
-    let mut buf = vec![0u8; 8192];
+    // Forward data arriving on the SSH channel back to the client as TunnelData responses
+    let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
     loop {
         match read_half.read(&mut buf).await {
             Ok(0) => break,

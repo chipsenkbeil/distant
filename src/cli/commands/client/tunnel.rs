@@ -1,6 +1,7 @@
 use std::io;
 
 use anyhow::Context;
+use distant_core::constants::TUNNEL_RELAY_BUFFER_SIZE;
 use distant_core::protocol::TunnelDirection;
 use distant_core::{Channel, ChannelExt, RemoteTunnelListener};
 use log::*;
@@ -235,7 +236,7 @@ async fn relay_local_to_tunnel(
     let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();
 
     let local_to_remote = tokio::spawn(async move {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
         loop {
             let n = tcp_read.read(&mut buf).await?;
             if n == 0 {

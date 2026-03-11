@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use distant_core::constants::{TUNNEL_RELAY_BUFFER_SIZE, TUNNEL_TRANSPORT_CAPACITY};
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
@@ -1400,7 +1401,8 @@ impl Ssh {
         //
         // `incoming_tx` sends data INTO the transport (SSH -> client).
         // `outgoing_rx` receives data FROM the transport (client -> SSH).
-        let (incoming_tx, mut outgoing_rx, transport) = InmemoryTransport::make(100);
+        let (incoming_tx, mut outgoing_rx, transport) =
+            InmemoryTransport::make(TUNNEL_TRANSPORT_CAPACITY);
 
         // Spawn a relay task that shuttles bytes between the SSH channel and the
         // InmemoryTransport channels. This task also holds ownership of `self` (the
@@ -1414,7 +1416,7 @@ impl Ssh {
             // SSH channel -> InmemoryTransport (so the client can read it)
             let tx_task = tokio::spawn(async move {
                 use tokio::io::AsyncReadExt;
-                let mut buf = vec![0u8; 8192];
+                let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
                 loop {
                     match read_half.read(&mut buf).await {
                         Ok(0) => break,
