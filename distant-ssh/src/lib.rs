@@ -850,7 +850,7 @@ impl Ssh {
             .as_ref()
             .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
 
-        // Agent auth
+        // Try SSH agent first — it avoids touching key files and works with hardware tokens
         if server_accepts_pubkey
             && !self.opts.identities_only.unwrap_or(false)
             && auth::try_agent_auth(
@@ -865,7 +865,7 @@ impl Ssh {
             return Ok(());
         }
 
-        // File-based pubkey auth
+        // Try key files from explicit opts, SSH config, or ~/.ssh defaults
         if server_accepts_pubkey {
             let key_files =
                 auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
@@ -888,7 +888,8 @@ impl Ssh {
             }
         }
 
-        // Keyboard-interactive
+        // Keyboard-interactive — track whether we prompted the user to avoid
+        // double-prompting if we fall through to password auth
         let mut user_was_prompted = false;
         if server_accepts_kbdint {
             let (authenticated, prompted) = auth::try_keyboard_interactive(
@@ -906,7 +907,7 @@ impl Ssh {
             }
         }
 
-        // Password auth
+        // Password auth — skip if keyboard-interactive already prompted the user
         if server_accepts_password
             && !user_was_prompted
             && auth::try_password_auth(

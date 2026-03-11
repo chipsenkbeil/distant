@@ -19,9 +19,6 @@ use russh::keys::agent::client::AgentClient;
 use crate::{ClientHandler, SshAuthEvent, SshAuthHandler, SshAuthPrompt};
 
 /// Abstraction over SSH session authentication operations.
-///
-/// Implemented by `russh::client::Handle<ClientHandler>` for production use.
-/// A mock implementation is provided in tests for per-code-path unit testing.
 pub(crate) trait AuthSession: Send {
     fn auth_publickey(
         &mut self,
@@ -83,9 +80,6 @@ impl AuthSession for Handle<ClientHandler> {
 }
 
 /// Abstraction over SSH agent key listing and authentication.
-///
-/// Combines agent key enumeration with handle-based authentication
-/// because the signing operation requires both the handle and the agent.
 pub(crate) trait AgentAuthenticator: Send {
     fn request_identities(
         &mut self,
@@ -98,7 +92,7 @@ pub(crate) trait AgentAuthenticator: Send {
     ) -> impl Future<Output = io::Result<AuthResult>> + Send;
 }
 
-struct HandleAgent<'h, 'a, S>
+struct AgentHandle<'h, 'a, S>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -106,7 +100,7 @@ where
     agent: &'a mut AgentClient<S>,
 }
 
-impl<S> AgentAuthenticator for HandleAgent<'_, '_, S>
+impl<S> AgentAuthenticator for AgentHandle<'_, '_, S>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -213,7 +207,7 @@ pub(crate) async fn try_agent_auth(
     {
         match AgentClient::connect_env().await {
             Ok(mut agent) => {
-                let mut ha = HandleAgent {
+                let mut ha = AgentHandle {
                     handle,
                     agent: &mut agent,
                 };
@@ -234,7 +228,7 @@ pub(crate) async fn try_agent_auth(
         // Try OpenSSH agent (named pipe)
         match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
             Ok(mut agent) => {
-                let mut ha = HandleAgent {
+                let mut ha = AgentHandle {
                     handle,
                     agent: &mut agent,
                 };
@@ -251,7 +245,7 @@ pub(crate) async fn try_agent_auth(
         if !agent_authenticated {
             match AgentClient::connect_pageant().await {
                 Ok(mut agent) => {
-                    let mut ha = HandleAgent {
+                    let mut ha = AgentHandle {
                         handle,
                         agent: &mut agent,
                     };
@@ -335,7 +329,7 @@ pub(crate) async fn load_and_try_key(
     let key = match russh::keys::decode_secret_key(&contents, None) {
         Ok(k) => k,
         Err(e) => {
-            if e.to_string().to_lowercase().contains("encrypted") {
+            if matches!(e, russh::keys::Error::KeyIsEncrypted) {
                 debug!("Key {:?} is encrypted, prompting for passphrase", key_file);
                 let file_name = key_file.file_name().unwrap_or_default().to_string_lossy();
                 let event = SshAuthEvent {
