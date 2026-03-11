@@ -14,11 +14,8 @@
 # Format (REQUIRED before committing)
 cargo fmt --all
 
-# Lint
+# Lint (warnings are denied via workspace lints — no RUSTFLAGS needed)
 cargo clippy --all-features --workspace --all-targets
-
-# Lint (CI-style — required before pushing)
-RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targets
 
 # Test all
 cargo test --all-features --workspace
@@ -107,6 +104,26 @@ Spawn only **rust-explorer**. No coding pipeline needed.
 
 - Max 3 iterations per validator before escalating to user
 - Validator reports issues → implementor fixes → re-validate
+
+### Plan-Mode Requirements
+
+Every plan MUST begin with an **Agent Usage** section that declares:
+1. Which local agents from `.claude/agents/` will be used
+2. The execution order (pipeline) they will follow
+3. Justification for any skipped pipeline stages
+
+Rules:
+- Always prefer local agents (`rust-explorer`, `rust-coder`,
+  `code-validator`, `test-implementor`, `test-validator`) over builtin
+  equivalents (`Explore`, `Plan`, `general-purpose`)
+- Use `rust-explorer` in place of the builtin `Explore` agent for all
+  codebase research
+- Follow the standard pipeline order: **rust-explorer** → **rust-coder** →
+  **code-validator** → **test-implementor** → **test-validator**
+- Stages may be skipped with justification (e.g., "no test changes needed")
+- Use builtin `Plan` only for design phase (no local planning agent exists)
+- Use builtin `general-purpose` only when no local agent has the required
+  tools (e.g., `gh` CLI)
 
 ## General AI Workflow
 

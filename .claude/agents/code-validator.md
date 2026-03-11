@@ -78,7 +78,7 @@ All checks are **BLOCKING** unless marked otherwise.
 - Platform-specific dependencies in correct `target` cfg sections
 
 ### Check 8: Compilation & Linting (BLOCKING)
-Run: `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targets`
+Run: `cargo clippy --all-features --workspace --all-targets`
 - Zero warnings
 - Zero errors
 - Pay attention to `#[cfg(windows)]` blocks that may have issues

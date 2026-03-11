@@ -78,7 +78,7 @@ When designing implementations, consider these established patterns:
 
 ### Step 3: Validate
 - Run `cargo fmt --all` and fix any formatting issues
-- Run `RUSTFLAGS="-Dwarnings" cargo clippy --all-features --workspace --all-targets` and fix warnings
+- Run `cargo clippy --all-features --workspace --all-targets` and fix warnings
 - Report what was created/modified with file paths and line numbers
 
 ## Output Format
