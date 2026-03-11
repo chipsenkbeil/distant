@@ -4,6 +4,7 @@
 //! process management, connection management, etc.).
 
 mod connect;
+mod copy;
 mod fs_copy;
 mod fs_exists;
 mod fs_make_dir;
