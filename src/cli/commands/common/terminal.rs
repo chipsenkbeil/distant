@@ -331,13 +331,17 @@ impl TerminalSession {
     pub async fn shutdown(self) {
         self.link.shutdown().await;
 
-        // Reset any blocked modes on the local terminal
+        // Reset SGR attributes and any blocked modes on the local terminal.
         let reset = TerminalSanitizer::CONPTY.reset_sequence();
-        if !reset.is_empty() {
+        {
             use std::io::Write;
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
-            let _ = out.write_all(&reset);
+            // Clear residual SGR state (underline, color) from predictions.
+            let _ = out.write_all(b"\x1b[0m");
+            if !reset.is_empty() {
+                let _ = out.write_all(&reset);
+            }
             let _ = out.flush();
         }
     }
@@ -392,7 +396,7 @@ async fn input_loop(
                                     let _ = out.flush();
                                 }
                                 PredictionAction::DisplayBackspace => {
-                                    let _ = out.write_all(b"\x1b[D\x1b[K");
+                                    let _ = out.write_all(b"\x1b[D \x1b[D");
                                     let _ = out.flush();
                                 }
                                 _ => {}

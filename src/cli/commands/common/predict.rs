@@ -339,6 +339,21 @@ impl PredictionEngine {
                 }
 
                 i += seq_len;
+
+                // Cursor-movement or erase CSI while predictions are pending
+                // means the server is doing something other than echoing
+                // characters (e.g. vim cursor motion, screen clearing).
+                // Roll back predictions.
+                if self.display_ahead > 0 {
+                    match cmd {
+                        b'A' | b'B' | b'C' | b'D' | b'G' | b'H' | b'J' | b'K' | b'd' => {
+                            self.rollback(out);
+                            self.reset();
+                        }
+                        _ => {}
+                    }
+                }
+
                 continue;
             }
 
@@ -378,15 +393,25 @@ impl PredictionEngine {
 
             // Printable character — attempt to match against predictions.
             let ch = b as char;
-            self.expire_old_predictions();
+            // Note: if expire triggers rollback+reset, all predictions are
+            // cleared and try_confirm_prediction returns None, so the byte
+            // falls through to the pass-through path below.
+            self.expire_old_predictions(out);
 
             if let Some(matched) = self.try_confirm_prediction(ch) {
                 if matched {
-                    // Prediction confirmed — don't write to out if displayed ahead.
                     if self.display_ahead > 0 {
+                        // Overwrite the underlined prediction with the plain server byte.
+                        out.extend_from_slice(format!("\x1b[{}D", self.display_ahead).as_bytes());
+                        out.extend_from_slice(b"\x1b[24m");
+                        out.push(b);
+                        let remaining = self.display_ahead - 1;
+                        if remaining > 0 {
+                            out.extend_from_slice(format!("\x1b[{}C", remaining).as_bytes());
+                        }
                         self.display_ahead -= 1;
                         trace!(
-                            "Confirmed predicted '{}' at col {} (suppressed)",
+                            "Confirmed predicted '{}' at col {} (overwritten)",
                             ch, self.cursor_col
                         );
                     } else {
@@ -436,6 +461,8 @@ impl PredictionEngine {
                 "Rolling back {} display-ahead characters",
                 self.display_ahead
             );
+            // Reset SGR state (underline, color, etc.) before erasing.
+            out.extend_from_slice(b"\x1b[0m");
             // Cursor left by display_ahead columns.
             out.extend_from_slice(format!("\x1b[{}D", self.display_ahead).as_bytes());
             // Clear to end of line.
@@ -609,6 +636,7 @@ impl PredictionEngine {
             .count();
         if displayed > 0 && self.display_ahead >= displayed {
             // Emit rollback for the discarded epoch's displayed chars.
+            out.extend_from_slice(b"\x1b[0m");
             out.extend_from_slice(format!("\x1b[{}D", displayed).as_bytes());
             out.extend_from_slice(b"\x1b[K");
             self.display_ahead -= displayed;
@@ -617,8 +645,12 @@ impl PredictionEngine {
     }
 
     /// Marks predictions older than [`PREDICTION_EXPIRY`] as failed.
-    fn expire_old_predictions(&mut self) {
+    ///
+    /// If any non-backspace predictions expire while characters are displayed
+    /// ahead, the speculative display is rolled back and the engine is reset.
+    fn expire_old_predictions(&mut self, out: &mut Vec<u8>) {
         let now = Instant::now();
+        let mut expired_display = 0usize;
         for epoch in &mut self.epochs {
             for pred in &mut epoch.predictions {
                 if pred.state == PredictionState::Pending
@@ -626,8 +658,15 @@ impl PredictionEngine {
                 {
                     trace!("Prediction '{}' at col {} expired", pred.ch, pred.col);
                     pred.state = PredictionState::Failed;
+                    if pred.ch != '\x08' {
+                        expired_display += 1;
+                    }
                 }
             }
+        }
+        if expired_display > 0 && self.display_ahead > 0 {
+            self.rollback(out);
+            self.reset();
         }
     }
 }
@@ -694,17 +733,14 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_should_suppress_predicted_char_from_output() {
+    fn confirmation_should_overwrite_predicted_char() {
         let mut engine = engine_on();
         engine.on_keystroke("a");
         let mut out = Vec::new();
         engine.process_server_output(b"a", &mut out);
-        // The character was displayed ahead, so it should be suppressed.
-        assert!(
-            out.is_empty(),
-            "confirmed prediction should suppress output, got: {:?}",
-            out
-        );
+        // With display_ahead=1: cursor back 1, underline off, the confirmed char.
+        // No cursor-forward since remaining display_ahead is 0.
+        assert_eq!(out, b"\x1b[1D\x1b[24ma");
     }
 
     #[test]
@@ -715,11 +751,16 @@ mod tests {
         assert_eq!(engine.display_ahead, 2);
 
         let mut out = Vec::new();
+        // Confirm "a" (display_ahead=2): overwrite sequence emitted.
         engine.process_server_output(b"a", &mut out);
         assert_eq!(engine.display_ahead, 1);
+        assert_eq!(out, b"\x1b[2D\x1b[24ma\x1b[1C");
 
+        out.clear();
+        // Confirm "b" (display_ahead=1): overwrite sequence, no cursor-forward.
         engine.process_server_output(b"b", &mut out);
         assert_eq!(engine.display_ahead, 0);
+        assert_eq!(out, b"\x1b[1D\x1b[24mb");
     }
 
     #[test]
@@ -854,11 +895,8 @@ mod tests {
         // Server sends a different character — mismatch in unconfirmed epoch.
         let mut out = Vec::new();
         engine.process_server_output(b"z", &mut out);
-        // The rollback erases the speculatively displayed 'a', then 'z' passes through.
-        let mut expected = Vec::new();
-        expected.extend_from_slice(b"\x1b[1D\x1b[K");
-        expected.push(b'z');
-        assert_eq!(out, expected);
+        // The discard_epoch rollback emits SGR reset + cursor-back 1 + erase, then 'z' passes through.
+        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[Kz");
         // The epoch with 'a' should have been discarded.
         let has_pending = engine.epochs.iter().any(|e| {
             e.predictions
@@ -874,39 +912,31 @@ mod tests {
     #[test]
     fn confirmed_epoch_mismatch_should_trigger_rollback() {
         let mut engine = engine_on();
-        // Type and confirm "ab" to establish a confirmed epoch.
+        // Type "abc" to establish predictions (display_ahead=3).
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
 
         let mut out = Vec::new();
         // Confirm "a" — this marks the epoch as confirmed.
+        // With display_ahead=3: overwrite = ESC[3D ESC[24m 'a' ESC[2C
         engine.process_server_output(b"a", &mut out);
+        assert_eq!(out, b"\x1b[3D\x1b[24ma\x1b[2C");
         out.clear();
 
-        // Confirm "b".
+        // Confirm "b" (display_ahead=2): overwrite = ESC[2D ESC[24m 'b' ESC[1C
         engine.process_server_output(b"b", &mut out);
+        assert_eq!(out, b"\x1b[2D\x1b[24mb\x1b[1C");
         out.clear();
 
         // Now server sends "z" instead of "c" — mismatch in confirmed epoch.
+        // display_ahead=1, rollback emits SGR reset + cursor-left 1 + clear, then 'z'.
         engine.process_server_output(b"z", &mut out);
-
-        // Output should contain rollback escape sequence(s) plus the actual char.
-        let out_str = String::from_utf8_lossy(&out);
-        assert!(
-            out_str.contains("\x1b[") && out_str.contains('D') && out_str.contains("\x1b[K"),
-            "rollback should emit cursor-left and clear-to-EOL, got: {:?}",
-            out_str
-        );
-        // The mismatched character 'z' should be in the output.
-        assert!(
-            out.contains(&b'z'),
-            "mismatched character should pass through"
-        );
+        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[Kz");
     }
 
     #[test]
-    fn rollback_should_emit_cursor_left_and_clear() {
+    fn rollback_should_emit_sgr_reset_cursor_left_and_clear() {
         let mut engine = engine_on();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
@@ -915,8 +945,8 @@ mod tests {
 
         let mut out = Vec::new();
         engine.rollback(&mut out);
-        // Should contain ESC[3D and ESC[K.
-        assert_eq!(out, b"\x1b[3D\x1b[K");
+        // Should contain ESC[0m (SGR reset), ESC[3D (cursor left 3), and ESC[K (clear to EOL).
+        assert_eq!(out, b"\x1b[0m\x1b[3D\x1b[K");
     }
 
     #[test]
@@ -936,7 +966,7 @@ mod tests {
         engine.on_keystroke("x");
         let mut out = Vec::new();
         engine.rollback(&mut out);
-        assert_eq!(out, b"\x1b[1D\x1b[K");
+        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[K");
     }
 
     #[test]
@@ -1364,12 +1394,19 @@ mod tests {
 
         let mut out = Vec::new();
         engine.process_server_output(b"hello", &mut out);
-        // All five chars were predicted and displayed ahead — should be suppressed.
-        assert!(
-            out.is_empty(),
-            "all predicted chars should be suppressed, got: {:?}",
-            String::from_utf8_lossy(&out)
-        );
+        // Each confirmed char emits an overwrite sequence:
+        //   'h' at da=5: ESC[5D ESC[24m h ESC[4C
+        //   'e' at da=4: ESC[4D ESC[24m e ESC[3C
+        //   'l' at da=3: ESC[3D ESC[24m l ESC[2C
+        //   'l' at da=2: ESC[2D ESC[24m l ESC[1C
+        //   'o' at da=1: ESC[1D ESC[24m o (no cursor-forward, remaining=0)
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"\x1b[5D\x1b[24mh\x1b[4C");
+        expected.extend_from_slice(b"\x1b[4D\x1b[24me\x1b[3C");
+        expected.extend_from_slice(b"\x1b[3D\x1b[24ml\x1b[2C");
+        expected.extend_from_slice(b"\x1b[2D\x1b[24ml\x1b[1C");
+        expected.extend_from_slice(b"\x1b[1D\x1b[24mo");
+        assert_eq!(out, expected);
         assert_eq!(engine.display_ahead, 0);
     }
 
@@ -1502,9 +1539,10 @@ mod tests {
     }
 
     #[test]
-    fn expire_old_predictions_should_mark_stale_as_failed() {
+    fn expire_old_predictions_should_trigger_rollback_and_reset() {
         let mut engine = engine_on();
         engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 1);
 
         // Manually backdate the prediction to be older than PREDICTION_EXPIRY.
         if let Some(epoch) = engine.epochs.back_mut() {
@@ -1516,13 +1554,14 @@ mod tests {
         let mut out = Vec::new();
         engine.process_server_output(b"x", &mut out);
 
-        // The old prediction for 'a' should now be Failed (expired).
-        let pred = &engine.epochs.back().unwrap().predictions[0];
-        assert_eq!(
-            pred.state,
-            PredictionState::Failed,
-            "expired prediction should be marked Failed"
+        // Expiry triggers rollback (SGR reset + cursor-left 1 + clear) then reset clears
+        // all epochs. The 'x' passes through since no pending predictions remain.
+        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[Kx");
+        assert!(
+            engine.epochs.is_empty(),
+            "epochs should be empty after expire-triggered reset"
         );
+        assert_eq!(engine.display_ahead, 0);
     }
 
     #[test]
@@ -1531,7 +1570,9 @@ mod tests {
         engine.on_keystroke("a");
         let mut out = Vec::new();
         engine.process_server_output(b"a", &mut out);
-        assert!(out.is_empty());
+        // Confirmation produces overwrite output (display_ahead was 1).
+        assert_eq!(out, b"\x1b[1D\x1b[24ma");
+        assert_eq!(engine.display_ahead, 0);
 
         // Now server sends "bc" with no predictions — should pass through.
         out.clear();
@@ -1649,5 +1690,100 @@ mod tests {
         // ESC[ with no command byte — incomplete, should pass through bytes.
         engine.process_server_output(b"\x1b[", &mut out);
         assert_eq!(out, b"\x1b[");
+    }
+
+    #[test]
+    fn csi_cursor_movement_during_pending_predictions_should_rollback() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 1);
+
+        let mut out = Vec::new();
+        // Server sends CSI cursor forward 5 while a prediction is pending.
+        engine.process_server_output(b"\x1b[5C", &mut out);
+
+        // Output: the CSI sequence itself, then rollback (SGR reset + cursor-left 1 + clear).
+        assert_eq!(out, b"\x1b[5C\x1b[0m\x1b[1D\x1b[K");
+        assert_eq!(engine.display_ahead, 0);
+        assert!(
+            engine.epochs.is_empty(),
+            "epochs should be cleared after CSI-triggered rollback"
+        );
+    }
+
+    #[test]
+    fn csi_sgr_during_pending_predictions_should_not_rollback() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 1);
+
+        let mut out = Vec::new();
+        // Server sends an SGR sequence (bold red) — not a cursor-movement command.
+        engine.process_server_output(b"\x1b[1;31m", &mut out);
+        assert_eq!(out, b"\x1b[1;31m");
+        assert_eq!(engine.display_ahead, 1, "SGR should not trigger rollback");
+
+        // Now confirm the prediction with 'a' — overwrite sequence emitted.
+        out.clear();
+        engine.process_server_output(b"a", &mut out);
+        assert_eq!(out, b"\x1b[1D\x1b[24ma");
+        assert_eq!(engine.display_ahead, 0);
+    }
+
+    #[test]
+    fn expired_multiple_predictions_should_emit_rollback() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        engine.on_keystroke("b");
+        engine.on_keystroke("c");
+        assert_eq!(engine.display_ahead, 3);
+
+        // Backdate all predictions past PREDICTION_EXPIRY.
+        for epoch in &mut engine.epochs {
+            for pred in &mut epoch.predictions {
+                pred.sent_at = Instant::now() - PREDICTION_EXPIRY - Duration::from_millis(100);
+            }
+        }
+
+        // Process server output to trigger expire check.
+        let mut out = Vec::new();
+        engine.process_server_output(b"x", &mut out);
+
+        // Expiry triggers rollback (SGR reset + cursor-left 3 + clear) then reset.
+        // 'x' passes through since predictions were cleared.
+        assert_eq!(out, b"\x1b[0m\x1b[3D\x1b[Kx");
+        assert!(
+            engine.epochs.is_empty(),
+            "epochs should be empty after expiry-triggered reset"
+        );
+        assert_eq!(engine.display_ahead, 0);
+    }
+
+    #[test]
+    fn overwrite_sequence_for_display_ahead_one() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 1);
+
+        let mut out = Vec::new();
+        engine.process_server_output(b"a", &mut out);
+        // display_ahead=1: cursor back 1, underline off, 'a', no cursor-forward (remaining=0).
+        assert_eq!(out, b"\x1b[1D\x1b[24ma");
+        assert_eq!(engine.display_ahead, 0);
+    }
+
+    #[test]
+    fn overwrite_sequence_for_display_ahead_greater_than_one() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        engine.on_keystroke("b");
+        engine.on_keystroke("c");
+        assert_eq!(engine.display_ahead, 3);
+
+        let mut out = Vec::new();
+        // Confirm only 'a' — display_ahead=3: cursor back 3, underline off, 'a', cursor forward 2.
+        engine.process_server_output(b"a", &mut out);
+        assert_eq!(out, b"\x1b[3D\x1b[24ma\x1b[2C");
+        assert_eq!(engine.display_ahead, 2);
     }
 }
