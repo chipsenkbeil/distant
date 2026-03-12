@@ -296,6 +296,16 @@ impl PredictionEngine {
                         state: PredictionState::Pending,
                         epoch: epoch.id,
                     });
+
+                    // Tentative epoch: record prediction for confirmation
+                    // matching but don't display it. The server must confirm
+                    // at least one prediction before we show speculative echo.
+                    // This prevents password leaks in non-echoing contexts
+                    // (su, sudo, ssh password prompts).
+                    if epoch.id > self.confirmed_epoch {
+                        trace!("Suppressed '{}' in tentative epoch {}", ch, epoch.id);
+                        return PredictionAction::None;
+                    }
                 }
                 self.display_ahead = self.display_ahead.saturating_add(1);
                 trace!("Predicted '{}' at col {}", ch, pred_col);
@@ -723,37 +733,54 @@ mod tests {
         PredictionEngine::new(PredictMode::Adaptive)
     }
 
+    /// Creates an engine in `On` mode with epoch 1 pre-confirmed.
+    ///
+    /// Types a character and confirms it via server echo so that
+    /// subsequent keystrokes in the same epoch predict normally.
+    /// Cursor starts at column 1.
+    fn engine_on_confirmed() -> PredictionEngine {
+        let mut engine = PredictionEngine::new(PredictMode::On);
+        engine.on_keystroke("x");
+        let mut out = Vec::new();
+        engine.process_server_output(b"x", &mut out);
+        // Reset bulk paste tracking so the helper's keystroke doesn't
+        // interfere with input burst detection in tests.
+        engine.last_input_time = None;
+        engine.input_byte_count = 0;
+        engine
+    }
+
     #[test]
     fn printable_char_should_return_display_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         let action = engine.on_keystroke("a");
         assert_eq!(action, PredictionAction::DisplayChar('a'));
     }
 
     #[test]
     fn printable_space_should_return_display_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         let action = engine.on_keystroke(" ");
         assert_eq!(action, PredictionAction::DisplayChar(' '));
     }
 
     #[test]
     fn printable_digit_should_return_display_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         let action = engine.on_keystroke("5");
         assert_eq!(action, PredictionAction::DisplayChar('5'));
     }
 
     #[test]
     fn printable_symbol_should_return_display_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         let action = engine.on_keystroke("@");
         assert_eq!(action, PredictionAction::DisplayChar('@'));
     }
 
     #[test]
     fn multiple_printable_chars_should_each_return_display_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         assert_eq!(engine.on_keystroke("h"), PredictionAction::DisplayChar('h'));
         assert_eq!(engine.on_keystroke("i"), PredictionAction::DisplayChar('i'));
         assert_eq!(engine.on_keystroke("!"), PredictionAction::DisplayChar('!'));
@@ -761,7 +788,7 @@ mod tests {
 
     #[test]
     fn printable_char_should_increment_display_ahead() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
@@ -770,7 +797,7 @@ mod tests {
 
     #[test]
     fn confirmation_should_overwrite_predicted_char() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         let mut out = Vec::new();
         engine.process_server_output(b"a", &mut out);
@@ -781,7 +808,7 @@ mod tests {
 
     #[test]
     fn confirmation_should_decrement_display_ahead() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         assert_eq!(engine.display_ahead, 2);
@@ -850,12 +877,7 @@ mod tests {
 
     #[test]
     fn backspace_should_decrement_display_ahead() {
-        let mut engine = engine_on();
-        // Advance confirmed cursor so backspace is permitted.
-        let mut out = Vec::new();
-        engine.process_server_output(b"xy", &mut out);
-        assert_eq!(engine.cursor_col, 2);
-
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         assert_eq!(engine.display_ahead, 2);
@@ -931,8 +953,9 @@ mod tests {
         // Server sends a different character — mismatch in unconfirmed epoch.
         let mut out = Vec::new();
         engine.process_server_output(b"z", &mut out);
-        // The discard_epoch rollback emits SGR reset + cursor-back 1 + erase, then 'z' passes through.
-        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[Kz");
+        // Tentative epoch: 'a' was never displayed (display_ahead=0), so no
+        // rollback needed. Epoch is discarded and 'z' passes through.
+        assert_eq!(out, b"z");
         // The epoch with 'a' should have been discarded.
         let has_pending = engine.epochs.iter().any(|e| {
             e.predictions
@@ -947,7 +970,7 @@ mod tests {
 
     #[test]
     fn confirmed_epoch_mismatch_should_trigger_rollback() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         // Type "abc" to establish predictions (display_ahead=3).
         engine.on_keystroke("a");
         engine.on_keystroke("b");
@@ -973,7 +996,7 @@ mod tests {
 
     #[test]
     fn rollback_should_emit_sgr_reset_cursor_left_and_clear() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
@@ -998,8 +1021,8 @@ mod tests {
 
     #[test]
     fn rollback_with_one_display_ahead_should_emit_one_column() {
-        let mut engine = engine_on();
-        engine.on_keystroke("x");
+        let mut engine = engine_on_confirmed();
+        engine.on_keystroke("a");
         let mut out = Vec::new();
         engine.rollback(&mut out);
         assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[K");
@@ -1213,7 +1236,7 @@ mod tests {
 
     #[test]
     fn bulk_paste_should_return_none_and_reset() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         // Feed > 100 single-byte keystrokes in a tight loop (no sleep).
         // Since this is single-threaded and Instant::now() won't advance
         // much, the 10ms window should include all of them.
@@ -1319,7 +1342,7 @@ mod tests {
 
     #[test]
     fn reset_should_clear_all_state() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
@@ -1421,7 +1444,7 @@ mod tests {
 
     #[test]
     fn prediction_sequence_type_then_confirm_all() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("h");
         engine.on_keystroke("e");
         engine.on_keystroke("l");
@@ -1575,7 +1598,7 @@ mod tests {
 
     #[test]
     fn expire_old_predictions_should_trigger_rollback_and_reset() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         assert_eq!(engine.display_ahead, 1);
 
@@ -1601,7 +1624,7 @@ mod tests {
 
     #[test]
     fn confirm_then_subsequent_chars_should_pass_through() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         let mut out = Vec::new();
         engine.process_server_output(b"a", &mut out);
@@ -1635,7 +1658,7 @@ mod tests {
 
     #[test]
     fn bulk_paste_below_threshold_should_still_predict() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         // Feed exactly at threshold — should still predict.
         for i in 0..BULK_PASTE_THRESHOLD {
             let ch = (b'a' + (i % 26) as u8) as char;
@@ -1651,21 +1674,17 @@ mod tests {
 
     #[test]
     fn backspace_prediction_should_record_correct_col() {
-        let mut engine = engine_on();
-        // Advance confirmed cursor to allow backspace.
-        let mut out = Vec::new();
-        engine.process_server_output(b"xyz", &mut out);
-        assert_eq!(engine.cursor_col, 3);
-
-        engine.on_keystroke("a"); // display_ahead=1, pred col=3
-        engine.on_keystroke("b"); // display_ahead=2, pred col=4
-        engine.on_keystroke("\x7f"); // backspace: pred col = 3 + 2 - 1 = 4
+        let mut engine = engine_on_confirmed();
+        // cursor_col is 1 after helper confirmation.
+        engine.on_keystroke("a"); // display_ahead=1, pred col=1
+        engine.on_keystroke("b"); // display_ahead=2, pred col=2
+        engine.on_keystroke("\x7f"); // backspace: pred col = 1 + 2 - 1 = 2
 
         let epoch = engine.epochs.back().unwrap();
         let bs_pred = epoch.predictions.back().unwrap();
         assert_eq!(bs_pred.ch, '\x08');
-        // cursor_col(3) + display_ahead(2) - 1 = 4
-        assert_eq!(bs_pred.col, 4);
+        // cursor_col(1) + display_ahead(2) - 1 = 2
+        assert_eq!(bs_pred.col, 2);
     }
 
     #[test]
@@ -1691,7 +1710,7 @@ mod tests {
 
     #[test]
     fn backspace_prediction_should_be_confirmed_by_server_bs() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         // Type a char to get display_ahead=1, then backspace undoes it.
         let action = engine.on_keystroke("a");
         assert_eq!(action, PredictionAction::DisplayChar('a'));
@@ -1704,7 +1723,11 @@ mod tests {
         // Server echoes "a" then BS — both predictions should be confirmed.
         let mut out = Vec::new();
         engine.process_server_output(b"a\x08", &mut out);
-        assert_eq!(engine.cursor_col, 0, "cursor should return to 0 after a+BS");
+        // cursor_col: started at 1 (helper), +1 for 'a', -1 for BS = 1
+        assert_eq!(
+            engine.cursor_col, 1,
+            "cursor should return to pre-type position after a+BS"
+        );
 
         let all_confirmed = engine.epochs.iter().all(|e| {
             e.predictions
@@ -1728,7 +1751,7 @@ mod tests {
 
     #[test]
     fn csi_cursor_movement_during_pending_predictions_should_rollback() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         assert_eq!(engine.display_ahead, 1);
 
@@ -1747,7 +1770,7 @@ mod tests {
 
     #[test]
     fn csi_sgr_during_pending_predictions_should_not_rollback() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         assert_eq!(engine.display_ahead, 1);
 
@@ -1766,7 +1789,7 @@ mod tests {
 
     #[test]
     fn expired_multiple_predictions_should_emit_rollback() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
@@ -1795,7 +1818,7 @@ mod tests {
 
     #[test]
     fn overwrite_sequence_for_display_ahead_one() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         assert_eq!(engine.display_ahead, 1);
 
@@ -1808,7 +1831,7 @@ mod tests {
 
     #[test]
     fn overwrite_sequence_for_display_ahead_greater_than_one() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         engine.on_keystroke("a");
         engine.on_keystroke("b");
         engine.on_keystroke("c");
@@ -1838,7 +1861,7 @@ mod tests {
 
     #[test]
     fn alt_screen_leave_should_resume_predictions() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         let mut out = Vec::new();
         // Enter then leave alternate screen.
         engine.process_server_output(b"\x1b[?1049h", &mut out);
@@ -1848,14 +1871,15 @@ mod tests {
             engine.should_display(),
             "should_display() should return true after leaving alternate screen"
         );
-        // Keystroke after leaving alternate screen should predict again.
+        // Keystroke after leaving alternate screen should predict again
+        // (epoch is already confirmed from helper setup).
         let action = engine.on_keystroke("a");
         assert_eq!(action, PredictionAction::DisplayChar('a'));
     }
 
     #[test]
     fn alt_screen_enter_with_pending_should_rollback() {
-        let mut engine = engine_on();
+        let mut engine = engine_on_confirmed();
         // Build up display_ahead = 2.
         engine.on_keystroke("a");
         engine.on_keystroke("b");
@@ -1946,5 +1970,110 @@ mod tests {
         // Output should contain only the CSI sequence, no rollback prefix.
         assert_eq!(out, b"\x1b[?1049h");
         assert!(engine.in_alternate_screen);
+    }
+
+    #[test]
+    fn tentative_epoch_should_suppress_first_char() {
+        let mut engine = engine_on();
+        // Fresh engine: epoch 1 is tentative (confirmed_epoch=0).
+        let action = engine.on_keystroke("a");
+        assert_eq!(
+            action,
+            PredictionAction::None,
+            "first char in tentative epoch should be suppressed"
+        );
+    }
+
+    #[test]
+    fn tentative_should_not_increment_display_ahead() {
+        let mut engine = engine_on();
+        engine.on_keystroke("a");
+        assert_eq!(
+            engine.display_ahead, 0,
+            "tentative prediction should not increment display_ahead"
+        );
+    }
+
+    #[test]
+    fn confirmed_epoch_should_display_subsequent_chars() {
+        let mut engine = engine_on();
+        // Type 'a' — suppressed in tentative epoch 1.
+        assert_eq!(engine.on_keystroke("a"), PredictionAction::None);
+
+        // Server echoes 'a' — confirms epoch 1.
+        let mut out = Vec::new();
+        engine.process_server_output(b"a", &mut out);
+
+        // Type 'b' — epoch 1 is now confirmed, should display.
+        let action = engine.on_keystroke("b");
+        assert_eq!(
+            action,
+            PredictionAction::DisplayChar('b'),
+            "char after epoch confirmation should be displayed"
+        );
+        assert_eq!(engine.display_ahead, 1);
+    }
+
+    #[test]
+    fn password_prompt_should_never_display() {
+        let mut engine = engine_on();
+        // Type Enter — creates epoch 2 (boundary).
+        engine.on_keystroke("\r");
+        // Type several password characters — all in tentative epoch 2.
+        // No server echo → epoch never confirmed → all suppressed.
+        for ch in ['p', 'a', 's', 's', 'w', 'd'] {
+            let action = engine.on_keystroke(&ch.to_string());
+            assert_eq!(
+                action,
+                PredictionAction::None,
+                "password char '{}' should be suppressed in tentative epoch",
+                ch
+            );
+        }
+        assert_eq!(
+            engine.display_ahead, 0,
+            "display_ahead should remain 0 for password chars"
+        );
+    }
+
+    #[test]
+    fn tentative_prediction_should_still_be_confirmable() {
+        let mut engine = engine_on();
+        // Type 'a' — tentative, suppressed.
+        engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 0);
+
+        // Server echoes 'a' — prediction is confirmed despite being tentative.
+        let mut out = Vec::new();
+        engine.process_server_output(b"a", &mut out);
+
+        // display_ahead was 0, so the confirmed byte passes through normally.
+        assert_eq!(out, b"a");
+        assert!(engine.is_epoch_confirmed(1));
+    }
+
+    #[test]
+    fn new_epoch_after_confirmed_should_be_tentative() {
+        let mut engine = engine_on_confirmed();
+        // Epoch 1 is confirmed. Type Enter → creates epoch 2.
+        engine.on_keystroke("\r");
+        // Type in epoch 2 — tentative since confirmed_epoch=1 < epoch_id=2.
+        let action = engine.on_keystroke("a");
+        assert_eq!(
+            action,
+            PredictionAction::None,
+            "first char after epoch boundary should be tentative"
+        );
+    }
+
+    #[test]
+    fn tentative_backspace_with_zero_display_ahead_should_return_new_epoch() {
+        let mut engine = engine_on();
+        // Type 'a' (tentative, display_ahead=0), then backspace.
+        engine.on_keystroke("a");
+        assert_eq!(engine.display_ahead, 0);
+        // Backspace with display_ahead=0 → epoch boundary.
+        let action = engine.on_keystroke("\x7f");
+        assert_eq!(action, PredictionAction::NewEpoch);
     }
 }
