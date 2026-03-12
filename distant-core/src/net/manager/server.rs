@@ -8,8 +8,8 @@ use tokio::sync::{RwLock, oneshot};
 
 use crate::net::common::{ConnectionId, Map};
 use crate::net::manager::{
-    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, ManagerRequest,
-    ManagerResponse, SemVer,
+    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
+    ManagerRequest, ManagerResponse, SemVer,
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler};
 use crate::plugin::extract_scheme;
@@ -17,11 +17,17 @@ use crate::plugin::extract_scheme;
 mod authentication;
 pub use authentication::*;
 
+mod channel;
+pub use channel::*;
+
 mod config;
 pub use config::*;
 
 mod connection;
 pub use connection::*;
+
+mod tunnel;
+pub use tunnel::*;
 
 /// Represents a manager of multiple server connections.
 pub struct ManagerServer {
@@ -38,6 +44,9 @@ pub struct ManagerServer {
     /// Mapping of auth id -> callback
     registry:
         Arc<RwLock<HashMap<ManagerAuthenticationId, oneshot::Sender<AuthenticationResponse>>>>,
+
+    /// Tunnels whose lifecycle is managed by this server process
+    managed_tunnels: RwLock<HashMap<ManagedTunnelId, ManagedTunnel>>,
 }
 
 impl ManagerServer {
@@ -50,6 +59,7 @@ impl ManagerServer {
             channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry: Arc::new(RwLock::new(HashMap::new())),
+            managed_tunnels: RwLock::new(HashMap::new()),
         })
     }
 
@@ -175,6 +185,20 @@ impl ManagerServer {
                         {
                             error!("[Conn {id}] {x}");
                         }
+                    }
+                }
+
+                // Abort managed tunnels belonging to this connection
+                let mut tunnels = self.managed_tunnels.write().await;
+                let tunnel_ids: Vec<ManagedTunnelId> = tunnels
+                    .values()
+                    .filter(|t| t.connection_id == id)
+                    .map(|t| t.id)
+                    .collect();
+                for tid in tunnel_ids {
+                    if let Some(t) = tunnels.remove(&tid) {
+                        debug!("[Conn {id}] Aborting managed tunnel {tid}");
+                        t.abort();
                     }
                 }
 
@@ -360,6 +384,97 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
+            ManagerRequest::ForwardTunnel {
+                connection_id,
+                bind_port,
+                remote_host,
+                remote_port,
+            } => {
+                debug!("Starting forward tunnel on connection {connection_id}");
+                match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => {
+                        match start_forward_tunnel(
+                            connection,
+                            connection_id,
+                            bind_port,
+                            remote_host,
+                            remote_port,
+                        )
+                        .await
+                        {
+                            Ok((managed, port)) => {
+                                let id = managed.id;
+                                self.managed_tunnels.write().await.insert(id, managed);
+                                info!("Started forward tunnel {id} on port {port}");
+                                ManagerResponse::ManagedTunnelStarted { id, port }
+                            }
+                            Err(x) => ManagerResponse::from(x),
+                        }
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Connection does not exist",
+                    )),
+                }
+            }
+            ManagerRequest::ReverseTunnel {
+                connection_id,
+                remote_port,
+                local_host,
+                local_port,
+            } => {
+                debug!("Starting reverse tunnel on connection {connection_id}");
+                match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => {
+                        match start_reverse_tunnel(
+                            connection,
+                            connection_id,
+                            remote_port,
+                            local_host,
+                            local_port,
+                        )
+                        .await
+                        {
+                            Ok((managed, port)) => {
+                                let id = managed.id;
+                                self.managed_tunnels.write().await.insert(id, managed);
+                                info!("Started reverse tunnel {id} on port {port}");
+                                ManagerResponse::ManagedTunnelStarted { id, port }
+                            }
+                            Err(x) => ManagerResponse::from(x),
+                        }
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "Connection does not exist",
+                    )),
+                }
+            }
+            ManagerRequest::CloseManagedTunnel { id } => {
+                debug!("Closing managed tunnel {id}");
+                match self.managed_tunnels.write().await.remove(&id) {
+                    Some(tunnel) => {
+                        tunnel.abort();
+                        info!("Closed managed tunnel {id}");
+                        ManagerResponse::ManagedTunnelClosed
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("No managed tunnel with id {id}"),
+                    )),
+                }
+            }
+            ManagerRequest::ListManagedTunnels => {
+                debug!("Listing managed tunnels");
+                let tunnels = self
+                    .managed_tunnels
+                    .read()
+                    .await
+                    .values()
+                    .map(|t| t.info.clone())
+                    .collect();
+                ManagerResponse::ManagedTunnels { tunnels }
+            }
         };
 
         if let Err(x) = reply.send(response) {
@@ -476,6 +591,7 @@ mod tests {
             channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry,
+            managed_tunnels: RwLock::new(HashMap::new()),
         };
 
         (server, authenticator)

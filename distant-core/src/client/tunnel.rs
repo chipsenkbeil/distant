@@ -2,12 +2,13 @@ use std::fmt;
 use std::io;
 
 use log::*;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::task::JoinHandle;
 
 use crate::client::Channel;
-use crate::constants::CLIENT_TUNNEL_CAPACITY;
+use crate::constants::{CLIENT_TUNNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE};
 use crate::net::client::Mailbox;
 use crate::net::common::{Request, Response};
 use crate::protocol::{self, TunnelId};
@@ -585,4 +586,62 @@ async fn process_tunnel_outgoing(
 
     trace!("[Tunnel {tunnel_id}] Tunnel outgoing channel closed");
     result
+}
+
+/// Relays data bidirectionally between a local TCP stream and a remote tunnel.
+///
+/// Splits the TCP stream into read/write halves, then runs two concurrent tasks:
+/// - local read -> tunnel write
+/// - tunnel read -> local write
+///
+/// Returns when either direction encounters an error or EOF.
+pub async fn relay_tcp_to_tunnel(
+    tcp_stream: tokio::net::TcpStream,
+    mut writer: RemoteTunnelWriter,
+    mut reader: RemoteTunnelReader,
+) -> io::Result<()> {
+    let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();
+
+    let local_to_remote = tokio::spawn(async move {
+        let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
+        loop {
+            let n = tcp_read.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            writer.write(buf[..n].to_vec()).await?;
+        }
+        io::Result::Ok(())
+    });
+
+    let remote_to_local = tokio::spawn(async move {
+        loop {
+            let data = reader.read().await?;
+            if data.is_empty() {
+                break;
+            }
+            tcp_write.write_all(&data).await?;
+        }
+        io::Result::Ok(())
+    });
+
+    // Wait for either direction to finish
+    tokio::select! {
+        result = local_to_remote => {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => debug!("Local-to-remote relay error: {e}"),
+                Err(e) => debug!("Local-to-remote task panicked: {e}"),
+            }
+        }
+        result = remote_to_local => {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => debug!("Remote-to-local relay error: {e}"),
+                Err(e) => debug!("Remote-to-local task panicked: {e}"),
+            }
+        }
+    }
+
+    Ok(())
 }

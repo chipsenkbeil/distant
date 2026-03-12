@@ -1207,10 +1207,6 @@ pub enum ClientTunnelSubcommand {
         #[clap(value_name = "SPEC")]
         spec: String,
 
-        /// Run in foreground and block until Ctrl+C (default: print status and return)
-        #[clap(long)]
-        foreground: bool,
-
         /// Location to store cached data
         #[clap(
             long,
@@ -1233,10 +1229,6 @@ pub enum ClientTunnelSubcommand {
         /// Tunnel spec in format REMOTE_PORT:LOCAL_HOST:LOCAL_PORT (e.g. 9090:localhost:3000)
         #[clap(value_name = "SPEC")]
         spec: String,
-
-        /// Run in foreground and block until Ctrl+C (default: print status and return)
-        #[clap(long)]
-        foreground: bool,
 
         /// Location to store cached data
         #[clap(

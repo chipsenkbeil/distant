@@ -7,7 +7,8 @@ use log::*;
 use crate::net::client::Client;
 use crate::net::common::{ConnectionId, Destination, Map, Request};
 use crate::net::manager::data::{
-    ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse, SemVer,
+    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagedTunnelInfo, ManagerRequest,
+    ManagerResponse, SemVer,
 };
 
 // NOTE: Destination is still used for the Launched response, but launch/connect accept raw strings.
@@ -287,6 +288,94 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Requests the manager to start a forward tunnel (local port → remote target).
+    ///
+    /// Returns the managed tunnel ID and the actual bound local port.
+    pub async fn forward_tunnel(
+        &mut self,
+        connection_id: ConnectionId,
+        bind_port: u16,
+        remote_host: impl Into<String>,
+        remote_port: u16,
+    ) -> io::Result<(ManagedTunnelId, u16)> {
+        let remote_host = remote_host.into();
+        trace!("forward_tunnel({connection_id}, {bind_port}, {remote_host}, {remote_port})");
+        let res = self
+            .send(ManagerRequest::ForwardTunnel {
+                connection_id,
+                bind_port,
+                remote_host,
+                remote_port,
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelStarted { id, port } => Ok((id, port)),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Requests the manager to start a reverse tunnel (remote listener → local target).
+    ///
+    /// Returns the managed tunnel ID and the actual remote port.
+    pub async fn reverse_tunnel(
+        &mut self,
+        connection_id: ConnectionId,
+        remote_port: u16,
+        local_host: impl Into<String>,
+        local_port: u16,
+    ) -> io::Result<(ManagedTunnelId, u16)> {
+        let local_host = local_host.into();
+        trace!("reverse_tunnel({connection_id}, {remote_port}, {local_host}, {local_port})");
+        let res = self
+            .send(ManagerRequest::ReverseTunnel {
+                connection_id,
+                remote_port,
+                local_host,
+                local_port,
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelStarted { id, port } => Ok((id, port)),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Closes a managed tunnel by ID.
+    pub async fn close_managed_tunnel(&mut self, id: ManagedTunnelId) -> io::Result<()> {
+        trace!("close_managed_tunnel({id})");
+        let res = self.send(ManagerRequest::CloseManagedTunnel { id }).await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelClosed => Ok(()),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Lists all managed tunnels.
+    pub async fn list_managed_tunnels(&mut self) -> io::Result<Vec<ManagedTunnelInfo>> {
+        trace!("list_managed_tunnels()");
+        let res = self.send(ManagerRequest::ListManagedTunnels).await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnels { tunnels } => Ok(tunnels),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,

@@ -1,8 +1,22 @@
 use crate::auth::msg::Authentication;
 use serde::{Deserialize, Serialize};
 
-use super::{ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, SemVer};
+use super::{
+    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
+    SemVer,
+};
 use crate::net::common::{ConnectionId, Destination, UntypedResponse};
+
+/// Information about a tunnel managed by the manager process.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedTunnelInfo {
+    pub id: ManagedTunnelId,
+    pub connection_id: ConnectionId,
+    pub direction: String,
+    pub bind_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, tag = "type")]
@@ -60,6 +74,15 @@ pub enum ManagerResponse {
         /// Id of the channel
         id: ManagerChannelId,
     },
+
+    /// Confirmation that a managed tunnel was started
+    ManagedTunnelStarted { id: ManagedTunnelId, port: u16 },
+
+    /// Acknowledgement that a managed tunnel was closed
+    ManagedTunnelClosed,
+
+    /// List of managed tunnels
+    ManagedTunnels { tunnels: Vec<ManagedTunnelInfo> },
 }
 
 impl<T: std::error::Error> From<T> for ManagerResponse {

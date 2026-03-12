@@ -1538,30 +1538,18 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 use_or_lookup_connection_id(&mut cache, sub.connection_id(), &mut client).await?;
             cache.write_to_disk().await?;
 
-            debug!("Opening channel to connection {}", connection_id);
-            let channel = client
-                .open_raw_channel(connection_id)
-                .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?
-                .into_client()
-                .into_channel();
-
             match sub {
-                ClientTunnelSubcommand::Open {
-                    spec, foreground, ..
-                } => {
-                    tunnel::handle_open(channel, &spec, foreground).await?;
+                ClientTunnelSubcommand::Open { spec, .. } => {
+                    tunnel::handle_open(&mut client, connection_id, &spec).await?;
                 }
-                ClientTunnelSubcommand::Listen {
-                    spec, foreground, ..
-                } => {
-                    tunnel::handle_listen(channel, &spec, foreground).await?;
+                ClientTunnelSubcommand::Listen { spec, .. } => {
+                    tunnel::handle_listen(&mut client, connection_id, &spec).await?;
                 }
                 ClientTunnelSubcommand::Close { id, .. } => {
-                    tunnel::handle_close(channel, id).await?;
+                    tunnel::handle_close(&mut client, id).await?;
                 }
                 ClientTunnelSubcommand::List { .. } => {
-                    tunnel::handle_list(channel).await?;
+                    tunnel::handle_list(&mut client).await?;
                 }
             }
         }

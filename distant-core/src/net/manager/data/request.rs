@@ -1,7 +1,7 @@
 use crate::auth::msg::AuthenticationResponse;
 use serde::{Deserialize, Serialize};
 
-use super::{ManagerAuthenticationId, ManagerChannelId};
+use super::{ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId};
 use crate::net::common::{ConnectionId, Map, UntypedRequest};
 
 #[allow(clippy::large_enum_variant)]
@@ -68,4 +68,26 @@ pub enum ManagerRequest {
 
     /// Retrieve list of connections being managed
     List,
+
+    /// Start a forward tunnel (local listener -> remote target) in the manager
+    ForwardTunnel {
+        connection_id: ConnectionId,
+        bind_port: u16,
+        remote_host: String,
+        remote_port: u16,
+    },
+
+    /// Start a reverse tunnel (remote listener -> local target) in the manager
+    ReverseTunnel {
+        connection_id: ConnectionId,
+        remote_port: u16,
+        local_host: String,
+        local_port: u16,
+    },
+
+    /// Close a managed tunnel by ID
+    CloseManagedTunnel { id: ManagedTunnelId },
+
+    /// List all managed tunnels
+    ListManagedTunnels,
 }
