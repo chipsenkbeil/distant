@@ -158,47 +158,136 @@ pub async fn handle_list(client: &mut ManagerClient) -> CliResult {
 mod tests {
     use super::*;
 
-    #[test]
-    fn tunnel_spec_simple() {
-        let spec: TunnelSpec = "8080:db-host:5432".parse().unwrap();
-        assert_eq!(spec.bind_port, 8080);
-        assert_eq!(spec.host, "db-host");
-        assert_eq!(spec.peer_port, 5432);
+    mod parse {
+        use super::*;
+
+        #[test]
+        fn should_parse_simple_spec() {
+            let spec: TunnelSpec = "8080:db-host:5432".parse().unwrap();
+            assert_eq!(spec.bind_port, 8080);
+            assert_eq!(spec.host, "db-host");
+            assert_eq!(spec.peer_port, 5432);
+        }
+
+        #[test]
+        fn should_parse_localhost_spec() {
+            let spec: TunnelSpec = "3000:localhost:3000".parse().unwrap();
+            assert_eq!(spec.bind_port, 3000);
+            assert_eq!(spec.host, "localhost");
+            assert_eq!(spec.peer_port, 3000);
+        }
+
+        #[test]
+        fn should_parse_ipv6_host() {
+            let spec: TunnelSpec = "8080:[::1]:5432".parse().unwrap();
+            assert_eq!(spec.bind_port, 8080);
+            assert_eq!(spec.host, "[::1]");
+            assert_eq!(spec.peer_port, 5432);
+        }
+
+        #[test]
+        fn should_parse_zero_bind_port() {
+            let spec: TunnelSpec = "0:host:80".parse().unwrap();
+            assert_eq!(spec.bind_port, 0);
+            assert_eq!(spec.host, "host");
+            assert_eq!(spec.peer_port, 80);
+        }
+
+        #[test]
+        fn should_parse_ip_address_host() {
+            let spec: TunnelSpec = "8080:192.168.1.1:5432".parse().unwrap();
+            assert_eq!(spec.bind_port, 8080);
+            assert_eq!(spec.host, "192.168.1.1");
+            assert_eq!(spec.peer_port, 5432);
+        }
+
+        #[test]
+        fn should_reject_missing_colon() {
+            let err = "8080".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid tunnel spec"),
+                "Expected 'Invalid tunnel spec' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_invalid_bind_port() {
+            let err = "abc:host:5432".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid bind port"),
+                "Expected 'Invalid bind port' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_invalid_peer_port() {
+            let err = "8080:host:abc".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid peer port"),
+                "Expected 'Invalid peer port' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_only_one_colon() {
+            let err = "8080:host".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid tunnel spec"),
+                "Expected 'Invalid tunnel spec' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_bind_port_overflow() {
+            let err = "99999:host:80".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid bind port"),
+                "Expected 'Invalid bind port' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_peer_port_overflow() {
+            let err = "80:host:99999".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid peer port"),
+                "Expected 'Invalid peer port' in error: {}",
+                err
+            );
+        }
+
+        #[test]
+        fn should_reject_empty_string() {
+            let err = "".parse::<TunnelSpec>().unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid tunnel spec")
+                    || err.to_string().contains("Invalid bind port"),
+                "Expected relevant error in: {}",
+                err
+            );
+        }
     }
 
-    #[test]
-    fn tunnel_spec_localhost() {
-        let spec: TunnelSpec = "3000:localhost:3000".parse().unwrap();
-        assert_eq!(spec.bind_port, 3000);
-        assert_eq!(spec.host, "localhost");
-        assert_eq!(spec.peer_port, 3000);
-    }
+    mod clone_and_equality {
+        use super::*;
 
-    #[test]
-    fn tunnel_spec_ipv6() {
-        let spec: TunnelSpec = "8080:[::1]:5432".parse().unwrap();
-        assert_eq!(spec.bind_port, 8080);
-        assert_eq!(spec.host, "[::1]");
-        assert_eq!(spec.peer_port, 5432);
-    }
+        #[test]
+        fn should_clone_and_compare_equal() {
+            let spec: TunnelSpec = "8080:host:5432".parse().unwrap();
+            let cloned = spec.clone();
+            assert_eq!(spec, cloned);
+        }
 
-    #[test]
-    fn tunnel_spec_missing_colon() {
-        assert!("8080".parse::<TunnelSpec>().is_err());
-    }
-
-    #[test]
-    fn tunnel_spec_invalid_bind_port() {
-        assert!("abc:host:5432".parse::<TunnelSpec>().is_err());
-    }
-
-    #[test]
-    fn tunnel_spec_invalid_peer_port() {
-        assert!("8080:host:abc".parse::<TunnelSpec>().is_err());
-    }
-
-    #[test]
-    fn tunnel_spec_only_one_colon() {
-        assert!("8080:host".parse::<TunnelSpec>().is_err());
+        #[test]
+        fn should_not_equal_different_specs() {
+            let a: TunnelSpec = "8080:host:5432".parse().unwrap();
+            let b: TunnelSpec = "9090:host:5432".parse().unwrap();
+            assert_ne!(a, b);
+        }
     }
 }
