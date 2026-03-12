@@ -26,14 +26,14 @@ use crate::{ClientHandler, SshFamily};
 /// Global counter for generating unique tunnel IDs across all SSH connections.
 pub(crate) static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
 
-/// Internal state for a single active SSH tunnel (forward connection).
-struct SshTunnel {
+/// Internal state for a single active SSH tunnel (forward or sub-tunnel).
+pub(crate) struct SshTunnel {
     /// Metadata about the tunnel (id, direction, host, port).
-    info: TunnelInfo,
+    pub(crate) info: TunnelInfo,
     /// Sender to write data into the tunnel's SSH channel.
-    write_tx: mpsc::Sender<Vec<u8>>,
+    pub(crate) write_tx: mpsc::Sender<Vec<u8>>,
     /// Handle to the background relay task; aborted on close.
-    task: JoinHandle<()>,
+    pub(crate) task: JoinHandle<()>,
 }
 
 /// State for a registered reverse tunnel listener.
@@ -48,6 +48,10 @@ pub(crate) struct SshForwardListener {
 pub(crate) struct SshTunnelSharedState {
     /// Registered forward listeners keyed by (host, port).
     pub listeners: RwLock<HashMap<(String, u32), SshForwardListener>>,
+    /// All active tunnels (forward connections and reverse sub-tunnels), shared
+    /// so that [`ClientHandler::server_channel_open_forwarded_tcpip`] can
+    /// register sub-tunnels reachable by [`SshApi::tunnel_write`].
+    pub tunnels: Arc<RwLock<HashMap<TunnelId, SshTunnel>>>,
 }
 
 impl SshTunnelSharedState {
@@ -55,14 +59,18 @@ impl SshTunnelSharedState {
     pub fn new() -> Self {
         Self {
             listeners: RwLock::new(HashMap::new()),
+            tunnels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
 
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
-    /// Active SSH session handle, behind a mutex for `tcpip_forward` which
-    /// requires `&mut self`.
+    /// Wrapped in Mutex (not RwLock) because russh's Handle internally
+    /// serializes all channel operations through a single sender, so RwLock
+    /// would not improve concurrency. Mutex is simpler and avoids potential
+    /// reader starvation blocking `tcpip_forward` (which requires `&mut self`).
+    /// No deadlock risk: locks are never held across re-entrant await points.
     session: Mutex<Handle<ClientHandler>>,
 
     /// Lazy-cached SFTP session (created on first file operation).
@@ -97,11 +105,12 @@ impl SshApi {
         family: SshFamily,
         tunnel_state: Arc<SshTunnelSharedState>,
     ) -> Self {
+        let tunnels = Arc::clone(&tunnel_state.tunnels);
         Self {
             session: Mutex::new(session),
             sftp: Arc::new(Mutex::new(None)),
             processes: Arc::new(RwLock::new(HashMap::new())),
-            tunnels: Arc::new(RwLock::new(HashMap::new())),
+            tunnels,
             tunnel_state,
             family,
             cached_current_dir: OnceCell::new(),
@@ -1262,6 +1271,10 @@ impl Api for SshApi {
                 },
             );
 
+            // Register a placeholder tunnel entry for the listener itself so it
+            // appears in status output and can be removed by tunnel_close. Actual
+            // data relay happens in per-connection sub-tunnels registered by
+            // server_channel_open_forwarded_tcpip.
             let mut tunnels = self.tunnels.write().await;
             tunnels.insert(
                 id,
@@ -1272,8 +1285,8 @@ impl Api for SshApi {
                         host,
                         port: actual_port as u16,
                     },
-                    write_tx: mpsc::channel(1).0, // placeholder, not used for listeners
-                    task: tokio::spawn(async {}), // placeholder
+                    write_tx: mpsc::channel(1).0,
+                    task: tokio::spawn(async {}),
                 },
             );
 
@@ -1313,12 +1326,15 @@ impl Api for SshApi {
                 listeners.retain(|_, listener| listener.id != id);
 
                 // Tell the server to stop forwarding on this address:port
-                let _ = self
+                if let Err(e) = self
                     .session
                     .lock()
                     .await
                     .cancel_tcpip_forward(&tunnel.info.host, tunnel.info.port as u32)
-                    .await;
+                    .await
+                {
+                    debug!("[Tunnel {id}] Failed to cancel tcpip_forward: {e}");
+                }
             }
 
             Ok(())

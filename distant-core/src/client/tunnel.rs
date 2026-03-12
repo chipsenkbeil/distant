@@ -210,7 +210,7 @@ impl RemoteTunnel {
 /// Writer half for sending data through a [`RemoteTunnel`].
 ///
 /// Obtained via [`RemoteTunnel::writer`]. Queues outgoing data for
-/// transmission through the tunnel's SSH or host channel.
+/// transmission through the tunnel's underlying channel.
 #[derive(Clone, Debug)]
 pub struct RemoteTunnelWriter(mpsc::Sender<Vec<u8>>);
 

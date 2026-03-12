@@ -25,7 +25,7 @@ use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
-use distant_core::protocol::{PROTOCOL_VERSION, Response};
+use distant_core::protocol::{PROTOCOL_VERSION, Response, TunnelDirection, TunnelInfo};
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
@@ -497,16 +497,17 @@ impl client::Handler for ClientHandler {
 
             // Set up bidirectional relay for the forwarded channel
             let reply = listener.reply.clone_reply();
+            drop(listeners); // release read lock before acquiring write lock below
+
             let stream = channel.into_stream();
             let (read_half, mut write_half) = tokio::io::split(stream);
 
             let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
 
-            // Stash the write sender so tunnel_write can reach this sub-tunnel.
-            // (Currently unused — future work will register it in the SshApi tunnel map.)
-            drop(write_tx);
+            // Clone tunnels Arc for cleanup inside the relay task
+            let tunnels_for_cleanup = Arc::clone(&tunnel_state.tunnels);
 
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
                 // Forward queued write data from the client to the SSH channel
@@ -543,9 +544,25 @@ impl client::Handler for ClientHandler {
                     }
                 }
 
+                tunnels_for_cleanup.write().await.remove(&tunnel_id);
                 let _ = reply.send(Response::TunnelClosed { id: tunnel_id });
                 write_task.abort();
             });
+
+            // Register the sub-tunnel so tunnel_write can route data to it
+            tunnel_state.tunnels.write().await.insert(
+                tunnel_id,
+                api::SshTunnel {
+                    info: TunnelInfo {
+                        id: tunnel_id,
+                        direction: TunnelDirection::Forward,
+                        host: connected_address,
+                        port: connected_port as u16,
+                    },
+                    write_tx,
+                    task,
+                },
+            );
 
             Ok(())
         }
