@@ -180,6 +180,9 @@ pub struct PredictionEngine {
     last_input_time: Option<Instant>,
     /// Bytes accumulated in the current input burst.
     input_byte_count: usize,
+    /// Whether the terminal is in the alternate screen buffer (e.g., vim).
+    /// Predictions are suppressed while this is `true`.
+    in_alternate_screen: bool,
 }
 
 impl PredictionEngine {
@@ -199,6 +202,7 @@ impl PredictionEngine {
             display_ahead: 0,
             last_input_time: None,
             input_byte_count: 0,
+            in_alternate_screen: false,
         }
     }
 
@@ -245,7 +249,8 @@ impl PredictionEngine {
 
             // Backspace (BS or DEL).
             if bytes[0] == 0x08 || bytes[0] == 0x7f {
-                if self.cursor_col.saturating_add(self.display_ahead) > 0 {
+                if self.display_ahead > 0 {
+                    // Undo our own pending forward prediction.
                     self.ensure_current_epoch();
                     let pred_col = self
                         .cursor_col
@@ -264,7 +269,12 @@ impl PredictionEngine {
                     trace!("Predicted backspace at col {}", pred_col);
                     return PredictionAction::DisplayBackspace;
                 }
-                return PredictionAction::None;
+                // No pending forward predictions — treat as epoch boundary.
+                // We cannot safely predict visual backspace because we don't
+                // know where the prompt's editable region starts.
+                self.new_epoch();
+                trace!("Epoch boundary on backspace with no pending predictions");
+                return PredictionAction::NewEpoch;
             }
 
             // Control characters and CR/LF trigger epoch boundaries.
@@ -318,32 +328,14 @@ impl PredictionEngine {
                 && bytes[i + 1] == b'['
                 && let Some((seq_len, cmd, param)) = self.parse_csi(&bytes[i..])
             {
-                // Write the full sequence to output.
-                out.extend_from_slice(&bytes[i..i + seq_len]);
+                let csi_start = i;
 
-                // Track cursor movement.
-                match cmd {
-                    b'C' => {
-                        // Cursor forward.
-                        self.cursor_col = self.cursor_col.saturating_add(param);
-                    }
-                    b'D' => {
-                        // Cursor backward.
-                        self.cursor_col = self.cursor_col.saturating_sub(param);
-                    }
-                    b'G' => {
-                        // Cursor horizontal absolute (1-based).
-                        self.cursor_col = param.saturating_sub(1);
-                    }
-                    _ => {}
-                }
-
-                i += seq_len;
-
+                // Roll back predictions BEFORE writing the CSI so that the
+                // cursor-left in rollback operates from the correct position.
+                //
                 // Cursor-movement or erase CSI while predictions are pending
                 // means the server is doing something other than echoing
                 // characters (e.g. vim cursor motion, screen clearing).
-                // Roll back predictions.
                 if self.display_ahead > 0 {
                     match cmd {
                         b'A' | b'B' | b'C' | b'D' | b'G' | b'H' | b'J' | b'K' | b'd' => {
@@ -354,6 +346,46 @@ impl PredictionEngine {
                     }
                 }
 
+                // Alternate screen enter (DEC private modes 1049/47/1047):
+                // rollback before the screen switch so cleanup targets the
+                // main screen where predictions were displayed.
+                let is_dec_alt_screen =
+                    bytes[csi_start + 2] == b'?' && (param == 1049 || param == 47 || param == 1047);
+                if is_dec_alt_screen && cmd == b'h' {
+                    if self.display_ahead > 0 {
+                        self.rollback(out);
+                        self.reset();
+                    }
+                    self.in_alternate_screen = true;
+                    trace!("Entered alternate screen (mode {})", param);
+                }
+
+                // Write the full sequence to output.
+                out.extend_from_slice(&bytes[csi_start..csi_start + seq_len]);
+
+                // Track cursor movement.
+                match cmd {
+                    b'C' => {
+                        self.cursor_col = self.cursor_col.saturating_add(param);
+                    }
+                    b'D' => {
+                        self.cursor_col = self.cursor_col.saturating_sub(param);
+                    }
+                    b'G' => {
+                        self.cursor_col = param.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+
+                // Alternate screen leave: clear flag after writing the CSI
+                // (order doesn't matter for leave since we're restoring the
+                // main screen, not cleaning up predictions).
+                if is_dec_alt_screen && cmd == b'l' {
+                    self.in_alternate_screen = false;
+                    trace!("Left alternate screen (mode {})", param);
+                }
+
+                i += seq_len;
                 continue;
             }
 
@@ -473,7 +505,8 @@ impl PredictionEngine {
     /// Clears all prediction state.
     ///
     /// Removes all epochs, resets the display-ahead counter, and resets
-    /// the epoch counter. Does not affect the RTT estimator.
+    /// the epoch counter. Does not affect the RTT estimator or
+    /// alternate-screen tracking.
     pub fn reset(&mut self) {
         trace!("Prediction engine reset");
         self.epochs.clear();
@@ -494,6 +527,9 @@ impl PredictionEngine {
     /// - `On` mode: always returns `true`
     /// - `Adaptive` mode: returns `true` when SRTT >= 30 ms
     pub fn should_display(&self) -> bool {
+        if self.in_alternate_screen {
+            return false;
+        }
         match self.mode {
             PredictMode::Off => false,
             PredictMode::On => true,
@@ -782,34 +818,34 @@ mod tests {
     }
 
     #[test]
-    fn backspace_should_return_display_backspace() {
+    fn backspace_with_no_display_ahead_should_return_new_epoch() {
         let mut engine = engine_on();
-        // cursor_col must be > 0 for backspace to work. Advance it via server output.
+        // cursor_col advanced via server output, but display_ahead remains 0.
         let mut out = Vec::new();
         engine.process_server_output(b"abc", &mut out);
         assert_eq!(engine.cursor_col, 3);
 
         let action = engine.on_keystroke("\x7f");
-        assert_eq!(action, PredictionAction::DisplayBackspace);
+        assert_eq!(action, PredictionAction::NewEpoch);
     }
 
     #[test]
-    fn backspace_bs_byte_should_return_display_backspace() {
+    fn backspace_bs_byte_with_no_display_ahead_should_return_new_epoch() {
         let mut engine = engine_on();
         let mut out = Vec::new();
         engine.process_server_output(b"x", &mut out);
         assert_eq!(engine.cursor_col, 1);
 
         let action = engine.on_keystroke("\x08");
-        assert_eq!(action, PredictionAction::DisplayBackspace);
+        assert_eq!(action, PredictionAction::NewEpoch);
     }
 
     #[test]
-    fn backspace_at_col_zero_should_return_none() {
+    fn backspace_at_col_zero_with_no_display_ahead_should_return_new_epoch() {
         let mut engine = engine_on();
-        // cursor_col starts at 0, no chars typed.
+        // cursor_col starts at 0, no chars typed — display_ahead is 0.
         let action = engine.on_keystroke("\x7f");
-        assert_eq!(action, PredictionAction::None);
+        assert_eq!(action, PredictionAction::NewEpoch);
     }
 
     #[test]
@@ -1411,17 +1447,16 @@ mod tests {
     }
 
     #[test]
-    fn backspace_prediction_at_cursor_col_greater_than_zero_should_work() {
+    fn backspace_at_cursor_col_greater_than_zero_with_no_display_ahead_should_return_new_epoch() {
         let mut engine = engine_on();
         // Simulate some confirmed server output to move cursor forward.
         let mut out = Vec::new();
         engine.process_server_output(b"abc", &mut out);
         assert_eq!(engine.cursor_col, 3);
-        out.clear();
 
-        // Now predict a backspace.
+        // display_ahead is 0 — backspace treated as epoch boundary.
         let action = engine.on_keystroke("\x7f");
-        assert_eq!(action, PredictionAction::DisplayBackspace);
+        assert_eq!(action, PredictionAction::NewEpoch);
     }
 
     #[test]
@@ -1657,21 +1692,20 @@ mod tests {
     #[test]
     fn backspace_prediction_should_be_confirmed_by_server_bs() {
         let mut engine = engine_on();
-        // Advance confirmed cursor by processing server output.
-        let mut out = Vec::new();
-        engine.process_server_output(b"abc", &mut out);
-        assert_eq!(engine.cursor_col, 3);
+        // Type a char to get display_ahead=1, then backspace undoes it.
+        let action = engine.on_keystroke("a");
+        assert_eq!(action, PredictionAction::DisplayChar('a'));
+        assert_eq!(engine.display_ahead, 1);
 
-        // Predict a backspace.
         let action = engine.on_keystroke("\x7f");
         assert_eq!(action, PredictionAction::DisplayBackspace);
+        assert_eq!(engine.display_ahead, 0);
 
-        // Server echoes BS — should confirm the backspace prediction.
-        let mut out2 = Vec::new();
-        engine.process_server_output(b"\x08", &mut out2);
-        assert_eq!(engine.cursor_col, 2, "cursor should move back on server BS");
+        // Server echoes "a" then BS — both predictions should be confirmed.
+        let mut out = Vec::new();
+        engine.process_server_output(b"a\x08", &mut out);
+        assert_eq!(engine.cursor_col, 0, "cursor should return to 0 after a+BS");
 
-        // The backspace prediction should now be confirmed.
         let all_confirmed = engine.epochs.iter().all(|e| {
             e.predictions
                 .iter()
@@ -1702,8 +1736,8 @@ mod tests {
         // Server sends CSI cursor forward 5 while a prediction is pending.
         engine.process_server_output(b"\x1b[5C", &mut out);
 
-        // Output: the CSI sequence itself, then rollback (SGR reset + cursor-left 1 + clear).
-        assert_eq!(out, b"\x1b[5C\x1b[0m\x1b[1D\x1b[K");
+        // Rollback (SGR reset + cursor-left 1 + clear) is emitted BEFORE the CSI sequence.
+        assert_eq!(out, b"\x1b[0m\x1b[1D\x1b[K\x1b[5C");
         assert_eq!(engine.display_ahead, 0);
         assert!(
             engine.epochs.is_empty(),
@@ -1785,5 +1819,132 @@ mod tests {
         engine.process_server_output(b"a", &mut out);
         assert_eq!(out, b"\x1b[3D\x1b[24ma\x1b[2C");
         assert_eq!(engine.display_ahead, 2);
+    }
+
+    #[test]
+    fn alt_screen_enter_should_suppress_predictions() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        // Enter alternate screen via DEC private mode 1049.
+        engine.process_server_output(b"\x1b[?1049h", &mut out);
+        assert!(
+            !engine.should_display(),
+            "should_display() should return false while in alternate screen"
+        );
+        // Keystroke while in alternate screen should return None.
+        let action = engine.on_keystroke("a");
+        assert_eq!(action, PredictionAction::None);
+    }
+
+    #[test]
+    fn alt_screen_leave_should_resume_predictions() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        // Enter then leave alternate screen.
+        engine.process_server_output(b"\x1b[?1049h", &mut out);
+        assert!(!engine.should_display());
+        engine.process_server_output(b"\x1b[?1049l", &mut out);
+        assert!(
+            engine.should_display(),
+            "should_display() should return true after leaving alternate screen"
+        );
+        // Keystroke after leaving alternate screen should predict again.
+        let action = engine.on_keystroke("a");
+        assert_eq!(action, PredictionAction::DisplayChar('a'));
+    }
+
+    #[test]
+    fn alt_screen_enter_with_pending_should_rollback() {
+        let mut engine = engine_on();
+        // Build up display_ahead = 2.
+        engine.on_keystroke("a");
+        engine.on_keystroke("b");
+        assert_eq!(engine.display_ahead, 2);
+
+        let mut out = Vec::new();
+        // Alternate screen enter should rollback BEFORE writing the CSI.
+        engine.process_server_output(b"\x1b[?1049h", &mut out);
+
+        // Expected: rollback (SGR reset + cursor-left 2 + clear) then the CSI sequence.
+        assert_eq!(out, b"\x1b[0m\x1b[2D\x1b[K\x1b[?1049h");
+        assert_eq!(engine.display_ahead, 0);
+        assert!(engine.in_alternate_screen);
+    }
+
+    #[test]
+    fn alt_screen_mode_47_should_be_detected() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?47h", &mut out);
+        assert!(engine.in_alternate_screen);
+        assert!(
+            !engine.should_display(),
+            "DEC mode 47 should activate alternate screen detection"
+        );
+    }
+
+    #[test]
+    fn alt_screen_mode_1047_should_be_detected() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?1047h", &mut out);
+        assert!(engine.in_alternate_screen);
+        assert!(
+            !engine.should_display(),
+            "DEC mode 1047 should activate alternate screen detection"
+        );
+    }
+
+    #[test]
+    fn alt_screen_leave_mode_47_should_resume_predictions() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?47h", &mut out);
+        assert!(engine.in_alternate_screen);
+        out.clear();
+        engine.process_server_output(b"\x1b[?47l", &mut out);
+        assert!(!engine.in_alternate_screen);
+        assert!(engine.should_display());
+    }
+
+    #[test]
+    fn alt_screen_leave_mode_1047_should_resume_predictions() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?1047h", &mut out);
+        assert!(engine.in_alternate_screen);
+        out.clear();
+        engine.process_server_output(b"\x1b[?1047l", &mut out);
+        assert!(!engine.in_alternate_screen);
+        assert!(engine.should_display());
+    }
+
+    #[test]
+    fn reset_should_not_clear_alternate_screen_flag() {
+        let mut engine = engine_on();
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?1049h", &mut out);
+        assert!(!engine.should_display());
+        // reset() clears epochs/display_ahead but should preserve alternate screen state.
+        engine.reset();
+        assert!(
+            !engine.should_display(),
+            "reset() should not clear in_alternate_screen flag"
+        );
+        assert!(engine.in_alternate_screen);
+    }
+
+    #[test]
+    fn alt_screen_enter_without_pending_should_set_flag_only() {
+        let mut engine = engine_on();
+        // No predictions — display_ahead is 0.
+        assert_eq!(engine.display_ahead, 0);
+
+        let mut out = Vec::new();
+        engine.process_server_output(b"\x1b[?1049h", &mut out);
+
+        // Output should contain only the CSI sequence, no rollback prefix.
+        assert_eq!(out, b"\x1b[?1049h");
+        assert!(engine.in_alternate_screen);
     }
 }
