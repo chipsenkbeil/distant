@@ -8,9 +8,10 @@ use tokio::task::JoinHandle;
 use crate::client::{ChannelExt, RemoteTunnelListener, relay_tcp_to_tunnel};
 use crate::net::common::ConnectionId;
 use crate::net::manager::data::{ManagedTunnelId, ManagedTunnelInfo};
+use crate::protocol::TunnelDirection;
 
 use super::InternalRawChannel;
-use super::connection::{ManagerChannel, ManagerConnection};
+use super::connection::ManagerChannel;
 
 static NEXT_MANAGED_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -37,16 +38,22 @@ impl ManagedTunnel {
 /// Starts a forward tunnel (local TCP listener → remote target) inside the
 /// manager process.
 ///
+/// The caller should open the [`InternalRawChannel`] while briefly holding the
+/// connection lock, then pass it here for the async setup.
+///
 /// Returns the managed tunnel and the actual bound local port (which may differ
 /// from `bind_port` when `0` is passed).
+///
+/// # Errors
+///
+/// Returns an error if binding the local TCP listener fails.
 pub async fn start_forward_tunnel(
-    connection: &ManagerConnection,
+    internal: InternalRawChannel,
     connection_id: ConnectionId,
     bind_port: u16,
     remote_host: String,
     remote_port: u16,
 ) -> io::Result<(ManagedTunnel, u16)> {
-    let internal = InternalRawChannel::open(connection)?;
     let (mut channel, manager_channel) = internal.into_parts();
 
     let listener = TcpListener::bind(format!("127.0.0.1:{bind_port}"))
@@ -102,7 +109,7 @@ pub async fn start_forward_tunnel(
     let info = ManagedTunnelInfo {
         id,
         connection_id,
-        direction: "forward".to_string(),
+        direction: TunnelDirection::Forward,
         bind_port: actual_port,
         remote_host,
         remote_port,
@@ -123,16 +130,22 @@ pub async fn start_forward_tunnel(
 /// Starts a reverse tunnel (remote listener → local TCP target) inside the
 /// manager process.
 ///
+/// The caller should open the [`InternalRawChannel`] while briefly holding the
+/// connection lock, then pass it here for the async setup.
+///
 /// Returns the managed tunnel and the actual remote port (which may differ
 /// from `remote_port` when `0` is passed).
+///
+/// # Errors
+///
+/// Returns an error if the remote side fails to set up the listener.
 pub async fn start_reverse_tunnel(
-    connection: &ManagerConnection,
+    internal: InternalRawChannel,
     connection_id: ConnectionId,
     remote_port: u16,
     local_host: String,
     local_port: u16,
 ) -> io::Result<(ManagedTunnel, u16)> {
-    let internal = InternalRawChannel::open(connection)?;
     let (channel, manager_channel) = internal.into_parts();
 
     // Ask the remote to listen on the specified port
@@ -214,7 +227,7 @@ pub async fn start_reverse_tunnel(
     let info = ManagedTunnelInfo {
         id,
         connection_id,
-        direction: "reverse".to_string(),
+        direction: TunnelDirection::Reverse,
         bind_port: actual_port,
         remote_host: local_host,
         remote_port: local_port,

@@ -504,7 +504,23 @@ impl client::Handler for ClientHandler {
 
             let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
 
-            // Clone tunnels Arc for cleanup inside the relay task
+            // Register the sub-tunnel BEFORE spawning the relay task to prevent
+            // a race where the task finishes and removes a not-yet-inserted entry,
+            // leaving an orphan after the subsequent insert.
+            tunnel_state.tunnels.write().await.insert(
+                tunnel_id,
+                api::SshTunnel {
+                    info: TunnelInfo {
+                        id: tunnel_id,
+                        direction: TunnelDirection::Forward,
+                        host: connected_address,
+                        port: connected_port as u16,
+                    },
+                    write_tx,
+                    task: tokio::spawn(async {}), // placeholder
+                },
+            );
+
             let tunnels_for_cleanup = Arc::clone(&tunnel_state.tunnels);
 
             let task = tokio::spawn(async move {
@@ -549,20 +565,13 @@ impl client::Handler for ClientHandler {
                 write_task.abort();
             });
 
-            // Register the sub-tunnel so tunnel_write can route data to it
-            tunnel_state.tunnels.write().await.insert(
-                tunnel_id,
-                api::SshTunnel {
-                    info: TunnelInfo {
-                        id: tunnel_id,
-                        direction: TunnelDirection::Forward,
-                        host: connected_address,
-                        port: connected_port as u16,
-                    },
-                    write_tx,
-                    task,
-                },
-            );
+            // Update the placeholder task with the real handle
+            if let Some(tunnel) = tunnel_state.tunnels.write().await.get_mut(&tunnel_id) {
+                tunnel.task = task;
+            } else {
+                // Entry was removed between insert and here (e.g., tunnel_close)
+                task.abort();
+            }
 
             Ok(())
         }

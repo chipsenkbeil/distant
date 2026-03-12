@@ -25,6 +25,10 @@ pub struct InternalRawChannel {
 
 impl InternalRawChannel {
     /// Opens an internal channel on the given connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection's action channel is closed.
     pub fn open(connection: &ManagerConnection) -> io::Result<Self> {
         let (response_tx, mut response_rx) = mpsc::unbounded_channel::<Response<ManagerResponse>>();
         let reply = ServerReply {

@@ -4,6 +4,7 @@ use std::str::FromStr;
 use anyhow::Context;
 use distant_core::net::common::ConnectionId;
 use distant_core::net::manager::ManagerClient;
+use distant_core::protocol::TunnelDirection;
 
 use super::CliResult;
 
@@ -139,9 +140,13 @@ pub async fn handle_list(client: &mut ManagerClient) -> CliResult {
             "ID", "Direction", "Bind Port", "Remote Host", "Remote Port"
         );
         for t in tunnels {
+            let direction = match t.direction {
+                TunnelDirection::Forward => "forward",
+                TunnelDirection::Reverse => "reverse",
+            };
             println!(
                 "{:<6} {:<10} {:<12} {:<30} {:<6}",
-                t.id, t.direction, t.bind_port, t.remote_host, t.remote_port
+                t.id, direction, t.bind_port, t.remote_host, t.remote_port
             );
         }
     }

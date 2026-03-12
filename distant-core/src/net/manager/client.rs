@@ -299,6 +299,10 @@ impl ManagerClient {
     /// Requests the manager to start a forward tunnel (local port → remote target).
     ///
     /// Returns the managed tunnel ID and the actual bound local port.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manager rejects the request or communication fails.
     pub async fn forward_tunnel(
         &mut self,
         connection_id: ConnectionId,
@@ -329,6 +333,10 @@ impl ManagerClient {
     /// Requests the manager to start a reverse tunnel (remote listener → local target).
     ///
     /// Returns the managed tunnel ID and the actual remote port.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manager rejects the request or communication fails.
     pub async fn reverse_tunnel(
         &mut self,
         connection_id: ConnectionId,
@@ -357,6 +365,10 @@ impl ManagerClient {
     }
 
     /// Closes a managed tunnel by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no tunnel with `id` exists or communication fails.
     pub async fn close_managed_tunnel(&mut self, id: ManagedTunnelId) -> io::Result<()> {
         trace!("close_managed_tunnel({id})");
         let res = self.send(ManagerRequest::CloseManagedTunnel { id }).await?;
@@ -371,6 +383,10 @@ impl ManagerClient {
     }
 
     /// Lists all managed tunnels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if communication with the manager fails.
     pub async fn list_managed_tunnels(&mut self) -> io::Result<Vec<ManagedTunnelInfo>> {
         trace!("list_managed_tunnels()");
         let res = self.send(ManagerRequest::ListManagedTunnels).await?;

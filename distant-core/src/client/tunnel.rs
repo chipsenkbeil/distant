@@ -595,6 +595,11 @@ async fn process_tunnel_outgoing(
 /// - tunnel read -> local write
 ///
 /// Returns when either direction encounters an error or EOF.
+///
+/// # Errors
+///
+/// Always returns `Ok(())`. I/O errors on either direction are logged at
+/// debug level and cause the relay to stop gracefully.
 pub async fn relay_tcp_to_tunnel(
     tcp_stream: tokio::net::TcpStream,
     mut writer: RemoteTunnelWriter,
@@ -602,7 +607,7 @@ pub async fn relay_tcp_to_tunnel(
 ) -> io::Result<()> {
     let (mut tcp_read, mut tcp_write) = tcp_stream.into_split();
 
-    let local_to_remote = tokio::spawn(async move {
+    let mut local_to_remote = tokio::spawn(async move {
         let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
         loop {
             let n = tcp_read.read(&mut buf).await?;
@@ -614,7 +619,7 @@ pub async fn relay_tcp_to_tunnel(
         io::Result::Ok(())
     });
 
-    let remote_to_local = tokio::spawn(async move {
+    let mut remote_to_local = tokio::spawn(async move {
         loop {
             let data = reader.read().await?;
             if data.is_empty() {
@@ -625,16 +630,18 @@ pub async fn relay_tcp_to_tunnel(
         io::Result::Ok(())
     });
 
-    // Wait for either direction to finish
+    // Wait for either direction to finish, then abort the other
     tokio::select! {
-        result = local_to_remote => {
+        result = &mut local_to_remote => {
+            remote_to_local.abort();
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => debug!("Local-to-remote relay error: {e}"),
                 Err(e) => debug!("Local-to-remote task panicked: {e}"),
             }
         }
-        result = remote_to_local => {
+        result = &mut remote_to_local => {
+            local_to_remote.abort();
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => debug!("Remote-to-local relay error: {e}"),

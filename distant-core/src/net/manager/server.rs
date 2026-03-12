@@ -11,7 +11,7 @@ use crate::net::manager::{
     ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
     ManagerRequest, ManagerResponse, SemVer,
 };
-use crate::net::server::{RequestCtx, Server, ServerHandler};
+use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
 use crate::plugin::extract_scheme;
 
 mod authentication;
@@ -216,6 +216,14 @@ impl ManagerServer {
     }
 }
 
+/// Sends an error response and returns early from `on_request`.
+fn reply_err(reply: ServerReply<ManagerResponse>, conn_id: ConnectionId, err: io::Error) {
+    let response = ManagerResponse::from(err);
+    if let Err(x) = reply.send(response) {
+        error!("[Conn {}] {}", conn_id, x);
+    }
+}
+
 impl ServerHandler for ManagerServer {
     type Request = ManagerRequest;
     type Response = ManagerResponse;
@@ -391,30 +399,41 @@ impl ServerHandler for ManagerServer {
                 remote_port,
             } => {
                 debug!("Starting forward tunnel on connection {connection_id}");
-                match self.connections.read().await.get(&connection_id) {
-                    Some(connection) => {
-                        match start_forward_tunnel(
-                            connection,
+                // Open the internal channel while briefly holding the read lock,
+                // then drop the lock before doing async I/O (TCP bind).
+                let internal = match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => match InternalRawChannel::open(connection) {
+                        Ok(ic) => ic,
+                        Err(x) => return reply_err(reply, connection_id, x),
+                    },
+                    None => {
+                        return reply_err(
+                            reply,
                             connection_id,
-                            bind_port,
-                            remote_host,
-                            remote_port,
-                        )
-                        .await
-                        {
-                            Ok((managed, port)) => {
-                                let id = managed.id;
-                                self.managed_tunnels.write().await.insert(id, managed);
-                                info!("Started forward tunnel {id} on port {port}");
-                                ManagerResponse::ManagedTunnelStarted { id, port }
-                            }
-                            Err(x) => ManagerResponse::from(x),
-                        }
+                            io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "Connection does not exist",
+                            ),
+                        );
                     }
-                    None => ManagerResponse::from(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "Connection does not exist",
-                    )),
+                };
+                // Lock dropped here — async tunnel setup proceeds without blocking connections
+                match start_forward_tunnel(
+                    internal,
+                    connection_id,
+                    bind_port,
+                    remote_host,
+                    remote_port,
+                )
+                .await
+                {
+                    Ok((managed, port)) => {
+                        let id = managed.id;
+                        self.managed_tunnels.write().await.insert(id, managed);
+                        info!("Started forward tunnel {id} on port {port}");
+                        ManagerResponse::ManagedTunnelStarted { id, port }
+                    }
+                    Err(x) => ManagerResponse::from(x),
                 }
             }
             ManagerRequest::ReverseTunnel {
@@ -424,30 +443,38 @@ impl ServerHandler for ManagerServer {
                 local_port,
             } => {
                 debug!("Starting reverse tunnel on connection {connection_id}");
-                match self.connections.read().await.get(&connection_id) {
-                    Some(connection) => {
-                        match start_reverse_tunnel(
-                            connection,
+                let internal = match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => match InternalRawChannel::open(connection) {
+                        Ok(ic) => ic,
+                        Err(x) => return reply_err(reply, connection_id, x),
+                    },
+                    None => {
+                        return reply_err(
+                            reply,
                             connection_id,
-                            remote_port,
-                            local_host,
-                            local_port,
-                        )
-                        .await
-                        {
-                            Ok((managed, port)) => {
-                                let id = managed.id;
-                                self.managed_tunnels.write().await.insert(id, managed);
-                                info!("Started reverse tunnel {id} on port {port}");
-                                ManagerResponse::ManagedTunnelStarted { id, port }
-                            }
-                            Err(x) => ManagerResponse::from(x),
-                        }
+                            io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "Connection does not exist",
+                            ),
+                        );
                     }
-                    None => ManagerResponse::from(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "Connection does not exist",
-                    )),
+                };
+                match start_reverse_tunnel(
+                    internal,
+                    connection_id,
+                    remote_port,
+                    local_host,
+                    local_port,
+                )
+                .await
+                {
+                    Ok((managed, port)) => {
+                        let id = managed.id;
+                        self.managed_tunnels.write().await.insert(id, managed);
+                        info!("Started reverse tunnel {id} on port {port}");
+                        ManagerResponse::ManagedTunnelStarted { id, port }
+                    }
+                    Err(x) => ManagerResponse::from(x),
                 }
             }
             ManagerRequest::CloseManagedTunnel { id } => {

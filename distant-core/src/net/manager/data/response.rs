@@ -1,4 +1,5 @@
 use crate::auth::msg::Authentication;
+use crate::protocol::TunnelDirection;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -8,11 +9,11 @@ use super::{
 use crate::net::common::{ConnectionId, Destination, UntypedResponse};
 
 /// Information about a tunnel managed by the manager process.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedTunnelInfo {
     pub id: ManagedTunnelId,
     pub connection_id: ConnectionId,
-    pub direction: String,
+    pub direction: TunnelDirection,
     pub bind_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
