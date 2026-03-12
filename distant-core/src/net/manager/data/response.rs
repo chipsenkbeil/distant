@@ -291,4 +291,14 @@ mod tests {
             "Expected deserialization to fail on unknown field"
         );
     }
+
+    #[test]
+    fn managed_tunnels_should_reject_unknown_fields() {
+        let json = r#"{"type":"managed_tunnels","tunnels":[],"extra":"bad"}"#;
+        let result = serde_json::from_str::<ManagerResponse>(json);
+        assert!(
+            result.is_err(),
+            "Expected deserialization to fail on unknown field"
+        );
+    }
 }
