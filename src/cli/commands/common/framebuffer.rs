@@ -1,20 +1,15 @@
 //! Framebuffer-based terminal renderer with predictive echo overlay.
 //!
-//! Owns a vt100 parser (server byte interpretation), a ratatui terminal
-//! (diff-based rendering), and a prediction overlay. Server output and
-//! user keystrokes both flow through this struct, which renders a composed
-//! frame (server screen + prediction overlay) to the local terminal.
+//! Owns a vt100 parser (read-only shadow screen) and a prediction overlay.
+//! Server output bytes are sanitized and passed through to stdout directly.
+//! Predicted characters are rendered via cursor escape sequences rather than
+//! a full-screen diff renderer.
 
-use std::io;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 use log::trace;
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier};
 
 use super::keyencode::encode_key;
 use super::predict::{PredictMode, RttEstimator};
@@ -59,193 +54,142 @@ struct PredictionOverlay {
     input_byte_count: usize,
 }
 
-/// Framebuffer-based terminal renderer.
+/// Direct byte passthrough terminal renderer with predictive echo.
 ///
 /// Shared between input and output tasks via `Arc<Mutex<>>`. The input
 /// side calls [`on_keystroke`](Self::on_keystroke) to add predictions and
-/// get encoded bytes. The output side calls
-/// [`process_server_output`](Self::process_server_output) to update the
-/// virtual screen and confirm predictions. Both methods trigger a render.
+/// get encoded bytes plus display bytes. The output side calls
+/// [`process_server_output`](Self::process_server_output) to sanitize
+/// bytes, update the shadow screen, and confirm predictions. Sanitized
+/// bytes flow directly to stdout without an intermediate diff renderer.
 pub struct TerminalFramebuffer {
     vt_parser: vt100::Parser,
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
     overlay: PredictionOverlay,
+    sanitizer: TerminalSanitizer,
 }
 
 impl TerminalFramebuffer {
     /// Create a new framebuffer with the given terminal dimensions.
     ///
     /// Does NOT enter raw mode or alternate screen — the caller handles
-    /// raw mode via crossterm. Uses `Viewport::Fixed` to render to the
-    /// full terminal area without entering alternate screen.
-    pub fn new(rows: u16, cols: u16, predict_mode: PredictMode) -> io::Result<Self> {
+    /// raw mode via crossterm.
+    pub fn new(rows: u16, cols: u16, predict_mode: PredictMode) -> Self {
         let vt_parser = vt100::Parser::new(rows, cols, 0);
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::with_options(
-            backend,
-            ratatui::TerminalOptions {
-                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
-            },
-        )?;
 
-        Ok(Self {
+        Self {
             vt_parser,
-            terminal,
             overlay: PredictionOverlay::new(predict_mode),
-        })
+            sanitizer: TerminalSanitizer::CONPTY,
+        }
     }
 
-    /// Feed server output bytes through the sanitizer → vt100 → confirm → render pipeline.
-    pub fn process_server_output(&mut self, bytes: &[u8]) -> io::Result<()> {
+    /// Sanitize server output bytes, update the shadow screen, and confirm
+    /// predictions. Returns the sanitized bytes for the caller to write
+    /// directly to stdout.
+    pub fn process_server_output(&mut self, bytes: &[u8]) -> Vec<u8> {
         let mut sanitized = Vec::with_capacity(bytes.len());
-        TerminalSanitizer::CONPTY.filter(bytes, &mut sanitized);
+        self.sanitizer.filter(bytes, &mut sanitized);
 
         self.vt_parser.process(&sanitized);
         self.overlay.confirm_predictions(self.vt_parser.screen());
-        self.render()
+
+        sanitized
     }
 
-    /// Record a user keystroke: add prediction, render, return encoded bytes
-    /// to send to the server.
-    pub fn on_keystroke(&mut self, event: &KeyEvent) -> Option<String> {
+    /// Record a user keystroke: add prediction, return encoded bytes to send
+    /// to the server and display bytes to write to stdout for the prediction
+    /// overlay.
+    ///
+    /// Returns `None` if the key is unrepresentable (modifier-only, media,
+    /// etc.). The first element of the tuple is the encoded string to send
+    /// to the remote process. The second element contains escape sequences
+    /// to render the prediction overlay on the local terminal (empty if
+    /// predictions are suppressed).
+    pub fn on_keystroke(&mut self, event: &KeyEvent) -> Option<(String, Vec<u8>)> {
         let encoded = encode_key(event)?;
         self.overlay.on_input(&encoded, self.vt_parser.screen());
-        // Render error is non-fatal: don't lose the keystroke over a display glitch.
-        let _ = self.render();
-        Some(encoded)
+
+        let display_bytes = if self.overlay.should_display()
+            && !self.in_alternate_screen()
+            && !self.overlay.cells.is_empty()
+        {
+            self.build_prediction_display_bytes()
+        } else {
+            Vec::new()
+        };
+
+        Some((encoded, display_bytes))
     }
 
     /// Handle terminal resize.
-    pub fn resize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
+    ///
+    /// Updates the shadow screen size and clears pending predictions since
+    /// their positions are no longer valid.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
         self.vt_parser.screen_mut().set_size(rows, cols);
-        self.terminal.resize(Rect::new(0, 0, cols, rows))?;
-        self.render()
+        self.overlay.cells.clear();
     }
 
-    /// Compose vt100 screen + prediction overlay → ratatui diff render.
-    fn render(&mut self) -> io::Result<()> {
-        let screen = self.vt_parser.screen();
-        let overlay_cells = &self.overlay.cells;
-        let should_display = self.overlay.should_display();
-        let should_underline = self.overlay.should_underline();
-
-        let (cursor_row, cursor_col) = screen.cursor_position();
-        let cursor_col_final = if should_display {
-            cursor_col.saturating_add(overlay_cells.len() as u16)
-        } else {
-            cursor_col
-        };
-
-        self.terminal.draw(|frame| {
-            let area = frame.area();
-            let buf = frame.buffer_mut();
-
-            render_vt100_screen(screen, area, buf);
-
-            if should_display {
-                render_predictions(overlay_cells, should_underline, buf);
-            }
-
-            frame.set_cursor_position(Position::new(cursor_col_final, cursor_row));
-        })?;
-
-        Ok(())
+    /// Returns `true` if the shadow screen is in alternate screen mode.
+    ///
+    /// Used to suppress predictions during full-screen applications like
+    /// vim, less, etc.
+    pub fn in_alternate_screen(&self) -> bool {
+        self.vt_parser.screen().alternate_screen()
     }
 
-    /// Restore terminal state on shutdown. Writes SGR reset and mode
-    /// disable sequences.
-    pub fn shutdown(self) -> io::Result<()> {
-        drop(self.terminal);
-
-        let reset = TerminalSanitizer::CONPTY.reset_sequence();
+    /// Restore terminal state on shutdown. Writes SGR reset and sanitizer
+    /// reset sequences to stdout.
+    pub fn shutdown(self) {
+        let reset = self.sanitizer.reset_sequence();
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        {
-            use io::Write;
-            let _ = out.write_all(b"\x1b[0m");
-            if !reset.is_empty() {
-                let _ = out.write_all(&reset);
-            }
-            let _ = out.flush();
+        let _ = out.write_all(b"\x1b[0m");
+        if !reset.is_empty() {
+            let _ = out.write_all(&reset);
         }
-        Ok(())
+        let _ = out.flush();
     }
-}
 
-/// Copy vt100 screen cells into the ratatui buffer.
-fn render_vt100_screen(screen: &vt100::Screen, area: Rect, buf: &mut Buffer) {
-    let (rows, cols) = screen.size();
-    let height = area.height.min(rows);
-    let width = area.width.min(cols);
+    /// Build escape sequences to display all pending predicted characters.
+    ///
+    /// Uses DECSC/DECRC (save/restore cursor) to overlay predictions without
+    /// disturbing the actual cursor position. If underline is active, wraps
+    /// the predicted characters in SGR underline on/off sequences.
+    fn build_prediction_display_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let underline = self.overlay.should_underline();
 
-    for row in 0..height {
-        for col in 0..width {
-            let Some(vt_cell) = screen.cell(row, col) else {
-                continue;
-            };
-            if vt_cell.is_wide_continuation() {
-                continue;
-            }
-            let Some(buf_cell) = buf.cell_mut(Position::new(area.x + col, area.y + row)) else {
-                continue;
-            };
-            let contents = vt_cell.contents();
-            if contents.is_empty() {
-                buf_cell.set_symbol(" ");
-            } else {
-                buf_cell.set_symbol(contents);
-            }
-            buf_cell.fg = convert_color(vt_cell.fgcolor());
-            buf_cell.bg = convert_color(vt_cell.bgcolor());
-            buf_cell.modifier = convert_modifier(vt_cell);
+        // Save cursor position (DECSC)
+        buf.extend_from_slice(b"\x1b7");
+
+        if underline {
+            // SGR underline on
+            buf.extend_from_slice(b"\x1b[4m");
         }
-    }
-}
 
-/// Overlay predicted characters onto the ratatui buffer.
-fn render_predictions(cells: &[PredictedCell], underline: bool, buf: &mut Buffer) {
-    let modifier = if underline {
-        Modifier::UNDERLINED
-    } else {
-        Modifier::empty()
-    };
+        for pred in &self.overlay.cells {
+            // Move cursor to prediction position
+            // CUP is 1-based: ESC[<row+1>;<col+1>H
+            let row1 = pred.row + 1;
+            let col1 = pred.col + 1;
+            buf.extend_from_slice(format!("\x1b[{row1};{col1}H").as_bytes());
 
-    for pred in cells {
-        if let Some(buf_cell) = buf.cell_mut(Position::new(pred.col, pred.row)) {
-            buf_cell.set_char(pred.ch);
-            buf_cell.modifier = modifier;
+            let mut char_buf = [0u8; 4];
+            let s = pred.ch.encode_utf8(&mut char_buf);
+            buf.extend_from_slice(s.as_bytes());
         }
-    }
-}
 
-/// Convert a vt100 color to a ratatui color.
-fn convert_color(c: vt100::Color) -> Color {
-    match c {
-        vt100::Color::Default => Color::Reset,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
-    }
-}
+        if underline {
+            // SGR underline off
+            buf.extend_from_slice(b"\x1b[24m");
+        }
 
-/// Convert vt100 cell attributes to a ratatui modifier bitfield.
-fn convert_modifier(cell: &vt100::Cell) -> Modifier {
-    let mut m = Modifier::empty();
-    if cell.bold() {
-        m |= Modifier::BOLD;
+        // Restore cursor position (DECRC)
+        buf.extend_from_slice(b"\x1b8");
+
+        buf
     }
-    if cell.italic() {
-        m |= Modifier::ITALIC;
-    }
-    if cell.underline() {
-        m |= Modifier::UNDERLINED;
-    }
-    if cell.inverse() {
-        m |= Modifier::REVERSED;
-    }
-    if cell.dim() {
-        m |= Modifier::DIM;
-    }
-    m
 }
 
 impl PredictionOverlay {
@@ -420,60 +364,6 @@ impl PredictionOverlay {
 mod tests {
     use super::*;
 
-    #[test]
-    fn convert_color_default_should_map_to_reset() {
-        assert_eq!(convert_color(vt100::Color::Default), Color::Reset);
-    }
-
-    #[test]
-    fn convert_color_idx_should_map_to_indexed() {
-        assert_eq!(convert_color(vt100::Color::Idx(42)), Color::Indexed(42));
-    }
-
-    #[test]
-    fn convert_color_rgb_should_map_to_rgb() {
-        assert_eq!(
-            convert_color(vt100::Color::Rgb(10, 20, 30)),
-            Color::Rgb(10, 20, 30)
-        );
-    }
-
-    #[test]
-    fn convert_modifier_bold_cell() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
-        parser.process(b"\x1b[1mX"); // bold + char
-        let cell = parser.screen().cell(0, 0).unwrap();
-        let m = convert_modifier(cell);
-        assert!(m.contains(Modifier::BOLD));
-    }
-
-    #[test]
-    fn convert_modifier_italic_cell() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
-        parser.process(b"\x1b[3mX"); // italic
-        let cell = parser.screen().cell(0, 0).unwrap();
-        let m = convert_modifier(cell);
-        assert!(m.contains(Modifier::ITALIC));
-    }
-
-    #[test]
-    fn convert_modifier_underline_cell() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
-        parser.process(b"\x1b[4mX"); // underline
-        let cell = parser.screen().cell(0, 0).unwrap();
-        let m = convert_modifier(cell);
-        assert!(m.contains(Modifier::UNDERLINED));
-    }
-
-    #[test]
-    fn convert_modifier_plain_cell_should_be_empty() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
-        parser.process(b"X");
-        let cell = parser.screen().cell(0, 0).unwrap();
-        let m = convert_modifier(cell);
-        assert!(m.is_empty());
-    }
-
     fn overlay_on() -> PredictionOverlay {
         PredictionOverlay::new(PredictMode::On)
     }
@@ -498,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn prediction_placement_at_cursor() {
+    fn prediction_should_be_placed_at_cursor() {
         let mut o = overlay_on_confirmed();
         let parser = parser_80x24();
         o.on_input("a", parser.screen());
@@ -509,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn prediction_offset_for_multiple_chars() {
+    fn predictions_should_offset_column_for_each_char() {
         let mut o = overlay_on_confirmed();
         let parser = parser_80x24();
         o.on_input("a", parser.screen());
@@ -678,68 +568,107 @@ mod tests {
     }
 
     #[test]
-    fn render_screen_should_copy_text_content() {
-        let mut parser = parser_80x24();
-        parser.process(b"Hello");
+    fn alternate_screen_should_suppress_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        assert!(!fb.in_alternate_screen());
 
-        let rect = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(rect);
-        render_vt100_screen(parser.screen(), rect, &mut buf);
+        // Enter alternate screen
+        fb.process_server_output(b"\x1b[?1049h");
+        assert!(fb.in_alternate_screen());
 
-        let cell_h = buf.cell(Position::new(0, 0)).unwrap();
-        assert_eq!(cell_h.symbol(), "H");
-        let cell_e = buf.cell(Position::new(1, 0)).unwrap();
-        assert_eq!(cell_e.symbol(), "e");
+        // Keystroke while in alternate screen should produce empty display bytes
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Char('a'),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        let (encoded, display_bytes) = fb.on_keystroke(&ev).unwrap();
+        assert_eq!(encoded, "a");
+        assert!(
+            display_bytes.is_empty(),
+            "predictions should be suppressed in alternate screen, got: {:?}",
+            display_bytes
+        );
+
+        // Exit alternate screen
+        fb.process_server_output(b"\x1b[?1049l");
+        assert!(!fb.in_alternate_screen());
     }
 
     #[test]
-    fn render_screen_should_copy_colors() {
-        let mut parser = parser_80x24();
-        // Red foreground: ESC[31mX
-        parser.process(b"\x1b[31mX");
+    fn process_server_output_should_return_sanitized_bytes() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::Off);
 
-        let rect = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(rect);
-        render_vt100_screen(parser.screen(), rect, &mut buf);
-
-        let cell = buf.cell(Position::new(0, 0)).unwrap();
-        assert_eq!(cell.fg, Color::Indexed(1)); // Red = index 1
+        // Input with a blocked DEC private mode (?1004h = focus tracking)
+        let input = b"hello\x1b[?1004hworld";
+        let sanitized = fb.process_server_output(input);
+        assert_eq!(
+            sanitized, b"helloworld",
+            "blocked ?1004h sequence should be stripped"
+        );
     }
 
     #[test]
-    fn render_predictions_should_overlay_chars() {
-        let rect = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(rect);
+    fn on_keystroke_should_return_prediction_display_bytes() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
 
-        let cells = vec![PredictedCell {
-            row: 0,
-            col: 5,
-            ch: 'X',
-            epoch: 0,
-            sent_at: Instant::now(),
-        }];
-        render_predictions(&cells, false, &mut buf);
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Char('a'),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        let (encoded, display_bytes) = fb.on_keystroke(&ev).unwrap();
 
-        let cell = buf.cell(Position::new(5, 0)).unwrap();
-        assert_eq!(cell.symbol(), "X");
-        assert!(cell.modifier.is_empty());
+        assert_eq!(encoded, "a");
+
+        // Expected: DECSC + SGR underline on + CUP(1,1) + 'a' + SGR underline off + DECRC
+        // Cursor starts at (0,0), CUP is 1-based so row=1, col=1.
+        // Underline is active because default SRTT (100ms) exceeds the 80ms threshold.
+        let expected = b"\x1b7\x1b[4m\x1b[1;1Ha\x1b[24m\x1b8";
+        assert_eq!(
+            display_bytes,
+            expected,
+            "display bytes should be DECSC + underline + CUP + char + no-underline + DECRC, got: {:?}",
+            String::from_utf8_lossy(&display_bytes)
+        );
     }
 
     #[test]
-    fn render_predictions_underline_should_set_modifier() {
-        let rect = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(rect);
+    fn on_keystroke_should_return_none_for_modifier_only_key() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Modifier(crossterm::event::ModifierKeyCode::LeftShift),
+            modifiers: crossterm::event::KeyModifiers::SHIFT,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        assert!(
+            fb.on_keystroke(&ev).is_none(),
+            "modifier-only key should return None"
+        );
+    }
 
-        let cells = vec![PredictedCell {
-            row: 0,
-            col: 0,
-            ch: 'A',
-            epoch: 0,
-            sent_at: Instant::now(),
-        }];
-        render_predictions(&cells, true, &mut buf);
+    #[test]
+    fn resize_should_clear_pending_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
 
-        let cell = buf.cell(Position::new(0, 0)).unwrap();
-        assert!(cell.modifier.contains(Modifier::UNDERLINED));
+        // Add a prediction
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Char('x'),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        let result = fb.on_keystroke(&ev);
+        assert!(result.is_some(), "keystroke should produce output");
+
+        // Resize should clear predictions
+        fb.resize(120, 40);
+        assert!(
+            fb.overlay.cells.is_empty(),
+            "resize should clear pending predictions"
+        );
     }
 }

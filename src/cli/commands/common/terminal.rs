@@ -1,3 +1,5 @@
+use std::io;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -278,10 +280,11 @@ impl TerminalSession {
 
         let (cols, rows) = crossterm::terminal::size().context("Failed to get terminal size")?;
 
-        let framebuffer = Arc::new(Mutex::new(
-            TerminalFramebuffer::new(rows, cols, predict_mode)
-                .context("Failed to create framebuffer")?,
-        ));
+        let framebuffer = Arc::new(Mutex::new(TerminalFramebuffer::new(
+            rows,
+            cols,
+            predict_mode,
+        )));
 
         let mut stdin = proc.stdin.take().unwrap();
         let resizer = proc.clone_resizer();
@@ -291,18 +294,14 @@ impl TerminalSession {
             input_loop(&mut stdin, resizer, fb_for_input).await;
         });
 
-        // Stdout filter: forwards server output through the framebuffer for
-        // rendering. The filter writes nothing to `out` — the framebuffer
-        // handles rendering internally via ratatui.
+        // Stdout filter: sanitizes server output through the framebuffer
+        // (shadow screen update + prediction confirmation) and writes the
+        // sanitized bytes directly to `out` for stdout passthrough.
         let fb_for_output = Arc::clone(&framebuffer);
-        let stdout_filter: StdoutFilter = Box::new(move |input, _out| {
-            if let Err(e) = fb_for_output
-                .lock()
-                .expect("framebuffer lock poisoned")
-                .process_server_output(input)
-            {
-                error!("Framebuffer render error: {}", e);
-            }
+        let stdout_filter: StdoutFilter = Box::new(move |input, out| {
+            let mut fb = fb_for_output.lock().expect("framebuffer lock poisoned");
+            let sanitized = fb.process_server_output(input);
+            out.extend_from_slice(&sanitized);
         });
 
         let link = RemoteProcessLink::from_remote_pipes_filtered(
@@ -334,7 +333,7 @@ impl TerminalSession {
             && let Ok(fb) = Arc::try_unwrap(fb)
         {
             let fb = fb.into_inner().expect("framebuffer lock poisoned");
-            let _ = fb.shutdown();
+            fb.shutdown();
         }
     }
 }
@@ -360,26 +359,30 @@ async fn input_loop(
                         continue;
                     }
 
-                    let encoded = {
+                    let result = {
                         let mut fb = framebuffer.lock().expect("framebuffer lock poisoned");
                         fb.on_keystroke(&ev)
                     };
 
-                    if let Some(encoded) = encoded
-                        && let Err(x) = stdin.write_str(encoded).await
-                    {
-                        error!("Failed to write to stdin of remote process: {}", x);
-                        break;
+                    if let Some((encoded, display_bytes)) = result {
+                        if !display_bytes.is_empty() {
+                            let stdout = io::stdout();
+                            let mut out = stdout.lock();
+                            let _ = out.write_all(&display_bytes);
+                            let _ = out.flush();
+                        }
+
+                        if let Err(x) = stdin.write_str(encoded).await {
+                            error!("Failed to write to stdin of remote process: {}", x);
+                            break;
+                        }
                     }
                 }
                 Ok(Event::Resize(cols, rows)) => {
-                    if let Err(e) = framebuffer
+                    framebuffer
                         .lock()
                         .expect("framebuffer lock poisoned")
-                        .resize(cols, rows)
-                    {
-                        error!("Failed to resize framebuffer: {}", e);
-                    }
+                        .resize(cols, rows);
                     if let Err(x) = resizer
                         .resize(PtySize::from_rows_and_cols(rows, cols))
                         .await
