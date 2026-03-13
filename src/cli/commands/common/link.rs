@@ -13,11 +13,11 @@ use super::stdin;
 /// Maximum time to wait for stdout/stderr to drain after process exit.
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A boxed closure that filters stdout bytes before writing to the local terminal.
+/// A boxed closure that processes stdout bytes and writes directly to the terminal.
 ///
-/// Receives raw bytes from the remote process and writes filtered output into the
-/// provided `Vec`. If the filter produces empty output, the write is skipped.
-pub(crate) type StdoutFilter = Box<dyn Fn(&[u8], &mut Vec<u8>) + Send>;
+/// The filter handles writing to stdout internally (under a lock), so the caller
+/// does not write any bytes when a filter is present.
+pub(crate) type StdoutFilter = Box<dyn Fn(&[u8]) + Send>;
 
 /// Represents a link between a remote process' stdin/stdout/stderr and this process'
 /// stdin/stdout/stderr
@@ -52,11 +52,6 @@ macro_rules! from_pipes {
         let stdout_filter: Option<StdoutFilter> = $stdout_filter;
         let stdout_task = tokio::spawn(async move {
             let handle = io::stdout();
-            let mut filtered_buf = if stdout_filter.is_some() {
-                Vec::with_capacity(8192)
-            } else {
-                Vec::new()
-            };
             loop {
                 match $stdout.read().await {
                     Ok(output) => {
@@ -66,13 +61,7 @@ macro_rules! from_pipes {
                             &output[..output.len().min(64)]
                         );
                         if let Some(ref filter) = stdout_filter {
-                            filtered_buf.clear();
-                            filter(&output, &mut filtered_buf);
-                            if !filtered_buf.is_empty() {
-                                let mut out = handle.lock();
-                                out.write_all(&filtered_buf)?;
-                                out.flush()?;
-                            }
+                            filter(&output);
                         } else {
                             let mut out = handle.lock();
                             out.write_all(&output)?;
@@ -127,9 +116,8 @@ impl RemoteProcessLink {
 
     /// Creates a new process link from the pipes of a remote process, applying a filter to stdout.
     ///
-    /// `stdout_filter` is called on each stdout chunk before writing to local stdout. The filter
-    /// receives the raw bytes and must write the filtered output into the provided `Vec`. If the
-    /// filter produces empty output, the write is skipped entirely.
+    /// `stdout_filter` is called on each stdout chunk. The filter handles writing to stdout
+    /// internally (under a lock), so the macro does not write any bytes when a filter is present.
     ///
     /// `max_pipe_chunk_size` represents the maximum size (in bytes) of data that will be read from
     /// stdin at one time to forward to the remote process.

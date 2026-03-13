@@ -294,14 +294,19 @@ impl TerminalSession {
             input_loop(&mut stdin, resizer, fb_for_input).await;
         });
 
-        // Stdout filter: sanitizes server output through the framebuffer
-        // (shadow screen update + prediction confirmation) and writes the
-        // sanitized bytes directly to `out` for stdout passthrough.
+        // Stdout filter: processes server output through the framebuffer
+        // (sanitization + prediction erase/re-display) and writes directly
+        // to stdout while holding the framebuffer lock.
         let fb_for_output = Arc::clone(&framebuffer);
-        let stdout_filter: StdoutFilter = Box::new(move |input, out| {
+        let stdout_filter: StdoutFilter = Box::new(move |input| {
             let mut fb = fb_for_output.lock().expect("framebuffer lock poisoned");
-            let sanitized = fb.process_server_output(input);
-            out.extend_from_slice(&sanitized);
+            let output = fb.render_server_output(input);
+            if !output.is_empty() {
+                let stdout = io::stdout();
+                let mut out = stdout.lock();
+                let _ = out.write_all(&output);
+                let _ = out.flush();
+            }
         });
 
         let link = RemoteProcessLink::from_remote_pipes_filtered(

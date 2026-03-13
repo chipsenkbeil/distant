@@ -52,6 +52,7 @@ struct PredictionOverlay {
     cells: Vec<PredictedCell>,
     last_input_time: Option<Instant>,
     input_byte_count: usize,
+    backspace_predicted: bool,
 }
 
 /// Direct byte passthrough terminal renderer with predictive echo.
@@ -59,13 +60,14 @@ struct PredictionOverlay {
 /// Shared between input and output tasks via `Arc<Mutex<>>`. The input
 /// side calls [`on_keystroke`](Self::on_keystroke) to add predictions and
 /// get encoded bytes plus display bytes. The output side calls
-/// [`process_server_output`](Self::process_server_output) to sanitize
-/// bytes, update the shadow screen, and confirm predictions. Sanitized
-/// bytes flow directly to stdout without an intermediate diff renderer.
+/// [`render_server_output`](Self::render_server_output) to erase displayed
+/// predictions, sanitize and apply server bytes, and re-display remaining
+/// predictions — all returned as a single atomic byte sequence for stdout.
 pub struct TerminalFramebuffer {
     vt_parser: vt100::Parser,
     overlay: PredictionOverlay,
     sanitizer: TerminalSanitizer,
+    displayed_count: usize,
 }
 
 impl TerminalFramebuffer {
@@ -80,13 +82,40 @@ impl TerminalFramebuffer {
             vt_parser,
             overlay: PredictionOverlay::new(predict_mode),
             sanitizer: TerminalSanitizer::CONPTY,
+            displayed_count: 0,
         }
     }
 
+    /// Process server output with prediction lifecycle management.
+    /// Returns bytes to write atomically to stdout: erase old predictions,
+    /// server output, and re-display of remaining predictions.
+    pub fn render_server_output(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+
+        // Erase displayed predictions before server output
+        if self.displayed_count > 0 {
+            self.append_erase(&mut output);
+        }
+
+        // Sanitize, parse, confirm (delegates to existing method)
+        let sanitized = self.process_server_output(bytes);
+        output.extend_from_slice(&sanitized);
+
+        // Re-display remaining predictions after server output
+        if self.overlay.should_display()
+            && !self.in_alternate_screen()
+            && !self.overlay.cells.is_empty()
+        {
+            self.append_predictions(&mut output);
+        }
+
+        output
+    }
+
     /// Sanitize server output bytes, update the shadow screen, and confirm
-    /// predictions. Returns the sanitized bytes for the caller to write
-    /// directly to stdout.
-    pub fn process_server_output(&mut self, bytes: &[u8]) -> Vec<u8> {
+    /// predictions. Returns the sanitized bytes. Used internally by
+    /// `render_server_output` and in tests.
+    fn process_server_output(&mut self, bytes: &[u8]) -> Vec<u8> {
         let mut sanitized = Vec::with_capacity(bytes.len());
         self.sanitizer.filter(bytes, &mut sanitized);
 
@@ -117,14 +146,31 @@ impl TerminalFramebuffer {
         let encoded = encode_key(event)?;
         self.overlay.on_input(&encoded, self.vt_parser.screen());
 
-        let display_bytes = if self.overlay.should_display()
+        let mut display_bytes = Vec::new();
+
+        // Handle backspace prediction for existing text
+        if self.overlay.backspace_predicted {
+            self.overlay.backspace_predicted = false;
+            if self.displayed_count > 0 {
+                self.append_erase(&mut display_bytes);
+            }
+            display_bytes.extend_from_slice(b"\x08 \x08");
+            return Some((encoded, display_bytes));
+        }
+
+        let has_new = self.overlay.should_display()
             && !self.in_alternate_screen()
-            && !self.overlay.cells.is_empty()
-        {
-            self.build_prediction_display_bytes()
-        } else {
-            Vec::new()
-        };
+            && !self.overlay.cells.is_empty();
+
+        // Erase old predictions (even if no new ones — e.g., after Enter)
+        if self.displayed_count > 0 {
+            self.append_erase(&mut display_bytes);
+        }
+
+        // Display new predictions
+        if has_new {
+            self.append_predictions(&mut display_bytes);
+        }
 
         Some((encoded, display_bytes))
     }
@@ -136,6 +182,7 @@ impl TerminalFramebuffer {
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.vt_parser.screen_mut().set_size(rows, cols);
         self.overlay.cells.clear();
+        self.displayed_count = 0;
     }
 
     /// Returns `true` if the shadow screen is in alternate screen mode.
@@ -159,40 +206,42 @@ impl TerminalFramebuffer {
         let _ = out.flush();
     }
 
-    /// Build escape sequences to display all pending predicted characters.
-    ///
-    /// Uses DECSC/DECRC (save/restore cursor) to overlay predictions without
-    /// disturbing the actual cursor position. If underline is active, wraps
-    /// the predicted characters in SGR underline on/off sequences.
-    fn build_prediction_display_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let underline = self.overlay.should_underline();
+    /// Erase currently-displayed prediction chars from the terminal.
+    /// Restores cursor to server position (DECRC), writes spaces over
+    /// prediction area, restores cursor again.
+    fn append_erase(&mut self, buf: &mut Vec<u8>) {
+        // DECRC — go to saved server cursor position
+        buf.extend_from_slice(b"\x1b8");
+        // Reset SGR (clear any underline from predictions)
+        buf.extend_from_slice(b"\x1b[m");
+        // Write spaces to overwrite prediction chars
+        buf.resize(buf.len() + self.displayed_count, b' ');
+        // DECRC — return to server cursor position
+        buf.extend_from_slice(b"\x1b8");
+        self.displayed_count = 0;
+    }
 
-        // Save cursor position (DECSC)
+    /// Write prediction display: DECSC + [underline] + chars + [underline off].
+    /// Does NOT emit DECRC — cursor stays at prediction end (fixes cursor lag).
+    fn append_predictions(&mut self, buf: &mut Vec<u8>) {
+        // DECSC — save server cursor position
         buf.extend_from_slice(b"\x1b7");
 
+        let underline = self.overlay.should_underline();
         if underline {
             buf.extend_from_slice(b"\x1b[4m");
         }
-
-        // Write all predicted chars sequentially from current cursor position.
-        // No CUP — the real terminal cursor is already at the correct position
-        // (where the server last left it). Characters advance the cursor
-        // naturally, and the terminal handles line wrapping.
         for pred in &self.overlay.cells {
             let mut char_buf = [0u8; 4];
             let s = pred.ch.encode_utf8(&mut char_buf);
             buf.extend_from_slice(s.as_bytes());
         }
-
         if underline {
             buf.extend_from_slice(b"\x1b[24m");
         }
 
-        // Restore cursor position (DECRC)
-        buf.extend_from_slice(b"\x1b8");
-
-        buf
+        // NO DECRC — leave cursor at end of predictions
+        self.displayed_count = self.overlay.cells.len();
     }
 }
 
@@ -206,6 +255,7 @@ impl PredictionOverlay {
             cells: Vec::new(),
             last_input_time: None,
             input_byte_count: 0,
+            backspace_predicted: false,
         }
     }
 
@@ -255,9 +305,18 @@ impl PredictionOverlay {
                     self.new_epoch();
                     return;
                 }
-                // Backspace: remove last prediction
+                // Backspace: remove last prediction or predict erasure
                 0x7f | 0x08 => {
-                    self.cells.pop();
+                    if !self.cells.is_empty() {
+                        self.cells.pop();
+                    } else {
+                        // Predict backspace erasure from shadow screen.
+                        // The server will echo \b \b (move left, space, move left).
+                        let (_, cursor_col) = screen.cursor_position();
+                        if cursor_col > 0 {
+                            self.backspace_predicted = true;
+                        }
+                    }
                     return;
                 }
                 // Other control characters (Ctrl+A through Ctrl+Z minus already handled)
@@ -630,14 +689,15 @@ mod tests {
 
         assert_eq!(encoded, "a");
 
-        // Expected: DECSC + SGR underline on + 'a' + SGR underline off + DECRC.
+        // Expected: DECSC + SGR underline on + 'a' + SGR underline off (NO DECRC).
         // No CUP — chars are written sequentially from the current cursor position.
         // Underline is active because default SRTT (100ms) exceeds the 80ms threshold.
-        let expected = b"\x1b7\x1b[4ma\x1b[24m\x1b8";
+        // Cursor stays at prediction end (no DECRC) to fix cursor lag.
+        let expected = b"\x1b7\x1b[4ma\x1b[24m";
         assert_eq!(
             display_bytes,
             expected,
-            "display bytes should be DECSC + underline + char + no-underline + DECRC, got: {:?}",
+            "display bytes should be DECSC + underline + char + no-underline (no DECRC), got: {:?}",
             String::from_utf8_lossy(&display_bytes)
         );
     }
@@ -781,52 +841,25 @@ mod tests {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
         fb.process_server_output(b"$ ");
 
-        // Type 'a', 'b', 'c'
+        // Type 'a', 'b', 'c' — each keystroke erases old predictions and re-displays all
+        let mut last_display_bytes = Vec::new();
         for ch in ['a', 'b', 'c'] {
-            let ev = KeyEvent {
-                code: crossterm::event::KeyCode::Char(ch),
-                modifiers: crossterm::event::KeyModifiers::NONE,
-                kind: crossterm::event::KeyEventKind::Press,
-                state: crossterm::event::KeyEventState::NONE,
-            };
-            fb.on_keystroke(&ev);
+            let (_, display_bytes) = fb.on_keystroke(&key_char(ch)).unwrap();
+            last_display_bytes = display_bytes;
         }
 
-        // Get display bytes for current state
-        let display_bytes = fb.build_prediction_display_bytes();
-        let display_str = String::from_utf8_lossy(&display_bytes);
+        let display_str = String::from_utf8_lossy(&last_display_bytes);
 
-        // Should contain 'abc' in sequence between DECSC and DECRC
+        // Should contain 'abc' in the re-displayed predictions
         assert!(
             display_str.contains("abc"),
             "chars should appear sequentially, got: {display_str:?}"
         );
 
-        // Should start with DECSC (\x1b7) and end with DECRC (\x1b8)
+        // Should NOT end with DECRC — cursor stays at prediction end
         assert!(
-            display_bytes.starts_with(b"\x1b7"),
-            "should start with DECSC"
-        );
-        assert!(display_bytes.ends_with(b"\x1b8"), "should end with DECRC");
-
-        // Should NOT contain any CUP sequences (ESC [ digits ; digits H).
-        // Use a regex-like scan: find \x1b[ then check for digit+;digit+H pattern.
-        let display_str_full = String::from_utf8_lossy(&display_bytes);
-        let cup_pattern_found = display_str_full.match_indices("\x1b[").any(|(idx, _)| {
-            let after = &display_str_full[idx + 2..];
-            // CUP pattern: one or more digits, semicolon, one or more digits, 'H'
-            let mut chars = after.chars();
-            let has_digits_before_semi =
-                chars.by_ref().take_while(|c| c.is_ascii_digit()).count() > 0;
-            let has_semi = chars.next() == Some(';');
-            let has_digits_after_semi =
-                chars.by_ref().take_while(|c| c.is_ascii_digit()).count() > 0;
-            let has_h = chars.next() == Some('H');
-            has_digits_before_semi && has_semi && has_digits_after_semi && has_h
-        });
-        assert!(
-            !cup_pattern_found,
-            "should not contain CUP sequences, got: {display_str_full:?}"
+            !last_display_bytes.ends_with(b"\x1b8"),
+            "should NOT end with DECRC (cursor stays at prediction end)"
         );
     }
 
@@ -880,9 +913,10 @@ mod tests {
     }
 
     /// Feed server output through framebuffer and to the display verifier.
+    /// Uses `render_server_output` so erase + re-display bytes flow through.
     fn feed_server(fb: &mut TerminalFramebuffer, display: &mut vt100::Parser, bytes: &[u8]) {
-        let sanitized = fb.process_server_output(bytes);
-        display.process(&sanitized);
+        let output = fb.render_server_output(bytes);
+        display.process(&output);
     }
 
     /// Send a keystroke and feed display bytes to the verifier.
@@ -997,5 +1031,188 @@ mod tests {
             row_text.contains("$ l"),
             "prompt row should show predicted 'l', got: {row_text:?}"
         );
+    }
+
+    fn key_backspace() -> KeyEvent {
+        KeyEvent {
+            code: crossterm::event::KeyCode::Backspace,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn erase_should_clear_old_predictions_on_epoch_boundary() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "abc" — predictions are displayed
+        for ch in ['a', 'b', 'c'] {
+            fb.on_keystroke(&key_char(ch));
+        }
+        assert_eq!(fb.displayed_count, 3);
+
+        // Press Enter — epoch boundary clears predictions
+        let (_, display_bytes) = fb.on_keystroke(&key_enter()).unwrap();
+
+        // Should contain erase sequence: DECRC + SGR reset + 3 spaces + DECRC
+        assert!(
+            display_bytes.contains(&b' '),
+            "display bytes should contain spaces for erasure"
+        );
+        assert_eq!(
+            fb.displayed_count, 0,
+            "displayed_count should be 0 after erase"
+        );
+    }
+
+    #[test]
+    fn erase_should_precede_server_output() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "ls" — predictions displayed
+        fb.on_keystroke(&key_char('l'));
+        fb.on_keystroke(&key_char('s'));
+        assert_eq!(fb.displayed_count, 2);
+
+        // Server echoes "ls" — render_server_output should erase first
+        let output = fb.render_server_output(b"ls");
+
+        // Output should start with erase (DECRC), then contain "ls"
+        assert!(
+            output.starts_with(b"\x1b8"),
+            "output should start with DECRC for erase"
+        );
+        // After erase, the sanitized server bytes should be present
+        assert!(
+            output.windows(2).any(|w| w == b"ls"),
+            "output should contain server echo 'ls'"
+        );
+    }
+
+    #[test]
+    fn cursor_should_be_at_prediction_end() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        feed_server(&mut fb, &mut display, b"$ ");
+        feed_keystroke(&mut fb, &mut display, &key_char('a'));
+        feed_keystroke(&mut fb, &mut display, &key_char('b'));
+        feed_keystroke(&mut fb, &mut display, &key_char('c'));
+
+        // Display verifier cursor should be at the end of "$ abc" = col 5
+        let (_, cursor_col) = display.screen().cursor_position();
+        assert_eq!(
+            cursor_col, 5,
+            "cursor should be at end of predictions (col 5), got col {cursor_col}"
+        );
+    }
+
+    #[test]
+    fn backspace_should_predict_erasure() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends "$ hello" — cursor at col 7
+        fb.process_server_output(b"$ hello");
+
+        // User presses backspace with no pending predictions
+        let (encoded, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
+
+        // Should encode as DEL (0x7f)
+        assert_eq!(encoded.as_bytes(), b"\x7f");
+
+        // Display bytes should contain backspace prediction: \b \b
+        assert!(
+            display_bytes.windows(3).any(|w| w == b"\x08 \x08"),
+            "display bytes should contain backspace prediction \\b \\b, got: {:?}",
+            display_bytes
+        );
+    }
+
+    #[test]
+    fn backspace_should_not_predict_at_column_zero() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Cursor at column 0 (default) — no prediction possible
+        let (_, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
+        assert!(
+            display_bytes.is_empty(),
+            "backspace at col 0 should not predict, got: {:?}",
+            display_bytes
+        );
+    }
+
+    #[test]
+    fn server_output_should_not_interleave_with_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        // Server sends prompt
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types "ls"
+        feed_keystroke(&mut fb, &mut display, &key_char('l'));
+        feed_keystroke(&mut fb, &mut display, &key_char('s'));
+
+        // Display should show "$ ls" at this point
+        let row0 = display_row(&display, 0);
+        assert!(
+            row0.starts_with("$ ls"),
+            "before echo, should show predicted 'ls', got: {row0:?}"
+        );
+
+        // Server echoes "ls" — render_server_output handles erase + output + re-display
+        feed_server(&mut fb, &mut display, b"ls");
+
+        // After echo, display should still show "$ ls" cleanly
+        let row0 = display_row(&display, 0);
+        assert!(
+            row0.starts_with("$ ls"),
+            "after echo, should show confirmed 'ls', got: {row0:?}"
+        );
+    }
+
+    #[test]
+    fn render_server_output_should_redisplay_remaining_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends prompt
+        fb.process_server_output(b"$ ");
+
+        // User types "abc"
+        fb.on_keystroke(&key_char('a'));
+        fb.on_keystroke(&key_char('b'));
+        fb.on_keystroke(&key_char('c'));
+        assert_eq!(fb.displayed_count, 3);
+
+        // Server echoes only "a" — 'b' and 'c' still pending
+        let output = fb.render_server_output(b"a");
+
+        // Should have re-displayed remaining predictions ('b', 'c')
+        assert_eq!(
+            fb.displayed_count, 2,
+            "should have 2 remaining predictions displayed"
+        );
+
+        // Output should contain the predicted chars
+        let output_str = String::from_utf8_lossy(&output);
+        assert!(
+            output_str.contains("bc"),
+            "output should contain remaining predictions 'bc', got: {output_str:?}"
+        );
+    }
+
+    #[test]
+    fn resize_should_reset_displayed_count() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        fb.on_keystroke(&key_char('x'));
+        assert_eq!(fb.displayed_count, 1);
+
+        fb.resize(120, 40);
+        assert_eq!(fb.displayed_count, 0, "resize should reset displayed_count");
     }
 }
