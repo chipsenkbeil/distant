@@ -2,15 +2,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
+use crossterm::event::{self, Event, KeyEventKind};
 use distant_core::protocol::PtySize;
 use distant_core::{RemoteProcess, RemoteProcessResizer, RemoteStdin};
 use log::*;
-use termwiz::caps::Capabilities;
-use termwiz::input::{InputEvent, KeyCodeEncodeModes, KeyboardEncoding};
-use termwiz::terminal::{Terminal, new_terminal};
 use tokio::task::JoinHandle;
 
-use super::predict::{PredictMode, PredictionAction, PredictionEngine};
+use super::framebuffer::TerminalFramebuffer;
+use super::predict::PredictMode;
 use super::{RemoteProcessLink, StdoutFilter};
 
 /// Configures which terminal escape sequences to strip from remote output.
@@ -246,69 +245,65 @@ impl TerminalSanitizer {
 
 /// Manages the local terminal for an interactive remote shell session.
 ///
-/// Handles termwiz raw mode setup, input forwarding (keys to remote stdin,
-/// resize events to remote PTY), output sanitization via [`TerminalSanitizer`],
-/// and terminal cleanup on shutdown.
+/// Handles crossterm raw mode setup, input forwarding (keys to remote stdin,
+/// resize events to remote PTY), framebuffer-based rendering with predictive
+/// echo, and terminal cleanup on shutdown.
 ///
 /// All three `Shell::spawn()` call sites (distant shell, distant spawn --pty,
 /// distant ssh) go through this struct, ensuring consistent terminal handling.
 pub struct TerminalSession {
     _input_task: JoinHandle<()>,
     link: RemoteProcessLink,
+    framebuffer: Option<Arc<Mutex<TerminalFramebuffer>>>,
 }
 
 impl TerminalSession {
     /// Start a terminal session for the given remote process.
     ///
     /// Takes ownership of the process's stdin/stdout/stderr pipes.
-    /// Sets the local terminal to raw mode via termwiz, spawns an input
-    /// handler task (forwarding key events and resize events), and creates
-    /// a filtered output link using [`TerminalSanitizer::CONPTY`].
+    /// Sets the local terminal to raw mode via crossterm, creates a
+    /// framebuffer renderer, spawns an input handler task (forwarding key
+    /// events and resize events), and creates a filtered output link.
     ///
     /// # Errors
     ///
-    /// Returns an error if terminal capabilities cannot be loaded or the
-    /// terminal cannot be created or set to raw mode.
+    /// Returns an error if raw mode cannot be enabled or the framebuffer
+    /// cannot be created.
     pub fn start(
         proc: &mut RemoteProcess,
         max_chunk_size: usize,
         predict_mode: PredictMode,
     ) -> anyhow::Result<Self> {
-        let mut terminal = new_terminal(
-            Capabilities::new_from_env().context("Failed to load terminal capabilities")?,
-        )
-        .context("Failed to create terminal")?;
-        terminal.set_raw_mode().context("Failed to set raw mode")?;
+        crossterm::terminal::enable_raw_mode().context("Failed to enable raw mode")?;
+
+        let (cols, rows) = crossterm::terminal::size().context("Failed to get terminal size")?;
+
+        let framebuffer = Arc::new(Mutex::new(
+            TerminalFramebuffer::new(rows, cols, predict_mode)
+                .context("Failed to create framebuffer")?,
+        ));
 
         let mut stdin = proc.stdin.take().unwrap();
         let resizer = proc.clone_resizer();
-
-        let (engine_for_input, engine_for_output) = if predict_mode != PredictMode::Off {
-            let engine = Arc::new(Mutex::new(PredictionEngine::new(predict_mode)));
-            (Some(Arc::clone(&engine)), Some(engine))
-        } else {
-            (None, None)
-        };
+        let fb_for_input = Arc::clone(&framebuffer);
 
         let input_task = tokio::spawn(async move {
-            input_loop(&mut terminal, &mut stdin, resizer, engine_for_input).await;
+            input_loop(&mut stdin, resizer, fb_for_input).await;
         });
 
-        // Create output link with ConPTY sanitizer and optional prediction filter.
-        let stdout_filter: StdoutFilter = if let Some(engine_out) = engine_for_output {
-            Box::new(move |input, out| {
-                let mut sanitized = Vec::with_capacity(input.len());
-                TerminalSanitizer::CONPTY.filter(input, &mut sanitized);
-                // Safety: lock poisoning indicates a panic in the other task;
-                // propagating the panic here is the correct response.
-                engine_out
-                    .lock()
-                    .expect("prediction engine lock poisoned")
-                    .process_server_output(&sanitized, out);
-            })
-        } else {
-            Box::new(|input, out| TerminalSanitizer::CONPTY.filter(input, out))
-        };
+        // Stdout filter: forwards server output through the framebuffer for
+        // rendering. The filter writes nothing to `out` — the framebuffer
+        // handles rendering internally via ratatui.
+        let fb_for_output = Arc::clone(&framebuffer);
+        let stdout_filter: StdoutFilter = Box::new(move |input, _out| {
+            if let Err(e) = fb_for_output
+                .lock()
+                .expect("framebuffer lock poisoned")
+                .process_server_output(input)
+            {
+                error!("Framebuffer render error: {}", e);
+            }
+        });
 
         let link = RemoteProcessLink::from_remote_pipes_filtered(
             None,
@@ -321,112 +316,85 @@ impl TerminalSession {
         Ok(Self {
             _input_task: input_task,
             link,
+            framebuffer: Some(framebuffer),
         })
     }
 
     /// Shut down the session: drain output, then reset terminal modes.
     ///
-    /// Writes reset sequences to stdout to disable any DEC private modes
-    /// that may have been enabled by the remote host (mouse tracking, etc.).
+    /// Disables crossterm raw mode and writes reset sequences to stdout to
+    /// disable any DEC private modes that may have been enabled by the
+    /// remote host (mouse tracking, etc.).
     pub async fn shutdown(self) {
         self.link.shutdown().await;
 
-        // Reset SGR attributes and any blocked modes on the local terminal.
-        let reset = TerminalSanitizer::CONPTY.reset_sequence();
+        let _ = crossterm::terminal::disable_raw_mode();
+
+        if let Some(fb) = self.framebuffer
+            && let Ok(fb) = Arc::try_unwrap(fb)
         {
-            use std::io::Write;
-            let stdout = std::io::stdout();
-            let mut out = stdout.lock();
-            // Clear residual SGR state (underline, color) from predictions.
-            let _ = out.write_all(b"\x1b[0m");
-            if !reset.is_empty() {
-                let _ = out.write_all(&reset);
-            }
-            let _ = out.flush();
+            let fb = fb.into_inner().expect("framebuffer lock poisoned");
+            let _ = fb.shutdown();
         }
     }
 }
 
-/// Input handling loop: reads terminal events and forwards them to the remote process.
+/// Input handling loop: reads crossterm events and forwards them to the
+/// remote process.
 ///
-/// When `engine` is `Some`, keystrokes are fed to the prediction engine and
-/// speculative local echo is written to stdout before the server round-trip
-/// completes. Resize events are also forwarded to the engine so it can track
-/// terminal width.
+/// Key events are fed to the framebuffer (which handles prediction overlay
+/// and rendering) and the encoded bytes are sent to remote stdin. Resize
+/// events update both the framebuffer and the remote PTY size.
 async fn input_loop(
-    terminal: &mut impl Terminal,
     stdin: &mut RemoteStdin,
     resizer: RemoteProcessResizer,
-    engine: Option<Arc<Mutex<PredictionEngine>>>,
+    framebuffer: Arc<Mutex<TerminalFramebuffer>>,
 ) {
-    while let Ok(input) = terminal.poll_input(Some(Duration::new(0, 0))) {
-        match input {
-            Some(InputEvent::Key(ev)) => {
-                if let Ok(encoded) = ev.key.encode(
-                    ev.modifiers,
-                    KeyCodeEncodeModes {
-                        encoding: KeyboardEncoding::Xterm,
-                        application_cursor_keys: false,
-                        newline_mode: false,
-                        modify_other_keys: None,
-                    },
-                    /* is_down */ true,
-                ) {
-                    // Feed the encoded keystroke to the prediction engine.
-                    if let Some(ref engine) = engine {
-                        let mut guard = engine.lock().expect("prediction engine lock poisoned");
-                        let action = guard.on_keystroke(&encoded);
-                        let should_display = guard.should_display();
-                        let should_underline = guard.should_underline();
-                        drop(guard);
-
-                        if should_display {
-                            use std::io::Write;
-                            let stdout = std::io::stdout();
-                            let mut out = stdout.lock();
-                            match action {
-                                PredictionAction::DisplayChar(ch) => {
-                                    if should_underline {
-                                        let _ = out.write_all(b"\x1b[4m");
-                                        let _ = write!(out, "{}", ch);
-                                        let _ = out.write_all(b"\x1b[24m");
-                                    } else {
-                                        let _ = write!(out, "{}", ch);
-                                    }
-                                    let _ = out.flush();
-                                }
-                                PredictionAction::DisplayBackspace => {
-                                    let _ = out.write_all(b"\x1b[D \x1b[D");
-                                    let _ = out.flush();
-                                }
-                                _ => {}
-                            }
-                        }
+    loop {
+        match event::poll(Duration::ZERO) {
+            Ok(true) => match event::read() {
+                Ok(Event::Key(ev)) => {
+                    // Skip Release events (Windows with enhanced keyboard mode
+                    // sends Press + Release; we only want Press and Repeat).
+                    if ev.kind == KeyEventKind::Release {
+                        continue;
                     }
 
-                    if let Err(x) = stdin.write_str(encoded).await {
+                    let encoded = {
+                        let mut fb = framebuffer.lock().expect("framebuffer lock poisoned");
+                        fb.on_keystroke(&ev)
+                    };
+
+                    if let Some(encoded) = encoded
+                        && let Err(x) = stdin.write_str(encoded).await
+                    {
                         error!("Failed to write to stdin of remote process: {}", x);
                         break;
                     }
                 }
-            }
-            Some(InputEvent::Resized { cols, rows }) => {
-                if let Some(ref engine) = engine {
-                    engine
+                Ok(Event::Resize(cols, rows)) => {
+                    if let Err(e) = framebuffer
                         .lock()
-                        .expect("prediction engine lock poisoned")
-                        .resize(cols);
+                        .expect("framebuffer lock poisoned")
+                        .resize(cols, rows)
+                    {
+                        error!("Failed to resize framebuffer: {}", e);
+                    }
+                    if let Err(x) = resizer
+                        .resize(PtySize::from_rows_and_cols(rows, cols))
+                        .await
+                    {
+                        error!("Failed to resize remote process: {}", x);
+                        break;
+                    }
                 }
-                if let Err(x) = resizer
-                    .resize(PtySize::from_rows_and_cols(rows as u16, cols as u16))
-                    .await
-                {
-                    error!("Failed to resize remote process: {}", x);
-                    break;
-                }
+                Ok(_) => continue,
+                Err(_) => break,
+            },
+            Ok(false) => {
+                tokio::time::sleep(Duration::from_millis(1)).await;
             }
-            Some(_) => continue,
-            None => tokio::time::sleep(Duration::from_millis(1)).await,
+            Err(_) => break,
         }
     }
 }
