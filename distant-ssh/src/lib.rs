@@ -25,7 +25,7 @@ use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
-use ssh2_config::{HostParams, ParseRule, SshConfig};
+use ssh2_config::{AlgorithmsRule, HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
@@ -490,8 +490,18 @@ fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::R
 impl Ssh {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        // Parse SSH config first
-        let ssh_config = Self::parse_ssh_config(host.as_ref())?;
+        // Resolve SSH config: try `ssh -G` first (handles Match blocks, Include,
+        // etc.), then fall back to the built-in ssh2-config parser.
+        let ssh_config = match Self::query_openssh(host.as_ref()).await {
+            Some(params) => {
+                debug!("SSH config resolved via ssh -G");
+                params
+            }
+            None => {
+                debug!("ssh -G unavailable, falling back to ssh2-config parser");
+                Self::parse_ssh_config(host.as_ref())?
+            }
+        };
 
         // Resolve the actual hostname to connect to (SSH config HostName directive)
         let connect_host = ssh_config.host_name.as_deref().unwrap_or(host.as_ref());
@@ -623,6 +633,18 @@ impl Ssh {
                     .map(|v| v.join(" "))
                     .filter(|s| !s.is_empty())
             })
+            .or_else(|| {
+                // Convert ProxyJump to equivalent ProxyCommand
+                ssh_config.proxy_jump.as_ref().map(|hops| {
+                    if hops.len() == 1 {
+                        format!("ssh -W %h:%p {}", hops[0])
+                    } else {
+                        let jump_chain = hops[..hops.len() - 1].join(",");
+                        let final_hop = &hops[hops.len() - 1];
+                        format!("ssh -W %h:%p -J {jump_chain} {final_hop}")
+                    }
+                })
+            })
             .filter(|cmd| !cmd.eq_ignore_ascii_case("none"));
 
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -713,6 +735,200 @@ impl Ssh {
             files.push(ssh_dir.join("ssh_known_hosts2"));
         }
         files
+    }
+
+    /// Query OpenSSH for resolved config via `ssh -G hostname`.
+    ///
+    /// This delegates to the system's `ssh` binary, which handles `Match` blocks,
+    /// `Include` directives, and other advanced config features that the built-in
+    /// ssh2-config parser does not support.
+    ///
+    /// Returns `None` if `ssh` is not available or the command fails.
+    async fn query_openssh(host: &str) -> Option<HostParams> {
+        use tokio::process::Command;
+
+        let output = match tokio::time::timeout(
+            Duration::from_secs(10),
+            Command::new("ssh")
+                .args(["-G", "--", host])
+                .stdin(std::process::Stdio::null())
+                .output(),
+        )
+        .await
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                debug!("ssh -G failed to execute: {e}");
+                return None;
+            }
+            Err(_) => {
+                warn!("ssh -G timed out after 10s");
+                return None;
+            }
+        };
+
+        if !output.status.success() {
+            debug!("ssh -G exited with status {}", output.status);
+            return None;
+        }
+
+        match String::from_utf8(output.stdout) {
+            Ok(stdout) => Self::parse_ssh_g_output(&stdout),
+            Err(e) => {
+                debug!("ssh -G output was not valid UTF-8: {e}");
+                None
+            }
+        }
+    }
+
+    /// Parse the flat key-value output of `ssh -G` into [`HostParams`].
+    ///
+    /// The `ssh -G` command prints resolved configuration as lowercase
+    /// `key value` pairs, one per line. This method maps recognized keys
+    /// into the corresponding [`HostParams`] fields.
+    fn parse_ssh_g_output(output: &str) -> Option<HostParams> {
+        use ssh2_config::DefaultAlgorithms;
+
+        let mut params = HostParams::new(&DefaultAlgorithms::default());
+        let mut identity_files: Vec<PathBuf> = Vec::new();
+        let mut proxy_command_parts: Vec<String> = Vec::new();
+        let mut has_content = false;
+
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            has_content = true;
+
+            // ssh -G output is "key value" (space-separated, lowercase keys)
+            let (key, value) = match line.split_once(' ') {
+                Some((k, v)) => (k, v.trim()),
+                None => continue,
+            };
+
+            match key {
+                "hostname" => {
+                    params.host_name = Some(value.to_string());
+                }
+                "port" => {
+                    if let Ok(p) = value.parse::<u16>() {
+                        params.port = Some(p);
+                    }
+                }
+                "user" => {
+                    params.user = Some(value.to_string());
+                }
+                "identityfile" => {
+                    identity_files.push(PathBuf::from(value));
+                }
+                "proxycommand" => {
+                    if !value.eq_ignore_ascii_case("none") {
+                        proxy_command_parts = vec![value.to_string()];
+                    }
+                }
+                "proxyjump" => {
+                    if !value.eq_ignore_ascii_case("none") {
+                        params.proxy_jump =
+                            Some(value.split(',').map(|s| s.trim().to_string()).collect());
+                    }
+                }
+                "identitiesonly" => {
+                    params
+                        .unsupported_fields
+                        .entry("identitiesonly".to_string())
+                        .or_default()
+                        .push(value.to_string());
+                }
+                "userknownhostsfile" => {
+                    // Space-separated list of paths
+                    let files: Vec<String> =
+                        value.split_whitespace().map(|s| s.to_string()).collect();
+                    params
+                        .unsupported_fields
+                        .insert("userknownhostsfile".to_string(), files);
+                }
+                "globalknownhostsfile" => {
+                    let files: Vec<String> =
+                        value.split_whitespace().map(|s| s.to_string()).collect();
+                    params
+                        .unsupported_fields
+                        .insert("globalknownhostsfile".to_string(), files);
+                }
+                "stricthostkeychecking" => {
+                    params
+                        .unsupported_fields
+                        .entry("stricthostkeychecking".to_string())
+                        .or_default()
+                        .push(value.to_string());
+                }
+                "serveraliveinterval" => {
+                    if let Ok(secs) = value.parse::<u64>()
+                        && secs > 0
+                    {
+                        params.server_alive_interval = Some(Duration::from_secs(secs));
+                    }
+                }
+                "tcpkeepalive" => {
+                    params.tcp_keep_alive = Some(value.eq_ignore_ascii_case("yes"));
+                }
+                "connecttimeout" => {
+                    if let Ok(secs) = value.parse::<u64>()
+                        && secs > 0
+                    {
+                        params.connect_timeout = Some(Duration::from_secs(secs));
+                    }
+                }
+                "compression" => {
+                    params.compression = Some(value.eq_ignore_ascii_case("yes"));
+                }
+                "ciphers" => {
+                    let algos: Vec<String> =
+                        value.split(',').map(|s| s.trim().to_string()).collect();
+                    params.ciphers.apply(AlgorithmsRule::Set(algos));
+                }
+                "kexalgorithms" => {
+                    let algos: Vec<String> =
+                        value.split(',').map(|s| s.trim().to_string()).collect();
+                    params.kex_algorithms.apply(AlgorithmsRule::Set(algos));
+                }
+                "hostkeyalgorithms" => {
+                    let algos: Vec<String> =
+                        value.split(',').map(|s| s.trim().to_string()).collect();
+                    params.host_key_algorithms.apply(AlgorithmsRule::Set(algos));
+                }
+                "macs" => {
+                    let algos: Vec<String> =
+                        value.split(',').map(|s| s.trim().to_string()).collect();
+                    params.mac.apply(AlgorithmsRule::Set(algos));
+                }
+                "pubkeyacceptedalgorithms" => {
+                    let algos: Vec<String> =
+                        value.split(',').map(|s| s.trim().to_string()).collect();
+                    params
+                        .pubkey_accepted_algorithms
+                        .apply(AlgorithmsRule::Set(algos));
+                }
+                _ => {
+                    // Ignore other fields
+                }
+            }
+        }
+
+        if !has_content {
+            return None;
+        }
+
+        if !identity_files.is_empty() {
+            params.identity_file = Some(identity_files);
+        }
+        if !proxy_command_parts.is_empty() {
+            params
+                .unsupported_fields
+                .insert("proxycommand".to_string(), proxy_command_parts);
+        }
+
+        Some(params)
     }
 
     fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
@@ -2918,6 +3134,380 @@ mod tests {
             user_params.user.as_deref(),
             Some("deployer"),
             "User should be preserved"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_extract_basic_fields() {
+        let output = "\
+hostname devvm24531.ftw0.facebook.com
+user chipsenkbeil
+port 22
+identityfile ~/.ssh/id_rsa
+identityfile ~/.ssh/id_ed25519
+proxycommand x2ssh -fallback -tunnel %h
+identitiesonly no
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(
+            params.host_name.as_deref(),
+            Some("devvm24531.ftw0.facebook.com")
+        );
+        assert_eq!(params.user.as_deref(), Some("chipsenkbeil"));
+        assert_eq!(params.port, Some(22));
+
+        let identity_files = params.identity_file.as_ref().unwrap();
+        assert_eq!(identity_files.len(), 2);
+        assert_eq!(identity_files[0], PathBuf::from("~/.ssh/id_rsa"));
+        assert_eq!(identity_files[1], PathBuf::from("~/.ssh/id_ed25519"));
+
+        let proxy_cmd = params.unsupported_fields.get("proxycommand").unwrap();
+        assert_eq!(proxy_cmd, &["x2ssh -fallback -tunnel %h"]);
+
+        let identities_only = params.unsupported_fields.get("identitiesonly").unwrap();
+        assert_eq!(identities_only, &["no"]);
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_proxycommand_none() {
+        let output = "\
+hostname example.com
+proxycommand none
+port 22
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            !params.unsupported_fields.contains_key("proxycommand"),
+            "proxycommand 'none' should not be stored in unsupported_fields"
+        );
+        assert_eq!(params.host_name.as_deref(), Some("example.com"));
+        assert_eq!(params.port, Some(22));
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_proxycommand_none_case_insensitive() {
+        let output = "proxycommand NONE\nhostname host.example.com\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            !params.unsupported_fields.contains_key("proxycommand"),
+            "proxycommand 'NONE' (uppercase) should not be stored"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_algorithms() {
+        let output = "\
+hostname algo-host.example.com
+ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+kexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256
+hostkeyalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
+macs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            !params.ciphers.is_default(),
+            "ciphers should be overridden (not default)"
+        );
+        assert_eq!(
+            params.ciphers.algorithms(),
+            &[
+                "chacha20-poly1305@openssh.com",
+                "aes256-gcm@openssh.com",
+                "aes128-gcm@openssh.com",
+            ]
+        );
+
+        assert!(
+            !params.kex_algorithms.is_default(),
+            "kexalgorithms should be overridden"
+        );
+        assert_eq!(
+            params.kex_algorithms.algorithms(),
+            &["sntrup761x25519-sha512@openssh.com", "curve25519-sha256",]
+        );
+
+        assert!(
+            !params.host_key_algorithms.is_default(),
+            "hostkeyalgorithms should be overridden"
+        );
+        assert_eq!(
+            params.host_key_algorithms.algorithms(),
+            &["ssh-ed25519-cert-v01@openssh.com", "ssh-ed25519",]
+        );
+
+        assert!(!params.mac.is_default(), "macs should be overridden");
+        assert_eq!(
+            params.mac.algorithms(),
+            &["umac-128-etm@openssh.com", "hmac-sha2-256-etm@openssh.com",]
+        );
+
+        assert!(
+            !params.pubkey_accepted_algorithms.is_default(),
+            "pubkeyacceptedalgorithms should be overridden"
+        );
+        assert_eq!(
+            params.pubkey_accepted_algorithms.algorithms(),
+            &["ssh-ed25519-cert-v01@openssh.com", "ssh-ed25519",]
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_return_none_for_empty_output() {
+        assert!(
+            Ssh::parse_ssh_g_output("").is_none(),
+            "Empty string should return None"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_return_none_for_whitespace_only() {
+        assert!(
+            Ssh::parse_ssh_g_output("   \n  \n\n").is_none(),
+            "Whitespace-only input should return None"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_proxy_jump() {
+        let output = "\
+hostname target.example.com
+proxyjump jump1.example.com,jump2.example.com:2222,user@jump3.example.com
+port 22
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        let proxy_jump = params.proxy_jump.as_ref().unwrap();
+        assert_eq!(proxy_jump.len(), 3);
+        assert_eq!(proxy_jump[0], "jump1.example.com");
+        assert_eq!(proxy_jump[1], "jump2.example.com:2222");
+        assert_eq!(proxy_jump[2], "user@jump3.example.com");
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_proxyjump_none() {
+        let output = "hostname host.example.com\nproxyjump none\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+        assert!(
+            params.proxy_jump.is_none(),
+            "proxyjump 'none' should not populate proxy_jump"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_known_hosts_files() {
+        let output = "\
+hostname kh-host.example.com
+userknownhostsfile /Users/user/.ssh/known_hosts /Users/user/.ssh/known_hosts2
+globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        let user_kh = params.unsupported_fields.get("userknownhostsfile").unwrap();
+        assert_eq!(
+            user_kh,
+            &[
+                "/Users/user/.ssh/known_hosts",
+                "/Users/user/.ssh/known_hosts2",
+            ]
+        );
+
+        let global_kh = params
+            .unsupported_fields
+            .get("globalknownhostsfile")
+            .unwrap();
+        assert_eq!(
+            global_kh,
+            &["/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2",]
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_keepalive_and_timeout() {
+        let output = "\
+hostname keepalive-host.example.com
+serveraliveinterval 60
+tcpkeepalive yes
+connecttimeout 30
+compression no
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(params.server_alive_interval, Some(Duration::from_secs(60)));
+        assert_eq!(params.tcp_keep_alive, Some(true));
+        assert_eq!(params.connect_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(params.compression, Some(false));
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_zero_intervals() {
+        let output = "\
+hostname zero-host.example.com
+serveraliveinterval 0
+connecttimeout 0
+tcpkeepalive no
+compression yes
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            params.server_alive_interval.is_none(),
+            "serveraliveinterval 0 should remain None"
+        );
+        assert!(
+            params.connect_timeout.is_none(),
+            "connecttimeout 0 should remain None"
+        );
+        assert_eq!(params.tcp_keep_alive, Some(false));
+        assert_eq!(params.compression, Some(true));
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_stricthostkeychecking() {
+        let output = "hostname strict-host.example.com\nstricthostkeychecking accept-new\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        let strict = params
+            .unsupported_fields
+            .get("stricthostkeychecking")
+            .unwrap();
+        assert_eq!(strict, &["accept-new"]);
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_ignore_unrecognized_keys() {
+        let output = "\
+hostname recognized.example.com
+somefuturekey some-value
+anothernewkey another-value
+port 2222
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(params.host_name.as_deref(), Some("recognized.example.com"));
+        assert_eq!(params.port, Some(2222));
+        assert!(
+            !params.unsupported_fields.contains_key("somefuturekey"),
+            "Unrecognized keys should be silently ignored"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_lines_without_space() {
+        let output = "hostname correct.example.com\nmalformedline\nport 443\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(params.host_name.as_deref(), Some("correct.example.com"));
+        assert_eq!(params.port, Some(443));
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_handle_invalid_port() {
+        let output = "hostname bad-port.example.com\nport notanumber\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(params.host_name.as_deref(), Some("bad-port.example.com"));
+        assert!(
+            params.port.is_none(),
+            "Non-numeric port should leave port as None"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_single_proxy_jump_hop() {
+        let output = "hostname target.example.com\nproxyjump bastion.example.com\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        let proxy_jump = params.proxy_jump.as_ref().unwrap();
+        assert_eq!(proxy_jump.len(), 1);
+        assert_eq!(proxy_jump[0], "bastion.example.com");
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_full_representative_output() {
+        let output = "\
+hostname devvm24531.ftw0.facebook.com
+user chipsenkbeil
+port 22
+identityfile ~/.ssh/id_rsa
+identityfile ~/.ssh/id_ed25519
+proxycommand x2ssh -fallback -tunnel %h
+identitiesonly no
+userknownhostsfile /Users/user/.ssh/known_hosts /Users/user/.ssh/known_hosts2
+globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2
+stricthostkeychecking accept-new
+serveraliveinterval 0
+tcpkeepalive yes
+connecttimeout 30
+compression no
+ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+kexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256
+hostkeyalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
+macs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert_eq!(
+            params.host_name.as_deref(),
+            Some("devvm24531.ftw0.facebook.com")
+        );
+        assert_eq!(params.user.as_deref(), Some("chipsenkbeil"));
+        assert_eq!(params.port, Some(22));
+        assert_eq!(params.identity_file.as_ref().unwrap().len(), 2);
+        assert!(params.unsupported_fields.contains_key("proxycommand"));
+        assert!(params.unsupported_fields.contains_key("identitiesonly"));
+        assert!(params.unsupported_fields.contains_key("userknownhostsfile"));
+        assert!(
+            params
+                .unsupported_fields
+                .contains_key("globalknownhostsfile")
+        );
+        assert!(
+            params
+                .unsupported_fields
+                .contains_key("stricthostkeychecking")
+        );
+        assert!(params.server_alive_interval.is_none());
+        assert_eq!(params.tcp_keep_alive, Some(true));
+        assert_eq!(params.connect_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(params.compression, Some(false));
+        assert!(!params.ciphers.is_default());
+        assert_eq!(params.ciphers.algorithms().len(), 3);
+        assert!(!params.kex_algorithms.is_default());
+        assert!(!params.host_key_algorithms.is_default());
+        assert!(!params.mac.is_default());
+        assert!(!params.pubkey_accepted_algorithms.is_default());
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_keep_default_algorithms_when_not_present() {
+        let output = "hostname minimal.example.com\nport 22\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            params.ciphers.is_default(),
+            "ciphers should remain default when not in output"
+        );
+        assert!(
+            params.kex_algorithms.is_default(),
+            "kex_algorithms should remain default when not in output"
+        );
+        assert!(
+            params.host_key_algorithms.is_default(),
+            "host_key_algorithms should remain default when not in output"
+        );
+        assert!(
+            params.mac.is_default(),
+            "mac should remain default when not in output"
+        );
+        assert!(
+            params.pubkey_accepted_algorithms.is_default(),
+            "pubkey_accepted_algorithms should remain default when not in output"
         );
     }
 }
