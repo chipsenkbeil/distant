@@ -2747,6 +2747,12 @@ mod tests {
 
         #[cfg(unix)]
         assert_eq!(dir.unwrap(), PathBuf::from("/etc/ssh"));
+
+        #[cfg(windows)]
+        {
+            let expected = PathBuf::from(std::env::var("ProgramData").unwrap()).join("ssh");
+            assert_eq!(dir.unwrap(), expected);
+        }
     }
 
     #[test]
@@ -2770,10 +2776,26 @@ mod tests {
                 files
             );
         }
+        #[cfg(windows)]
+        {
+            let sys_dir = PathBuf::from(std::env::var("ProgramData").unwrap()).join("ssh");
+            assert!(
+                files.iter().any(|p| p == &sys_dir.join("ssh_known_hosts")),
+                "Should include system ssh_known_hosts, got: {:?}",
+                files
+            );
+            assert!(
+                files.iter().any(|p| p == &sys_dir.join("ssh_known_hosts2")),
+                "Should include system ssh_known_hosts2, got: {:?}",
+                files
+            );
+        }
         // User paths should come before system paths
         if let Some(home) = dirs::home_dir() {
             let user_kh = home.join(".ssh").join("known_hosts");
-            let system_kh = PathBuf::from("/etc/ssh/ssh_known_hosts");
+            let system_kh = system_ssh_dir()
+                .expect("system_ssh_dir must exist for ordering check")
+                .join("ssh_known_hosts");
             if let (Some(user_pos), Some(sys_pos)) = (
                 files.iter().position(|p| p == &user_kh),
                 files.iter().position(|p| p == &system_kh),

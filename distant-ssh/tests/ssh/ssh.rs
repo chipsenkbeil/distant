@@ -357,16 +357,9 @@ async fn encrypted_key_with_wrong_passphrase_should_fail(sshd: Sshd) {
 #[rstest]
 #[test(tokio::test)]
 async fn proxy_command_should_connect_via_tcp_to_stdio(sshd: Sshd) {
-    // Locate the tcp-to-stdio binary built from distant-test-harness
-    let tcp_to_stdio = distant_test_harness::manager::build_dir().join("tcp-to-stdio");
-
-    if !tcp_to_stdio.exists() {
-        panic!(
-            "tcp-to-stdio binary not found at {:?}; \
-             run `cargo build -p distant-test-harness` first",
-            tcp_to_stdio
-        );
-    }
+    let tcp_to_stdio = distant_test_harness::exe::build_tcp_to_stdio()
+        .await
+        .expect("failed to build tcp-to-stdio binary");
 
     let proxy_cmd = format!("{} 127.0.0.1:{}", tcp_to_stdio.display(), sshd.port);
 
