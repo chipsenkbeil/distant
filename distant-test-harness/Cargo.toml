@@ -31,6 +31,11 @@ rand = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+rpassword = "7.4.0"
+
+[[bin]]
+name = "predict-pty-helper"
+path = "src/bin/predict_pty_helper.rs"
 
 [[bin]]
 name = "tcp-to-stdio"

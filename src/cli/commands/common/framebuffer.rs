@@ -93,6 +93,14 @@ impl TerminalFramebuffer {
         self.vt_parser.process(&sanitized);
         self.overlay.confirm_predictions(self.vt_parser.screen());
 
+        // Epoch recovery: if no predictions are pending, synchronize
+        // confirmed_epoch so future predictions aren't permanently suppressed.
+        if self.overlay.cells.is_empty()
+            && self.overlay.epoch_counter > self.overlay.confirmed_epoch + 1
+        {
+            self.overlay.confirmed_epoch = self.overlay.epoch_counter.saturating_sub(1);
+        }
+
         sanitized
     }
 
@@ -164,24 +172,20 @@ impl TerminalFramebuffer {
         buf.extend_from_slice(b"\x1b7");
 
         if underline {
-            // SGR underline on
             buf.extend_from_slice(b"\x1b[4m");
         }
 
+        // Write all predicted chars sequentially from current cursor position.
+        // No CUP — the real terminal cursor is already at the correct position
+        // (where the server last left it). Characters advance the cursor
+        // naturally, and the terminal handles line wrapping.
         for pred in &self.overlay.cells {
-            // Move cursor to prediction position
-            // CUP is 1-based: ESC[<row+1>;<col+1>H
-            let row1 = pred.row + 1;
-            let col1 = pred.col + 1;
-            buf.extend_from_slice(format!("\x1b[{row1};{col1}H").as_bytes());
-
             let mut char_buf = [0u8; 4];
             let s = pred.ch.encode_utf8(&mut char_buf);
             buf.extend_from_slice(s.as_bytes());
         }
 
         if underline {
-            // SGR underline off
             buf.extend_from_slice(b"\x1b[24m");
         }
 
@@ -286,6 +290,9 @@ impl PredictionOverlay {
 
     fn new_epoch(&mut self) {
         self.epoch_counter += 1;
+        if self.cells.is_empty() {
+            self.confirmed_epoch = self.epoch_counter.saturating_sub(1);
+        }
         self.cells.clear();
     }
 
@@ -623,14 +630,14 @@ mod tests {
 
         assert_eq!(encoded, "a");
 
-        // Expected: DECSC + SGR underline on + CUP(1,1) + 'a' + SGR underline off + DECRC
-        // Cursor starts at (0,0), CUP is 1-based so row=1, col=1.
+        // Expected: DECSC + SGR underline on + 'a' + SGR underline off + DECRC.
+        // No CUP — chars are written sequentially from the current cursor position.
         // Underline is active because default SRTT (100ms) exceeds the 80ms threshold.
-        let expected = b"\x1b7\x1b[4m\x1b[1;1Ha\x1b[24m\x1b8";
+        let expected = b"\x1b7\x1b[4ma\x1b[24m\x1b8";
         assert_eq!(
             display_bytes,
             expected,
-            "display bytes should be DECSC + underline + CUP + char + no-underline + DECRC, got: {:?}",
+            "display bytes should be DECSC + underline + char + no-underline + DECRC, got: {:?}",
             String::from_utf8_lossy(&display_bytes)
         );
     }
@@ -661,14 +668,334 @@ mod tests {
             kind: crossterm::event::KeyEventKind::Press,
             state: crossterm::event::KeyEventState::NONE,
         };
-        let result = fb.on_keystroke(&ev);
-        assert!(result.is_some(), "keystroke should produce output");
+        let (encoded, _display_bytes) = fb
+            .on_keystroke(&ev)
+            .expect("keystroke should produce output");
+        assert_eq!(encoded, "x");
 
         // Resize should clear predictions
         fb.resize(120, 40);
         assert!(
             fb.overlay.cells.is_empty(),
             "resize should clear pending predictions"
+        );
+    }
+
+    #[test]
+    fn display_bytes_should_not_contain_cup_sequences() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Move cursor to a non-origin position via server output
+        fb.process_server_output(b"\x1b[10;20H$ ");
+
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Char('x'),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        let (_, display_bytes) = fb.on_keystroke(&ev).unwrap();
+
+        let display_str = String::from_utf8_lossy(&display_bytes);
+        // CUP pattern: ESC[ <digits> ; <digits> H
+        assert!(
+            !display_str.contains(";") || !display_str.contains('H'),
+            "display bytes should not contain CUP sequences, got: {display_str:?}"
+        );
+    }
+
+    #[test]
+    fn epoch_should_recover_when_cells_empty_on_new_epoch() {
+        let mut o = overlay_on_confirmed();
+        let parser = parser_80x24();
+
+        // Create multiple epoch boundaries without any predictions between them.
+        // Each new_epoch should catch up confirmed_epoch since cells are empty.
+        o.on_input("\r", parser.screen()); // epoch 1, cells were empty
+        o.on_input("\r", parser.screen()); // epoch 2, cells were empty
+        o.on_input("\r", parser.screen()); // epoch 3, cells were empty
+
+        // confirmed_epoch should have caught up
+        assert!(
+            o.epoch_counter <= o.confirmed_epoch + 1,
+            "confirmed_epoch should catch up: epoch={}, confirmed={}",
+            o.epoch_counter,
+            o.confirmed_epoch
+        );
+
+        // Predictions should now be allowed
+        o.on_input("a", parser.screen());
+        assert_eq!(
+            o.cells.len(),
+            1,
+            "predictions should be allowed after epoch recovery"
+        );
+    }
+
+    #[test]
+    fn epoch_should_recover_after_server_output_clears_cells() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Type a character (adds prediction in epoch 0)
+        let ev = KeyEvent {
+            code: crossterm::event::KeyCode::Char('a'),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        fb.on_keystroke(&ev);
+
+        // Enter creates epoch 1 (cells had 'a' so no catch-up)
+        let enter = KeyEvent {
+            code: crossterm::event::KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        fb.on_keystroke(&enter);
+
+        // Another Enter creates epoch 2 (cells were empty -> catch-up)
+        fb.on_keystroke(&enter);
+
+        // Server output echoes back and moves cursor past predictions
+        fb.process_server_output(b"a\r\n$ ");
+
+        // Epoch recovery in process_server_output should catch up
+        assert!(
+            fb.overlay.epoch_counter <= fb.overlay.confirmed_epoch + 1,
+            "confirmed_epoch should catch up after server output: epoch={}, confirmed={}",
+            fb.overlay.epoch_counter,
+            fb.overlay.confirmed_epoch
+        );
+
+        // New predictions should be allowed
+        fb.on_keystroke(&ev);
+        assert!(
+            !fb.overlay.cells.is_empty(),
+            "predictions should resume after epoch recovery via server output"
+        );
+    }
+
+    #[test]
+    fn display_bytes_should_write_all_chars_sequentially() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type 'a', 'b', 'c'
+        for ch in ['a', 'b', 'c'] {
+            let ev = KeyEvent {
+                code: crossterm::event::KeyCode::Char(ch),
+                modifiers: crossterm::event::KeyModifiers::NONE,
+                kind: crossterm::event::KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::NONE,
+            };
+            fb.on_keystroke(&ev);
+        }
+
+        // Get display bytes for current state
+        let display_bytes = fb.build_prediction_display_bytes();
+        let display_str = String::from_utf8_lossy(&display_bytes);
+
+        // Should contain 'abc' in sequence between DECSC and DECRC
+        assert!(
+            display_str.contains("abc"),
+            "chars should appear sequentially, got: {display_str:?}"
+        );
+
+        // Should start with DECSC (\x1b7) and end with DECRC (\x1b8)
+        assert!(
+            display_bytes.starts_with(b"\x1b7"),
+            "should start with DECSC"
+        );
+        assert!(display_bytes.ends_with(b"\x1b8"), "should end with DECRC");
+
+        // Should NOT contain any CUP sequences (ESC [ digits ; digits H).
+        // Use a regex-like scan: find \x1b[ then check for digit+;digit+H pattern.
+        let display_str_full = String::from_utf8_lossy(&display_bytes);
+        let cup_pattern_found = display_str_full.match_indices("\x1b[").any(|(idx, _)| {
+            let after = &display_str_full[idx + 2..];
+            // CUP pattern: one or more digits, semicolon, one or more digits, 'H'
+            let mut chars = after.chars();
+            let has_digits_before_semi =
+                chars.by_ref().take_while(|c| c.is_ascii_digit()).count() > 0;
+            let has_semi = chars.next() == Some(';');
+            let has_digits_after_semi =
+                chars.by_ref().take_while(|c| c.is_ascii_digit()).count() > 0;
+            let has_h = chars.next() == Some('H');
+            has_digits_before_semi && has_semi && has_digits_after_semi && has_h
+        });
+        assert!(
+            !cup_pattern_found,
+            "should not contain CUP sequences, got: {display_str_full:?}"
+        );
+    }
+
+    #[test]
+    fn prediction_should_wrap_at_end_of_line() {
+        let mut o = overlay_on_confirmed();
+        // Use a narrow terminal (10 cols) with cursor near end of line
+        let mut parser = vt100::Parser::new(24, 10, 0);
+        // Move cursor to row 5, col 8 (2 cols from edge)
+        parser.process(b"\x1b[6;9H");
+
+        o.on_input("a", parser.screen()); // col 8
+        o.on_input("b", parser.screen()); // col 9 (last col)
+        o.on_input("c", parser.screen()); // should wrap to row 6, col 0
+
+        assert_eq!(o.cells.len(), 3);
+        assert_eq!((o.cells[0].row, o.cells[0].col), (5, 8));
+        assert_eq!((o.cells[1].row, o.cells[1].col), (5, 9));
+        assert_eq!(
+            (o.cells[2].row, o.cells[2].col),
+            (6, 0),
+            "third prediction should wrap to next row"
+        );
+    }
+
+    fn key_char(ch: char) -> KeyEvent {
+        KeyEvent {
+            code: crossterm::event::KeyCode::Char(ch),
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    fn key_enter() -> KeyEvent {
+        KeyEvent {
+            code: crossterm::event::KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    fn key_ctrl_c() -> KeyEvent {
+        KeyEvent {
+            code: crossterm::event::KeyCode::Char('c'),
+            modifiers: crossterm::event::KeyModifiers::CONTROL,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    /// Feed server output through framebuffer and to the display verifier.
+    fn feed_server(fb: &mut TerminalFramebuffer, display: &mut vt100::Parser, bytes: &[u8]) {
+        let sanitized = fb.process_server_output(bytes);
+        display.process(&sanitized);
+    }
+
+    /// Send a keystroke and feed display bytes to the verifier.
+    /// Returns the encoded string (for the "server" side).
+    fn feed_keystroke(
+        fb: &mut TerminalFramebuffer,
+        display: &mut vt100::Parser,
+        ev: &KeyEvent,
+    ) -> Option<String> {
+        let (encoded, display_bytes) = fb.on_keystroke(ev)?;
+        if !display_bytes.is_empty() {
+            display.process(&display_bytes);
+        }
+        Some(encoded)
+    }
+
+    /// Read a row from the display verifier as a trimmed string.
+    fn display_row(display: &vt100::Parser, row: u16) -> String {
+        let screen = display.screen();
+        let (_, cols) = screen.size();
+        let mut text = String::new();
+        for col in 0..cols {
+            if let Some(cell) = screen.cell(row, col) {
+                let c = cell.contents();
+                text.push_str(if c.is_empty() { " " } else { c });
+            }
+        }
+        text.trim_end().to_string()
+    }
+
+    #[test]
+    fn predictions_should_appear_at_cursor_not_at_origin() {
+        // Real terminal has 30 lines of prior output.
+        let mut display = vt100::Parser::new(40, 80, 0);
+        for i in 0..30 {
+            display.process(format!("previous line {i}\r\n").as_bytes());
+        }
+        // Display cursor is now at row 30.
+
+        let mut fb = TerminalFramebuffer::new(40, 80, PredictMode::On);
+
+        // Server sends prompt — both shadow screen and display get it.
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types 'l'.
+        feed_keystroke(&mut fb, &mut display, &key_char('l'));
+
+        // Row 0 must still say "previous line 0" — NOT overwritten by CUP.
+        let row0 = display_row(&display, 0);
+        assert!(
+            row0.starts_with("previous line 0"),
+            "row 0 should be unchanged, got: {row0:?}"
+        );
+
+        // Row 30 should show "$ " + predicted 'l'.
+        let row30 = display_row(&display, 30);
+        assert!(
+            row30.starts_with("$ l"),
+            "prediction should appear at cursor row, got: {row30:?}"
+        );
+    }
+
+    #[test]
+    fn passwd_interrupt_should_not_block_future_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        // Server sends initial prompt.
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types "passwd\r" -> server echoes + sends Password prompt.
+        for ch in "passwd".chars() {
+            feed_keystroke(&mut fb, &mut display, &key_char(ch));
+        }
+        feed_keystroke(&mut fb, &mut display, &key_enter());
+        feed_server(&mut fb, &mut display, b"passwd\r\nPassword: ");
+
+        // User types password (no server echo).
+        for ch in "secret".chars() {
+            feed_keystroke(&mut fb, &mut display, &key_char(ch));
+        }
+        feed_keystroke(&mut fb, &mut display, &key_enter());
+
+        // Server responds + new prompt.
+        feed_server(&mut fb, &mut display, b"\r\nOK\r\n$ ");
+
+        // Ctrl-C -> server sends new prompt.
+        feed_keystroke(&mut fb, &mut display, &key_ctrl_c());
+        feed_server(&mut fb, &mut display, b"^C\r\n$ ");
+
+        // User types 'l' — predictions MUST resume.
+        let (encoded, display_bytes) = fb.on_keystroke(&key_char('l')).unwrap();
+        assert_eq!(encoded, "l");
+        assert!(
+            !display_bytes.is_empty(),
+            "predictions should resume after epoch recovery"
+        );
+        assert!(
+            display_bytes.contains(&b'l'),
+            "display bytes should contain predicted 'l'"
+        );
+
+        // Verify 'l' appears in the display at the prompt row.
+        display.process(&display_bytes);
+        // Find the last row containing "$ " — that's our prompt row.
+        let prompt_row = (0..24u16)
+            .rev()
+            .find(|&r| display_row(&display, r).contains("$ "))
+            .expect("should find a prompt row");
+        let row_text = display_row(&display, prompt_row);
+        assert!(
+            row_text.contains("$ l"),
+            "prompt row should show predicted 'l', got: {row_text:?}"
         );
     }
 }

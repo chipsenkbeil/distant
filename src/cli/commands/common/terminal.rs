@@ -353,29 +353,29 @@ async fn input_loop(
         match event::poll(Duration::ZERO) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(ev)) => {
-                    // Skip Release events (Windows with enhanced keyboard mode
-                    // sends Press + Release; we only want Press and Repeat).
                     if ev.kind == KeyEventKind::Release {
                         continue;
                     }
 
-                    let result = {
+                    let encoded = {
                         let mut fb = framebuffer.lock().expect("framebuffer lock poisoned");
-                        fb.on_keystroke(&ev)
-                    };
-
-                    if let Some((encoded, display_bytes)) = result {
-                        if !display_bytes.is_empty() {
+                        let result = fb.on_keystroke(&ev);
+                        if let Some((_, ref display_bytes)) = result
+                            && !display_bytes.is_empty()
+                        {
                             let stdout = io::stdout();
                             let mut out = stdout.lock();
-                            let _ = out.write_all(&display_bytes);
+                            let _ = out.write_all(display_bytes);
                             let _ = out.flush();
                         }
+                        result.map(|(e, _)| e)
+                    };
 
-                        if let Err(x) = stdin.write_str(encoded).await {
-                            error!("Failed to write to stdin of remote process: {}", x);
-                            break;
-                        }
+                    if let Some(encoded) = encoded
+                        && let Err(x) = stdin.write_str(encoded).await
+                    {
+                        error!("Failed to write to stdin of remote process: {}", x);
+                        break;
                     }
                 }
                 Ok(Event::Resize(cols, rows)) => {
