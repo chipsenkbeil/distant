@@ -65,6 +65,27 @@ during long plugin operations like image pulls.
 
 - **Crate:** `distant-docker`
 
+### TD-5: @cert-authority known hosts parsing
+
+**(Limitation)** `distant-ssh` cannot validate host certificates against
+`@cert-authority` entries in known_hosts files. russh 0.57's
+`parse_public_key()` uses `KeyData::decode` which strips certificate
+structure, and the client never negotiates certificate-based host key
+algorithms during KEX. This means servers presenting host certificates will
+fall back to plain key algorithms.
+
+**Current workaround:** ProxyCommand support (added alongside this item)
+allows corporate proxies like `x2ssh` to handle certificate verification
+internally. The tunneled connection then presents a plain key verifiable
+against system known_hosts.
+
+**Unblock condition:** russh adds host certificate algorithm support upstream
+(negotiation of `*-cert-v01@openssh.com` host key types and certificate
+chain validation in `check_server_key`).
+
+- **Crate:** `distant-ssh`
+- **File:** `distant-ssh/src/lib.rs` (known_hosts verification)
+
 ---
 
 ## Open Issues

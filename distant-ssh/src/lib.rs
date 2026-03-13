@@ -37,6 +37,8 @@ mod utils;
 pub use plugin::SshPlugin;
 pub use utils::SftpPathBuf;
 
+mod proxy;
+
 use api::SshApi;
 use auth::{expand_tilde, format_methods};
 
@@ -270,6 +272,23 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
+/// Returns the platform-specific system SSH configuration directory.
+///
+/// - Unix: `/etc/ssh`
+/// - Windows: `%ProgramData%\ssh`
+fn system_ssh_dir() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(PathBuf::from("/etc/ssh"))
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("ProgramData")
+            .ok()
+            .map(|d| PathBuf::from(d).join("ssh"))
+    }
+}
+
 /// Verify a server's host key against known_hosts files using the specified policy.
 ///
 /// Returns `Ok(true)` if the key is accepted, or an error if rejected.
@@ -485,6 +504,20 @@ impl Ssh {
             .or(ssh_config.user.clone())
             .unwrap_or_else(|| whoami::username().unwrap_or_default());
 
+        // Resolve identities_only: prefer explicit opts, then SSH config
+        let mut opts = opts;
+        if opts.identities_only.is_none() {
+            opts.identities_only = ssh_config
+                .unsupported_fields
+                .get("identitiesonly")
+                .and_then(|v| v.first())
+                .and_then(|s| match s.to_lowercase().as_str() {
+                    "yes" => Some(true),
+                    "no" => Some(false),
+                    _ => None,
+                });
+        }
+
         info!(
             "SSH connection attempt: {}:{} as user '{}'",
             connect_host, port, user
@@ -517,13 +550,10 @@ impl Ssh {
             debug!("Russh keepalive: {:?}", config.keepalive_interval);
         }
 
-        debug!(
-            "Initiating russh::client::connect to {}:{}...",
-            connect_host, port
-        );
+        debug!("Initiating SSH connection to {}:{}...", connect_host, port);
 
         // Resolve known_hosts files: prefer explicit opts, then SSH config, then defaults
-        let known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
+        let mut known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
             opts.user_known_hosts_files
                 .iter()
                 .map(|p| expand_tilde(p))
@@ -542,6 +572,23 @@ impl Ssh {
         } else {
             Self::default_known_hosts_files()
         };
+
+        // Append global known_hosts from SSH config or system defaults
+        if let Some(global_values) = ssh_config.unsupported_fields.get("globalknownhostsfile") {
+            for path_str in global_values {
+                let path = expand_tilde(Path::new(path_str.trim()));
+                if !known_hosts_files.contains(&path) {
+                    known_hosts_files.push(path);
+                }
+            }
+        } else if let Some(ssh_dir) = system_ssh_dir() {
+            for name in ["ssh_known_hosts", "ssh_known_hosts2"] {
+                let path = ssh_dir.join(name);
+                if !known_hosts_files.contains(&path) {
+                    known_hosts_files.push(path);
+                }
+            }
+        }
 
         // Resolve host key policy: prefer explicit opts, then SSH config, then default (TOFU)
         let policy = opts
@@ -563,6 +610,21 @@ impl Ssh {
             policy, known_hosts_files
         );
 
+        // Resolve proxy command: prefer explicit opts, then SSH config.
+        // ssh2-config splits unsupported field values into words, so we rejoin them.
+        // "none" disables an inherited proxy (same as OpenSSH).
+        let proxy_command = opts
+            .proxy_command
+            .clone()
+            .or_else(|| {
+                ssh_config
+                    .unsupported_fields
+                    .get("proxycommand")
+                    .map(|v| v.join(" "))
+                    .filter(|s| !s.is_empty())
+            })
+            .filter(|cmd| !cmd.eq_ignore_ascii_case("none"));
+
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let handler = ClientHandler {
             remote_sshid: Arc::clone(&remote_sshid),
@@ -571,8 +633,16 @@ impl Ssh {
             known_hosts_files,
             policy,
         };
-        let connect_result =
-            russh::client::connect(Arc::new(config), (connect_host, port), handler).await;
+
+        let config = Arc::new(config);
+        let connect_result = if let Some(ref cmd) = proxy_command {
+            let substituted = proxy::substitute_proxy_command(cmd, connect_host, port, &user);
+            info!("Using ProxyCommand: {}", substituted);
+            let stream = proxy::ProxyStream::spawn(&substituted)?;
+            russh::client::connect_stream(config, stream, handler).await
+        } else {
+            russh::client::connect(config, (connect_host, port), handler).await
+        };
 
         let handle = match connect_result {
             Ok(h) => {
@@ -624,39 +694,72 @@ impl Ssh {
         })
     }
 
-    /// Returns the default known_hosts file paths (`~/.ssh/known_hosts` and `~/.ssh/known_hosts2`).
+    /// Returns the default known_hosts file paths.
+    ///
+    /// Includes user paths (`~/.ssh/known_hosts`, `~/.ssh/known_hosts2`) and
+    /// system paths (`/etc/ssh/ssh_known_hosts`, `/etc/ssh/ssh_known_hosts2`
+    /// on Unix; `%ProgramData%\ssh\...` on Windows).
     fn default_known_hosts_files() -> Vec<PathBuf> {
-        dirs::home_dir()
+        let mut files = dirs::home_dir()
             .map(|h| {
                 vec![
                     h.join(".ssh").join("known_hosts"),
                     h.join(".ssh").join("known_hosts2"),
                 ]
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(ssh_dir) = system_ssh_dir() {
+            files.push(ssh_dir.join("ssh_known_hosts"));
+            files.push(ssh_dir.join("ssh_known_hosts2"));
+        }
+        files
     }
 
     fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
-        let config_path = dirs::home_dir()
+        use ssh2_config::DefaultAlgorithms;
+
+        let system_params = system_ssh_dir()
+            .map(|d| d.join("ssh_config"))
+            .and_then(|path| Self::try_parse_ssh_config_file(&path, host));
+
+        let user_params = dirs::home_dir()
             .map(|h| h.join(".ssh").join("config"))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
+            .and_then(|path| Self::try_parse_ssh_config_file(&path, host));
 
-        if !config_path.exists() {
-            use ssh2_config::DefaultAlgorithms;
-            return Ok(HostParams::new(&DefaultAlgorithms::default()));
+        // Merge: user config takes precedence over system config
+        match (user_params, system_params) {
+            (Some(mut user), Some(system)) => {
+                user.overwrite_if_none(&system);
+                Ok(user)
+            }
+            (Some(user), None) => Ok(user),
+            (None, Some(system)) => Ok(system),
+            (None, None) => Ok(HostParams::new(&DefaultAlgorithms::default())),
         }
+    }
 
-        let mut reader = BufReader::new(File::open(&config_path)?);
-        let config = SshConfig::default()
-            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Failed to parse SSH config: {}", e),
-                )
-            })?;
-
-        Ok(config.query(host))
+    /// Try to parse an SSH config file and query it for a host.
+    /// Returns `None` if the file doesn't exist or can't be parsed.
+    fn try_parse_ssh_config_file(path: &Path, host: &str) -> Option<HostParams> {
+        if !path.exists() {
+            return None;
+        }
+        match File::open(path) {
+            Ok(f) => {
+                let mut reader = BufReader::new(f);
+                match SshConfig::default().parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS) {
+                    Ok(config) => Some(config.query(host)),
+                    Err(e) => {
+                        debug!("Failed to parse SSH config {}: {}", path.display(), e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to open SSH config {}: {}", path.display(), e);
+                None
+            }
+        }
     }
 
     fn build_russh_config(
@@ -2631,5 +2734,168 @@ mod tests {
             &HostKeyPolicy::Yes,
         );
         assert!(result.unwrap(), "Learned key should be found on re-check");
+    }
+
+    #[test]
+    fn system_ssh_dir_should_return_some() {
+        // On any supported platform, system_ssh_dir() should return a path
+        let dir = system_ssh_dir();
+        assert!(
+            dir.is_some(),
+            "system_ssh_dir() should return Some on Unix or Windows"
+        );
+
+        #[cfg(unix)]
+        assert_eq!(dir.unwrap(), PathBuf::from("/etc/ssh"));
+    }
+
+    #[test]
+    fn default_known_hosts_files_should_include_system_paths() {
+        let files = Ssh::default_known_hosts_files();
+        // Should contain at least the system paths
+        #[cfg(unix)]
+        {
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p == Path::new("/etc/ssh/ssh_known_hosts")),
+                "Should include /etc/ssh/ssh_known_hosts, got: {:?}",
+                files
+            );
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p == Path::new("/etc/ssh/ssh_known_hosts2")),
+                "Should include /etc/ssh/ssh_known_hosts2, got: {:?}",
+                files
+            );
+        }
+        // User paths should come before system paths
+        if let Some(home) = dirs::home_dir() {
+            let user_kh = home.join(".ssh").join("known_hosts");
+            let system_kh = PathBuf::from("/etc/ssh/ssh_known_hosts");
+            if let (Some(user_pos), Some(sys_pos)) = (
+                files.iter().position(|p| p == &user_kh),
+                files.iter().position(|p| p == &system_kh),
+            ) {
+                assert!(
+                    user_pos < sys_pos,
+                    "User known_hosts should come before system known_hosts"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn try_parse_ssh_config_file_should_return_none_for_missing_file() {
+        let result = Ssh::try_parse_ssh_config_file(Path::new("/nonexistent/path/config"), "host");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_parse_ssh_config_file_should_parse_valid_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("ssh_config");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(f, "Host testhost\n  HostName 10.0.0.1\n  Port 2222").unwrap();
+
+        let result = Ssh::try_parse_ssh_config_file(&config_path, "testhost");
+        assert!(result.is_some());
+        let params = result.unwrap();
+        assert_eq!(params.host_name.as_deref(), Some("10.0.0.1"));
+        assert_eq!(params.port, Some(2222));
+    }
+
+    #[test]
+    fn try_parse_ssh_config_file_should_not_panic_on_invalid_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("bad_config");
+        // Write binary garbage that can't be parsed as SSH config
+        std::fs::write(&config_path, [0xFF, 0xFE, 0x00, 0x01]).unwrap();
+
+        let result = Ssh::try_parse_ssh_config_file(&config_path, "host");
+        // ssh2-config is fairly permissive — it may return Some with empty params
+        // or None on parse failure. Either is acceptable; the key assertion is that
+        // the function does not panic on binary input.
+        if let Some(params) = result {
+            // If parsed, the garbage should not produce meaningful SSH settings
+            assert!(
+                params.host_name.is_none(),
+                "Binary garbage should not produce a valid HostName"
+            );
+        }
+    }
+
+    #[test]
+    fn try_parse_ssh_config_file_should_extract_unsupported_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("ssh_config");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(
+            f,
+            "Host corp-vm\n  ProxyCommand exec ssh -W %h:%p jump\n  IdentitiesOnly yes"
+        )
+        .unwrap();
+
+        let params = Ssh::try_parse_ssh_config_file(&config_path, "corp-vm").unwrap();
+        // ssh2-config splits unsupported field values into words
+        let proxy = params
+            .unsupported_fields
+            .get("proxycommand")
+            .map(|v| v.join(" "));
+        assert_eq!(
+            proxy.as_deref(),
+            Some("exec ssh -W %h:%p jump"),
+            "ProxyCommand should be in unsupported_fields (rejoined)"
+        );
+
+        let id_only = params
+            .unsupported_fields
+            .get("identitiesonly")
+            .and_then(|v| v.first());
+        assert_eq!(
+            id_only.map(|s| s.as_str()),
+            Some("yes"),
+            "IdentitiesOnly should be in unsupported_fields"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_config_should_merge_system_and_user_configs() {
+        // This test verifies the merge behavior by testing try_parse_ssh_config_file
+        // directly, since parse_ssh_config reads from fixed system paths
+        let dir = tempfile::tempdir().unwrap();
+
+        // Simulate system config (has HostName but not User)
+        let system_path = dir.path().join("system_config");
+        let mut f = std::fs::File::create(&system_path).unwrap();
+        writeln!(f, "Host myhost\n  HostName 10.0.0.1\n  Port 22").unwrap();
+
+        // Simulate user config (has User but not HostName)
+        let user_path = dir.path().join("user_config");
+        let mut f = std::fs::File::create(&user_path).unwrap();
+        writeln!(f, "Host myhost\n  User deployer\n  Port 2222").unwrap();
+
+        let system_params = Ssh::try_parse_ssh_config_file(&system_path, "myhost").unwrap();
+        let mut user_params = Ssh::try_parse_ssh_config_file(&user_path, "myhost").unwrap();
+
+        // User has Port=2222 but no HostName; system has HostName and Port=22
+        assert_eq!(user_params.port, Some(2222));
+        assert!(user_params.host_name.is_none());
+        assert_eq!(system_params.host_name.as_deref(), Some("10.0.0.1"));
+
+        // After merge, user values take precedence
+        user_params.overwrite_if_none(&system_params);
+        assert_eq!(user_params.port, Some(2222), "User port should win");
+        assert_eq!(
+            user_params.host_name.as_deref(),
+            Some("10.0.0.1"),
+            "System HostName should fill in missing user HostName"
+        );
+        assert_eq!(
+            user_params.user.as_deref(),
+            Some("deployer"),
+            "User should be preserved"
+        );
     }
 }

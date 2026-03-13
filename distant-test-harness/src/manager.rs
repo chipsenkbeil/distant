@@ -338,6 +338,26 @@ pub fn bin_path() -> PathBuf {
     BIN_PATH.get_or_init(resolve_bin_path).clone()
 }
 
+/// Returns the Cargo build output directory (e.g. `target/debug`).
+///
+/// Useful for locating test helper binaries like `tcp-to-stdio`.
+pub fn build_dir() -> PathBuf {
+    // Start from the workspace root (parent of the test-harness crate)
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().expect("workspace root");
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join("target"));
+
+    for profile in ["debug", "release"] {
+        let dir = target_dir.join(profile);
+        if dir.exists() {
+            return dir;
+        }
+    }
+    target_dir.join("debug")
+}
+
 fn resolve_bin_path() -> PathBuf {
     let name = if cfg!(windows) {
         "distant.exe"

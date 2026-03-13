@@ -353,3 +353,59 @@ async fn encrypted_key_with_wrong_passphrase_should_fail(sshd: Sshd) {
         "Error message should contain 'Permission denied', got: '{msg}'"
     );
 }
+
+#[rstest]
+#[test(tokio::test)]
+async fn proxy_command_should_connect_via_tcp_to_stdio(sshd: Sshd) {
+    // Locate the tcp-to-stdio binary built from distant-test-harness
+    let tcp_to_stdio = distant_test_harness::manager::build_dir().join("tcp-to-stdio");
+
+    if !tcp_to_stdio.exists() {
+        panic!(
+            "tcp-to-stdio binary not found at {:?}; \
+             run `cargo build -p distant-test-harness` first",
+            tcp_to_stdio
+        );
+    }
+
+    let proxy_cmd = format!("{} 127.0.0.1:{}", tcp_to_stdio.display(), sshd.port);
+
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        proxy_command: Some(proxy_cmd),
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    ssh.authenticate(MockSshAuthHandler).await.unwrap();
+    assert!(
+        ssh.is_authenticated(),
+        "Should authenticate through ProxyCommand"
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proxy_command_none_should_bypass_proxy(sshd: Sshd) {
+    // "none" should disable ProxyCommand and connect directly
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        proxy_command: Some("none".to_string()),
+        ..Default::default()
+    };
+
+    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    ssh.authenticate(MockSshAuthHandler).await.unwrap();
+    assert!(
+        ssh.is_authenticated(),
+        "proxy_command='none' should fall back to direct connection"
+    );
+}
