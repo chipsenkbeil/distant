@@ -1043,10 +1043,17 @@ impl Ssh {
                 .algorithms()
                 .iter()
                 .filter_map(|s| match s.parse::<russh::keys::Algorithm>() {
-                    Ok(algo) => Some(algo),
-                    Err(_) => {
+                    Ok(algo) if !matches!(algo, russh::keys::Algorithm::Other(_)) => Some(algo),
+                    Ok(_) => {
                         debug!(
                             "Skipping unsupported host key algorithm from SSH config: {}",
+                            s
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        debug!(
+                            "Skipping unrecognized host key algorithm from SSH config: {}",
                             s
                         );
                         None
@@ -2728,6 +2735,46 @@ mod tests {
 
         let preferred = Ssh::build_preferred_algorithms(&params);
         assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
+    }
+
+    #[test]
+    fn build_preferred_algorithms_should_filter_cert_host_key_algorithms() {
+        let params = parse_config_str(
+            "Host testhost\n  HostKeyAlgorithms ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512-cert-v01@openssh.com,ssh-ed25519,rsa-sha2-512\n",
+        );
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+
+        // Only the plain (non-cert) algorithms should survive filtering.
+        // Cert variants parse as Algorithm::Other(...) and must be rejected.
+        assert_eq!(
+            preferred.key.as_ref(),
+            &[
+                russh::keys::Algorithm::Ed25519,
+                russh::keys::Algorithm::Rsa {
+                    hash: Some(russh::keys::HashAlg::Sha512),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn build_preferred_algorithms_should_keep_plain_host_key_algorithms() {
+        let params =
+            parse_config_str("Host testhost\n  HostKeyAlgorithms ssh-ed25519,rsa-sha2-256\n");
+
+        let preferred = Ssh::build_preferred_algorithms(&params);
+
+        // All plain algorithms are recognized by russh and should be preserved.
+        assert_eq!(
+            preferred.key.as_ref(),
+            &[
+                russh::keys::Algorithm::Ed25519,
+                russh::keys::Algorithm::Rsa {
+                    hash: Some(russh::keys::HashAlg::Sha256),
+                },
+            ]
+        );
     }
 
     /// Generate an Ed25519 public key for host-key tests.
