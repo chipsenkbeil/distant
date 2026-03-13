@@ -267,6 +267,189 @@ pub(crate) async fn try_agent_auth(
     Ok(false)
 }
 
+/// Discover certificate file paths from identity files.
+///
+/// Uses two methods (matching OpenSSH behavior):
+/// 1. Explicit certs: identity files ending in `-cert.pub`
+/// 2. Auto-discovered certs: for each identity file NOT ending in `-cert.pub`,
+///    checks if `<path>-cert.pub` exists on disk
+fn discover_cert_files(key_files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut cert_files = Vec::new();
+    for key_file in key_files {
+        let key_str = key_file.to_string_lossy();
+        if key_str.ends_with("-cert.pub") {
+            cert_files.push(key_file.clone());
+        } else {
+            // Auto-discover: check if <path>-cert.pub exists
+            let cert_path = PathBuf::from(format!("{}-cert.pub", key_str));
+            if cert_path.exists() {
+                cert_files.push(cert_path);
+            }
+        }
+    }
+    cert_files
+}
+
+/// Try certificate authentication with a connected agent.
+///
+/// Iterates over discovered certificate files, loads each one, and attempts
+/// `authenticate_certificate_with` using the given agent for signing.
+async fn try_certs_with_agent<S>(
+    handle: &mut Handle<ClientHandler>,
+    user: &str,
+    cert_files: &[PathBuf],
+    agent: &mut AgentClient<S>,
+    server_methods: &mut Option<MethodSet>,
+) -> io::Result<bool>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    for cert_file in cert_files {
+        let expanded = expand_tilde(cert_file);
+        debug!("Trying certificate: {}", expanded.display());
+
+        let contents = match tokio::fs::read_to_string(&expanded).await {
+            Ok(c) => c,
+            Err(e) => {
+                debug!("Failed to read certificate {:?}: {}", expanded, e);
+                continue;
+            }
+        };
+
+        let cert = match russh::keys::Certificate::from_openssh(&contents) {
+            Ok(c) => c,
+            Err(e) => {
+                debug!("Failed to parse certificate {:?}: {}", expanded, e);
+                continue;
+            }
+        };
+
+        // Determine hash_alg for RSA certs
+        let hash_alg = match cert.algorithm() {
+            russh::keys::Algorithm::Rsa { hash } => hash,
+            _ => None,
+        };
+
+        debug!(
+            "Attempting cert auth with {:?} (algo: {:?})",
+            expanded,
+            cert.algorithm()
+        );
+
+        match handle
+            .authenticate_certificate_with(user, cert, hash_alg, agent)
+            .await
+        {
+            Ok(res) if res.success() => {
+                info!("Certificate authentication succeeded with {:?}", expanded);
+                return Ok(true);
+            }
+            Ok(AuthResult::Failure {
+                remaining_methods, ..
+            }) => {
+                debug!("Certificate rejected: {:?}", expanded);
+                *server_methods = Some(remaining_methods);
+            }
+            Ok(_) => {
+                debug!("Certificate auth inconclusive for {:?}", expanded);
+            }
+            Err(e) => {
+                debug!("Certificate auth error for {:?}: {}", expanded, e);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Attempt SSH certificate authentication using the agent.
+///
+/// Discovers certificate files from identity files, connects to the platform-
+/// appropriate SSH agent, and tries `authenticate_certificate_with` for each cert.
+pub(crate) async fn try_cert_agent_auth(
+    handle: &mut Handle<ClientHandler>,
+    user: &str,
+    key_files: &[PathBuf],
+    agent_socket: Option<&str>,
+    methods_tried: &mut Vec<String>,
+    server_methods: &mut Option<MethodSet>,
+) -> io::Result<bool> {
+    let cert_files = discover_cert_files(key_files);
+    if cert_files.is_empty() {
+        debug!("No certificate files found");
+        return Ok(false);
+    }
+
+    debug!("Found {} certificate file(s)", cert_files.len());
+    methods_tried.push("certificate".to_string());
+
+    #[cfg(unix)]
+    {
+        // Try custom agent socket first if specified
+        if let Some(socket) = agent_socket {
+            let expanded = expand_tilde(Path::new(socket));
+            debug!("Connecting to custom agent socket: {}", expanded.display());
+            match AgentClient::connect_uds(expanded).await {
+                Ok(mut agent) => {
+                    if try_certs_with_agent(handle, user, &cert_files, &mut agent, server_methods)
+                        .await?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to connect to custom agent socket: {}", e);
+                }
+            }
+        } else {
+            match AgentClient::connect_env().await {
+                Ok(mut agent) => {
+                    if try_certs_with_agent(handle, user, &cert_files, &mut agent, server_methods)
+                        .await?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Err(e) => {
+                    debug!("SSH agent not available for cert auth: {}", e);
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = agent_socket; // Custom socket paths are Unix-only
+        match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+            Ok(mut agent) => {
+                if try_certs_with_agent(handle, user, &cert_files, &mut agent, server_methods)
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
+            Err(e) => {
+                debug!("OpenSSH agent not available for cert auth: {:?}", e);
+            }
+        }
+
+        match AgentClient::connect_pageant().await {
+            Ok(mut agent) => {
+                if try_certs_with_agent(handle, user, &cert_files, &mut agent, server_methods)
+                    .await?
+                {
+                    return Ok(true);
+                }
+            }
+            Err(e) => {
+                debug!("Pageant not available for cert auth: {:?}", e);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 /// Collect identity key file paths from explicit opts, SSH config, or defaults.
 ///
 /// Priority order:
@@ -2074,5 +2257,72 @@ mod tests {
             result, None,
             "Should return None for invalid key file content"
         );
+    }
+
+    #[test]
+    fn discover_cert_files_should_return_explicit_cert_files() {
+        let cert_path = PathBuf::from("/some/path/id_ed25519-cert.pub");
+        let result = discover_cert_files(std::slice::from_ref(&cert_path));
+        assert_eq!(result, vec![cert_path]);
+    }
+
+    #[test]
+    fn discover_cert_files_should_auto_discover_adjacent_cert_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key_path = tmp.path().join("id_ed25519");
+        let cert_path = tmp.path().join("id_ed25519-cert.pub");
+
+        std::fs::write(&key_path, "fake key").unwrap();
+        std::fs::write(&cert_path, "fake cert").unwrap();
+
+        let result = discover_cert_files(&[key_path]);
+        assert_eq!(result, vec![cert_path]);
+    }
+
+    #[test]
+    fn discover_cert_files_should_not_return_nonexistent_auto_certs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key_path = tmp.path().join("id_ed25519");
+        std::fs::write(&key_path, "fake key").unwrap();
+        // Deliberately do NOT create id_ed25519-cert.pub
+
+        let result = discover_cert_files(&[key_path]);
+        assert!(
+            result.is_empty(),
+            "Should return empty when no adjacent cert file exists, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn discover_cert_files_should_return_empty_for_no_input() {
+        let result = discover_cert_files(&[]);
+        assert!(
+            result.is_empty(),
+            "Should return empty for empty input, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn discover_cert_files_should_handle_mix_of_explicit_and_auto() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let explicit_cert = PathBuf::from("/explicit/id_rsa-cert.pub");
+
+        let auto_key = tmp.path().join("id_ed25519");
+        let auto_cert = tmp.path().join("id_ed25519-cert.pub");
+        std::fs::write(&auto_key, "fake key").unwrap();
+        std::fs::write(&auto_cert, "fake cert").unwrap();
+
+        let no_cert_key = tmp.path().join("id_ecdsa");
+        std::fs::write(&no_cert_key, "fake ecdsa key").unwrap();
+
+        let result = discover_cert_files(&[explicit_cert.clone(), auto_key, no_cert_key]);
+        assert_eq!(
+            result.len(),
+            2,
+            "Should find explicit cert and auto-discovered cert, got: {result:?}"
+        );
+        assert_eq!(result[0], explicit_cert);
+        assert_eq!(result[1], auto_cert);
     }
 }

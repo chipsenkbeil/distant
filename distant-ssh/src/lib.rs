@@ -468,6 +468,8 @@ pub struct Ssh {
     remote_sshid: Arc<Mutex<Option<String>>>,
     /// Identity files from SSH config, used as fallback if opts.identity_files is empty.
     ssh_config_identity_files: Option<Vec<PathBuf>>,
+    /// Custom SSH agent socket path from `IdentityAgent` config directive.
+    identity_agent: Option<String>,
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
@@ -703,6 +705,13 @@ impl Ssh {
             }
         };
 
+        // Extract IdentityAgent from SSH config
+        let identity_agent = ssh_config
+            .unsupported_fields
+            .get("identityagent")
+            .and_then(|v| v.first())
+            .cloned();
+
         Ok(Self {
             handle,
             host: host.as_ref().to_string(),
@@ -713,6 +722,7 @@ impl Ssh {
             cached_family: Mutex::new(None),
             remote_sshid,
             ssh_config_identity_files: ssh_config.identity_file.clone(),
+            identity_agent,
         })
     }
 
@@ -908,6 +918,15 @@ impl Ssh {
                     params
                         .pubkey_accepted_algorithms
                         .apply(AlgorithmsRule::Set(algos));
+                }
+                "identityagent" => {
+                    if !value.eq_ignore_ascii_case("none") {
+                        params
+                            .unsupported_fields
+                            .entry("identityagent".to_string())
+                            .or_default()
+                            .push(value.to_string());
+                    }
                 }
                 _ => {
                     // Ignore other fields
@@ -1175,6 +1194,26 @@ impl Ssh {
         let server_accepts_kbdint = server_methods
             .as_ref()
             .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+
+        // Try certificate + agent auth first (matches OpenSSH order when certs are available)
+        if server_accepts_pubkey {
+            let key_files =
+                auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
+            let agent_socket = self.identity_agent.as_deref();
+            if auth::try_cert_agent_auth(
+                &mut self.handle,
+                &self.user,
+                &key_files,
+                agent_socket,
+                &mut methods_tried,
+                &mut server_methods,
+            )
+            .await?
+            {
+                self.authenticated = true;
+                return Ok(());
+            }
+        }
 
         // Try SSH agent first — it avoids touching key files and works with hardware tokens
         if server_accepts_pubkey
@@ -3556,5 +3595,42 @@ pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
             params.pubkey_accepted_algorithms.is_default(),
             "pubkey_accepted_algorithms should remain default when not in output"
         );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_parse_identity_agent() {
+        let output = "\
+hostname agent-host.example.com
+identityagent /tmp/ssh-agent.sock
+port 22
+";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        let agent = params.unsupported_fields.get("identityagent").unwrap();
+        assert_eq!(agent, &["/tmp/ssh-agent.sock"]);
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_identity_agent_none() {
+        let output = "hostname agent-host.example.com\nidentityagent none\n";
+        let params = Ssh::parse_ssh_g_output(output).unwrap();
+
+        assert!(
+            !params.unsupported_fields.contains_key("identityagent"),
+            "identityagent 'none' should not be stored in unsupported_fields"
+        );
+    }
+
+    #[test]
+    fn parse_ssh_g_output_should_skip_identity_agent_none_case_insensitive() {
+        for value in ["NONE", "None", "NoNe"] {
+            let output = format!("hostname agent-host.example.com\nidentityagent {value}\n");
+            let params = Ssh::parse_ssh_g_output(&output).unwrap();
+
+            assert!(
+                !params.unsupported_fields.contains_key("identityagent"),
+                "identityagent '{value}' should not be stored in unsupported_fields"
+            );
+        }
     }
 }
