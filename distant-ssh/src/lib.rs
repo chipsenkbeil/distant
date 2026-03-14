@@ -31,6 +31,7 @@ use tokio::sync::Mutex;
 mod api;
 mod auth;
 mod plugin;
+mod pool;
 mod process;
 mod utils;
 
@@ -1288,7 +1289,8 @@ impl Ssh {
     /// Detects whether the family is Unix or Windows.
     ///
     /// Uses a layered detection strategy: SSH identification string, then SFTP
-    /// `canonicalize(".")`, then exec fallback. The result is cached for subsequent calls.
+    /// `canonicalize(".")`, then exec fallback. The result is cached for
+    /// subsequent calls.
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
         {
             let guard = self.cached_family.lock().await;
@@ -1318,7 +1320,8 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let pool = pool::ChannelPool::new(self.handle);
+        let api = SshApi::new(pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -1344,7 +1347,8 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let pool = pool::ChannelPool::new(self.handle);
+        let api = SshApi::new(pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
 

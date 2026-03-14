@@ -10,21 +10,18 @@ use distant_core::protocol::{
 };
 use distant_core::{Api, Ctx};
 use log::*;
-use russh::client::Handle;
 use russh_sftp::client::SftpSession;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
+use crate::SshFamily;
+use crate::pool::{ChannelPool, PooledSftp};
 use crate::process::Process;
-use crate::utils::{SSH_TIMEOUT_SECS, SftpPathBuf};
-use crate::{ClientHandler, SshFamily};
+use crate::utils::SftpPathBuf;
 
 /// Represents implementation of [`Api`] for SSH.
 pub struct SshApi {
-    /// Active SSH session handle.
-    session: Handle<ClientHandler>,
-
-    /// Lazy-cached SFTP session (created on first file operation).
-    sftp: Arc<Mutex<Option<Arc<SftpSession>>>>,
+    /// Channel pool managing SSH sessions with reactive eviction.
+    pool: Arc<ChannelPool>,
 
     /// Global tracking of running processes by id.
     processes: Arc<RwLock<HashMap<ProcessId, Process>>>,
@@ -32,57 +29,31 @@ pub struct SshApi {
     /// Remote system family (Unix/Windows).
     family: SshFamily,
 
+    /// Username for the remote connection.
+    username: String,
+
     /// Cached current working directory.
     cached_current_dir: OnceCell<String>,
-
-    /// Cached username.
-    cached_username: OnceCell<String>,
 
     /// Cached shell.
     cached_shell: OnceCell<String>,
 }
 
 impl SshApi {
-    pub fn new(session: Handle<ClientHandler>, family: SshFamily) -> Self {
+    pub fn new(pool: Arc<ChannelPool>, family: SshFamily, username: String) -> Self {
         Self {
-            session,
-            sftp: Arc::new(Mutex::new(None)),
+            pool,
             processes: Arc::new(RwLock::new(HashMap::new())),
             family,
+            username,
             cached_current_dir: OnceCell::new(),
-            cached_username: OnceCell::new(),
             cached_shell: OnceCell::new(),
         }
     }
 
-    /// Get or create SFTP session (lazy initialization with caching).
-    async fn get_sftp(&self) -> io::Result<Arc<SftpSession>> {
-        let mut sftp_lock = self.sftp.lock().await;
-
-        if let Some(sftp) = sftp_lock.as_ref() {
-            return Ok(Arc::clone(sftp));
-        }
-
-        debug!("Creating new SFTP session");
-        let channel = self
-            .session
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(io::Error::other)?;
-
-        let sftp = Arc::new(
-            SftpSession::new_opts(channel.into_stream(), Some(SSH_TIMEOUT_SECS))
-                .await
-                .map_err(io::Error::other)?,
-        );
-
-        *sftp_lock = Some(Arc::clone(&sftp));
-        Ok(sftp)
+    /// Get or create a named SFTP session via the channel pool.
+    async fn get_sftp(&self) -> io::Result<PooledSftp> {
+        self.pool.sftp("sftp").await
     }
 
     /// Convert a [`RemotePath`] (native format) to an [`SftpPathBuf`].
@@ -185,6 +156,30 @@ impl SshApi {
         } else {
             Ok(None)
         }
+    }
+
+    /// Read /etc/passwd via SFTP and extract the shell for the given username.
+    async fn shell_from_passwd(sftp: &SftpSession, username: &str) -> Option<String> {
+        use tokio::io::AsyncReadExt;
+
+        let mut file = sftp.open("/etc/passwd").await.ok()?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).await.ok()?;
+
+        let prefix = format!("{username}:");
+        for line in contents.lines() {
+            if line.starts_with(&prefix) {
+                let fields: Vec<&str> = line.split(':').collect();
+                if fields.len() >= 7 {
+                    let shell = fields[6].trim();
+                    if !shell.is_empty() {
+                        return Some(shell.to_string());
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -331,7 +326,7 @@ impl Api for SshApi {
 
             // Helper function to read a single directory
             async fn read_single_dir(
-                sftp: &Arc<russh_sftp::client::SftpSession>,
+                sftp: &SftpSession,
                 dir_path: &SftpPathBuf,
                 base_path: &SftpPathBuf,
                 absolute: bool,
@@ -630,11 +625,11 @@ impl Api for SshApi {
         dst: RemotePath,
     ) -> impl Future<Output = io::Result<()>> + Send {
         let family = self.family;
-        let session = &self.session;
+        let pool = &self.pool;
         async move {
             debug!("[Conn {}] Copying {} to {}", ctx.connection_id, src, dst);
 
-            use crate::utils::execute_output;
+            use crate::utils::execute_output_on_channel;
 
             let src_str = src.as_str();
             let dst_str = dst.as_str();
@@ -650,7 +645,9 @@ impl Api for SshApi {
                 format!("cp -r \"{}\" \"{}\"", src_str, dst_str)
             };
 
-            let output = execute_output(session, &command, None).await?;
+            let pooled = pool.open_exec().await?;
+            let (channel, _permit) = pooled.take();
+            let output = execute_output_on_channel(channel, &command, None).await?;
 
             if !output.success {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -900,7 +897,7 @@ impl Api for SshApi {
         current_dir: Option<RemotePath>,
         pty: Option<PtySize>,
     ) -> impl Future<Output = io::Result<ProcessId>> + Send {
-        let session = &self.session;
+        let pool = &self.pool;
         let processes = &self.processes;
         let global_processes = Arc::downgrade(processes);
         async move {
@@ -920,6 +917,10 @@ impl Api for SshApi {
                 }
             };
 
+            // Open a channel via the pool and extract ownership
+            let pooled = pool.open_exec().await?;
+            let (channel, permit) = pooled.take();
+
             let SpawnResult {
                 id,
                 stdin,
@@ -928,7 +929,8 @@ impl Api for SshApi {
             } = match pty {
                 None => {
                     spawn_simple(
-                        session,
+                        channel,
+                        permit,
                         &cmd,
                         environment,
                         current_dir,
@@ -939,7 +941,8 @@ impl Api for SshApi {
                 }
                 Some(size) => {
                     spawn_pty(
-                        session,
+                        channel,
+                        permit,
                         &cmd,
                         environment,
                         current_dir,
@@ -1068,7 +1071,6 @@ impl Api for SshApi {
                     let sftp = self.get_sftp().await?;
                     let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
 
-                    // Fix Windows paths: /C:/... -> C:\...
                     let current_dir = self.sftp_from_wire(path_str).to_remote_path().to_string();
 
                     Result::<_, io::Error>::Ok(current_dir)
@@ -1076,16 +1078,31 @@ impl Api for SshApi {
                 .await?
                 .clone();
 
-            let session = &self.session;
-            let username = self
-                .cached_username
-                .get_or_try_init(crate::utils::query_username(session, is_windows))
-                .await?
-                .clone();
+            let username = self.username.clone();
 
             let shell = self
                 .cached_shell
-                .get_or_try_init(crate::utils::query_shell(session, is_windows))
+                .get_or_try_init(async {
+                    if is_windows {
+                        let pooled = self.pool.open_exec().await?;
+                        let (channel, _permit) = pooled.take();
+                        let output = crate::utils::execute_output_on_channel(
+                            channel,
+                            "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
+                            Some(std::time::Duration::from_secs(crate::utils::SSH_TIMEOUT_SECS)),
+                        )
+                        .await?;
+                        Result::<_, io::Error>::Ok(
+                            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                        )
+                    } else {
+                        let sftp = self.get_sftp().await?;
+                        match Self::shell_from_passwd(&sftp, &username).await {
+                            Some(shell) => Ok(shell),
+                            None => Ok("/bin/sh".to_string()),
+                        }
+                    }
+                })
                 .await?
                 .clone();
 
@@ -1097,10 +1114,8 @@ impl Api for SshApi {
                 os: if is_windows {
                     "windows".to_string()
                 } else {
-                    // Complex to determine over SSH without additional platform-specific commands
                     String::new()
                 },
-                // Complex to determine over SSH without additional platform-specific commands
                 arch: String::new(),
                 current_dir: RemotePath::new(current_dir_str),
                 main_separator: if is_windows { '\\' } else { '/' },

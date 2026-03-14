@@ -2,6 +2,7 @@ use std::fmt;
 use std::io;
 use std::time::Duration;
 
+use russh::Channel;
 use russh::client::Handle;
 
 use crate::ClientHandler;
@@ -58,18 +59,35 @@ pub async fn execute_output(
     cmd: &str,
     timeout: impl Into<Option<Duration>>,
 ) -> io::Result<ExecOutput> {
-    use russh::ChannelMsg;
-
     let timeout_duration = timeout.into();
 
-    // Open a channel
-    let mut channel = handle
+    let channel = handle
         .channel_open_session()
         .await
         .map_err(io::Error::other)?;
 
-    // Execute command
     channel.exec(true, cmd).await.map_err(io::Error::other)?;
+
+    execute_output_read_loop(channel, cmd, timeout_duration).await
+}
+
+/// Run a command on a pre-opened channel and collect its output.
+pub async fn execute_output_on_channel(
+    channel: Channel<russh::client::Msg>,
+    cmd: &str,
+    timeout: impl Into<Option<Duration>>,
+) -> io::Result<ExecOutput> {
+    let timeout_duration = timeout.into();
+    channel.exec(true, cmd).await.map_err(io::Error::other)?;
+    execute_output_read_loop(channel, cmd, timeout_duration).await
+}
+
+async fn execute_output_read_loop(
+    mut channel: Channel<russh::client::Msg>,
+    cmd: &str,
+    timeout_duration: Option<Duration>,
+) -> io::Result<ExecOutput> {
+    use russh::ChannelMsg;
 
     let read_future = async {
         // Read output via channel messages.
@@ -171,50 +189,6 @@ pub async fn execute_output(
     }
 }
 
-/// Query remote system for name of current user
-pub async fn query_username(
-    handle: &Handle<ClientHandler>,
-    is_windows: bool,
-) -> io::Result<String> {
-    if is_windows {
-        // Will get DOMAIN\USERNAME as output -- needed because USERNAME isn't set on
-        // Github's Windows CI (it sets USER instead)
-        let output = powershell_output(
-            handle,
-            "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
-            SSH_EXEC_TIMEOUT,
-        )
-        .await?;
-
-        let output = String::from_utf8_lossy(&output.stdout);
-        let output = match output.split_once('\\') {
-            Some((_, username)) => username,
-            None => output.as_ref(),
-        };
-
-        Ok(output.trim().to_string())
-    } else {
-        let output = execute_output(handle, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?;
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-}
-
-/// Query remote system for the default shell of current user
-pub async fn query_shell(handle: &Handle<ClientHandler>, is_windows: bool) -> io::Result<String> {
-    let output = if is_windows {
-        powershell_output(
-            handle,
-            "[Environment]::GetEnvironmentVariable('ComSpec')",
-            SSH_EXEC_TIMEOUT,
-        )
-        .await?
-    } else {
-        execute_output(handle, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
-    };
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 /// Returns `true` if `slice` contains `subslice` as a contiguous subsequence.
 fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
     if subslice.is_empty() {
@@ -255,9 +229,6 @@ pub async fn is_windows(
             log::debug!("Windows detected via SSH ID: {sshid}");
             return Ok(true);
         }
-        // SSH ID is present but doesn't contain "windows" — could be standard
-        // OpenSSH on Unix, or a Windows server with a custom/stripped banner.
-        // Fall through to SFTP.
     }
 
     // Layer 2: SFTP-based detection (no exec, no shell dependency).
@@ -296,8 +267,6 @@ pub async fn is_windows(
     }
 
     // Layer 3: parallel exec fallback (safety net).
-    // Run cmd.exe and PowerShell probes concurrently — return as soon as
-    // either confirms Windows.
     exec_detect_windows(handle).await
 }
 
