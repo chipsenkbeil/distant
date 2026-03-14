@@ -13,8 +13,8 @@ use log::*;
 use russh::MethodSet;
 use russh::client::Handle;
 use russh::client::{AuthResult, KeyboardInteractiveAuthResponse};
-use russh::keys::{Algorithm, Certificate, PrivateKeyWithHashAlg};
 use russh::keys::agent::client::AgentClient;
+use russh::keys::{Algorithm, Certificate, PrivateKeyWithHashAlg};
 
 use crate::{ClientHandler, SshAuthEvent, SshAuthHandler, SshAuthPrompt};
 

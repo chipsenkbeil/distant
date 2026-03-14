@@ -2920,8 +2920,8 @@ mod tests {
     #[test]
     fn parse_ssh_g_output_should_extract_basic_fields() {
         let output = "\
-hostname devvm24531.ftw0.facebook.com
-user chipsenkbeil
+hostname devvm24531.example.com
+user example
 port 22
 identityfile ~/.ssh/id_rsa
 identityfile ~/.ssh/id_ed25519
@@ -2930,11 +2930,8 @@ identitiesonly no
 ";
         let params = config::parse_ssh_g_output(output).unwrap();
 
-        assert_eq!(
-            params.host_name.as_deref(),
-            Some("devvm24531.ftw0.facebook.com")
-        );
-        assert_eq!(params.user.as_deref(), Some("chipsenkbeil"));
+        assert_eq!(params.host_name.as_deref(), Some("devvm24531.example.com"));
+        assert_eq!(params.user.as_deref(), Some("example"));
         assert_eq!(params.port, Some(22));
 
         assert_eq!(params.identity_files.len(), 2);
@@ -3202,8 +3199,8 @@ port 2222
     #[test]
     fn parse_ssh_g_output_should_parse_full_representative_output() {
         let output = "\
-hostname devvm24531.ftw0.facebook.com
-user chipsenkbeil
+hostname devvm24531.example.com
+user example
 port 22
 identityfile ~/.ssh/id_rsa
 identityfile ~/.ssh/id_ed25519
@@ -3224,11 +3221,8 @@ pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
 ";
         let params = config::parse_ssh_g_output(output).unwrap();
 
-        assert_eq!(
-            params.host_name.as_deref(),
-            Some("devvm24531.ftw0.facebook.com")
-        );
-        assert_eq!(params.user.as_deref(), Some("chipsenkbeil"));
+        assert_eq!(params.host_name.as_deref(), Some("devvm24531.example.com"));
+        assert_eq!(params.user.as_deref(), Some("example"));
         assert_eq!(params.port, Some(22));
         assert_eq!(params.identity_files.len(), 2);
         assert!(params.proxy_command.is_some());
