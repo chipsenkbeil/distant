@@ -63,6 +63,10 @@ struct PredictionOverlay {
     backspace_predictions: Vec<BackspacePrediction>,
     last_input_time: Option<Instant>,
     input_byte_count: usize,
+    /// Cursor position at the start of user input within the current epoch.
+    /// Backspace predictions cannot go below this column on the same row,
+    /// preventing the user from visually deleting the shell prompt.
+    input_floor: Option<(u16, u16)>,
 }
 
 /// Direct byte passthrough terminal renderer with predictive echo.
@@ -200,6 +204,7 @@ impl TerminalFramebuffer {
         self.vt_parser.screen_mut().set_size(rows, cols);
         self.overlay.cells.clear();
         self.overlay.backspace_predictions.clear();
+        self.overlay.input_floor = None;
         self.displayed_count = 0;
         self.backspace_displayed = 0;
     }
@@ -330,6 +335,7 @@ impl PredictionOverlay {
             backspace_predictions: Vec::new(),
             last_input_time: None,
             input_byte_count: 0,
+            input_floor: None,
         }
     }
 
@@ -360,6 +366,7 @@ impl PredictionOverlay {
                 if self.input_byte_count >= BULK_PASTE_THRESHOLD {
                     self.cells.clear();
                     self.backspace_predictions.clear();
+                    self.input_floor = None;
                     self.last_input_time = Some(now);
                     return;
                 }
@@ -391,10 +398,19 @@ impl PredictionOverlay {
                         }
 
                         let (cursor_row, cursor_col) = screen.cursor_position();
+                        if self.input_floor.is_none() {
+                            self.input_floor = Some((cursor_row, cursor_col));
+                        }
                         let predicted_col =
                             cursor_col as i32 - self.backspace_predictions.len() as i32;
 
-                        if predicted_col > 0 {
+                        let floor_col = self
+                            .input_floor
+                            .filter(|(fr, _)| *fr == cursor_row)
+                            .map(|(_, fc)| fc as i32)
+                            .unwrap_or(cursor_col as i32);
+
+                        if predicted_col > floor_col {
                             let target_col = (predicted_col - 1) as u16;
                             if let Some(cell) = screen.cell(cursor_row, target_col) {
                                 let content = cell.contents();
@@ -447,6 +463,7 @@ impl PredictionOverlay {
         }
         self.cells.clear();
         self.backspace_predictions.clear();
+        self.input_floor = None;
     }
 
     fn add_prediction(&mut self, ch: char, screen: &vt100::Screen) {
@@ -461,6 +478,9 @@ impl PredictionOverlay {
         }
 
         let (base_row, base_col) = screen.cursor_position();
+        if self.input_floor.is_none() {
+            self.input_floor = Some((base_row, base_col));
+        }
         let (_, term_width) = screen.size();
         let backspace_offset = self.backspace_predictions.len() as u16;
         let effective_col = base_col.saturating_sub(backspace_offset);
@@ -1369,8 +1389,13 @@ mod tests {
     fn backspace_should_predict_erasure_from_shadow_screen() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
 
-        // Feed server output to move shadow screen cursor to col 5
+        // User types "hello" (sets input floor at col 0)
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        // Server confirms "hello" — cursor at col 5
         fb.process_server_output(b"hello");
+        assert!(fb.overlay.cells.is_empty());
 
         // Press backspace — should predict erasure of 'o' at col 4
         let (encoded, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
@@ -1414,6 +1439,11 @@ mod tests {
     #[test]
     fn backspace_prediction_should_restore_on_server_echo() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // User types "hello" (sets floor at col 0), server confirms
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
         fb.process_server_output(b"hello");
 
         // Press backspace — predicts erasure of 'o' at col 4
@@ -1442,6 +1472,11 @@ mod tests {
     #[test]
     fn multiple_backspace_should_predict_multiple_erasures() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // User types "abc" (sets floor at col 0), server confirms
+        for ch in "abc".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
         fb.process_server_output(b"abc");
 
         // Press backspace 3 times
@@ -1465,6 +1500,11 @@ mod tests {
     #[test]
     fn typing_after_backspace_should_combine() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // User types "hello" (sets floor at col 0), server confirms
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
         fb.process_server_output(b"hello");
 
         // Press backspace twice — erases 'o' at col 4 and 'l' at col 3
@@ -1521,6 +1561,11 @@ mod tests {
     #[test]
     fn backspace_then_enter_then_server_should_not_panic() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // User types "hello" (sets floor at col 0), server confirms
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
         fb.process_server_output(b"hello");
 
         // Press backspace — backspace_displayed becomes 1
@@ -1550,12 +1595,128 @@ mod tests {
     }
 
     #[test]
+    fn backspace_should_not_delete_prompt() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends "$ " — cursor at col 2
+        fb.process_server_output(b"$ ");
+
+        // User types "hello" (sets input floor at col 2)
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        // Server confirms "hello" — cursor at col 7
+        fb.process_server_output(b"hello");
+
+        // Press backspace 5 times to delete "hello"
+        for _ in 0..5 {
+            fb.on_keystroke(&key_backspace());
+        }
+        assert_eq!(
+            fb.overlay.backspace_predictions.len(),
+            5,
+            "should predict 5 backspaces for 'hello'"
+        );
+
+        // 6th backspace should NOT create a prediction (prompt boundary)
+        fb.on_keystroke(&key_backspace());
+        assert_eq!(
+            fb.overlay.backspace_predictions.len(),
+            5,
+            "6th backspace should be blocked by input floor (prompt boundary)"
+        );
+    }
+
+    #[test]
+    fn backspace_at_prompt_without_typing_should_not_predict() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends "$ " — cursor at col 2
+        fb.process_server_output(b"$ ");
+
+        // Press backspace without typing anything first
+        fb.on_keystroke(&key_backspace());
+        assert!(
+            fb.overlay.backspace_predictions.is_empty(),
+            "backspace at prompt without prior typing should not predict"
+        );
+    }
+
+    #[test]
+    fn backspace_should_respect_floor_after_server_confirms() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends "$ "
+        fb.process_server_output(b"$ ");
+
+        // User types "hello" — sets input_floor to (0, 2)
+        for ch in "hello".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+
+        // Server confirms "hello" — cursor at col 7, cells cleared
+        fb.process_server_output(b"hello");
+        assert!(fb.overlay.cells.is_empty(), "cells should be confirmed");
+
+        // Now backspace 5 times (deletes "hello")
+        for _ in 0..5 {
+            fb.on_keystroke(&key_backspace());
+        }
+        assert_eq!(fb.overlay.backspace_predictions.len(), 5);
+
+        // 6th backspace should be blocked by floor at col 2
+        fb.on_keystroke(&key_backspace());
+        assert_eq!(
+            fb.overlay.backspace_predictions.len(),
+            5,
+            "floor should persist after server confirmation, blocking prompt deletion"
+        );
+    }
+
+    #[test]
+    fn backspace_floor_should_reset_on_enter() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Server sends "$ "
+        fb.process_server_output(b"$ ");
+
+        // User types "ls" — sets floor at col 2
+        fb.on_keystroke(&key_char('l'));
+        fb.on_keystroke(&key_char('s'));
+
+        // Enter clears floor
+        fb.on_keystroke(&key_enter());
+        assert!(
+            fb.overlay.input_floor.is_none(),
+            "input_floor should be cleared by new_epoch"
+        );
+
+        // Server sends new prompt at different position
+        fb.process_server_output(b"ls\r\n$ ");
+
+        // User types "x" — sets new floor
+        fb.on_keystroke(&key_char('x'));
+        assert!(
+            fb.overlay.input_floor.is_some(),
+            "new floor should be set for new prompt"
+        );
+    }
+
+    #[test]
     fn backspace_display_should_show_erasure_on_screen() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
         let mut display = vt100::Parser::new(24, 80, 0);
 
-        // Feed server "$ hello" to both
-        feed_server(&mut fb, &mut display, b"$ hello");
+        // Feed server "$ " to both
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types "hello" (sets floor at col 2)
+        for ch in "hello".chars() {
+            feed_keystroke(&mut fb, &mut display, &key_char(ch));
+        }
+        // Server confirms "hello"
+        feed_server(&mut fb, &mut display, b"hello");
+
         let row0 = display_row(&display, 0);
         assert_eq!(row0, "$ hello");
 
