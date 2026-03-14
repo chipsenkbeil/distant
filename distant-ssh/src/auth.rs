@@ -345,9 +345,17 @@ where
                 return Ok(true);
             }
             Ok(AuthResult::Failure {
-                remaining_methods, ..
+                remaining_methods,
+                partial_success,
             }) => {
-                debug!("Certificate rejected: {:?}", expanded);
+                if partial_success {
+                    info!(
+                        "Certificate accepted (partial success), remaining: {}",
+                        format_methods(&remaining_methods)
+                    );
+                } else {
+                    debug!("Certificate rejected: {:?}", expanded);
+                }
                 *server_methods = Some(remaining_methods);
             }
             Ok(_) => {

@@ -1153,14 +1153,14 @@ impl Ssh {
 
     /// Authenticates the [`Ssh`] if not already authenticated
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
-        use russh::MethodKind;
+        use russh::{MethodKind, MethodSet};
 
         if self.authenticated {
             return Ok(());
         }
 
         let mut methods_tried: Vec<String> = Vec::new();
-        let mut server_methods: Option<russh::MethodSet> = None;
+        let mut server_methods: Option<MethodSet> = None;
 
         // Probe with "none" auth to discover which methods the server supports
         match self.handle.authenticate_none(&self.user).await {
@@ -1185,18 +1185,12 @@ impl Ssh {
             }
         }
 
-        let server_accepts_pubkey = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
-        let server_accepts_password = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::Password));
-        let server_accepts_kbdint = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+        let server_accepts = |methods: &Option<MethodSet>, kind: &MethodKind| -> bool {
+            methods.as_ref().is_none_or(|m| m.contains(kind))
+        };
 
         // Try certificate + agent auth first (matches OpenSSH order when certs are available)
-        if server_accepts_pubkey {
+        if server_accepts(&server_methods, &MethodKind::PublicKey) {
             let key_files =
                 auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
             let agent_socket = self.identity_agent.as_deref();
@@ -1216,7 +1210,7 @@ impl Ssh {
         }
 
         // Try SSH agent first — it avoids touching key files and works with hardware tokens
-        if server_accepts_pubkey
+        if server_accepts(&server_methods, &MethodKind::PublicKey)
             && !self.opts.identities_only.unwrap_or(false)
             && auth::try_agent_auth(
                 &mut self.handle,
@@ -1231,7 +1225,7 @@ impl Ssh {
         }
 
         // Try key files from explicit opts, SSH config, or ~/.ssh defaults
-        if server_accepts_pubkey {
+        if server_accepts(&server_methods, &MethodKind::PublicKey) {
             let key_files =
                 auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
             if !key_files.is_empty() {
@@ -1256,7 +1250,7 @@ impl Ssh {
         // Keyboard-interactive — track whether we prompted the user to avoid
         // double-prompting if we fall through to password auth
         let mut user_was_prompted = false;
-        if server_accepts_kbdint {
+        if server_accepts(&server_methods, &MethodKind::KeyboardInteractive) {
             let (authenticated, prompted) = auth::try_keyboard_interactive(
                 &mut self.handle,
                 &self.user,
@@ -1273,7 +1267,7 @@ impl Ssh {
         }
 
         // Password auth — skip if keyboard-interactive already prompted the user
-        if server_accepts_password
+        if server_accepts(&server_methods, &MethodKind::Password)
             && !user_was_prompted
             && auth::try_password_auth(
                 &mut self.handle,
