@@ -95,7 +95,7 @@ impl TerminalFramebuffer {
         Self {
             vt_parser,
             overlay: PredictionOverlay::new(predict_mode),
-            sanitizer: TerminalSanitizer::CONPTY,
+            sanitizer: TerminalSanitizer::conpty(),
             displayed_count: 0,
             backspace_displayed: 0,
         }
@@ -227,11 +227,17 @@ impl TerminalFramebuffer {
     }
 
     /// Restore terminal state on shutdown. Writes SGR reset and sanitizer
-    /// reset sequences to stdout.
-    pub fn shutdown(self) {
+    /// reset sequences to stdout. Flushes any buffered bytes from incomplete
+    /// escape sequences so they are not silently dropped.
+    pub fn shutdown(mut self) {
+        let mut pending = Vec::new();
+        self.sanitizer.flush_pending(&mut pending);
         let reset = self.sanitizer.reset_sequence();
         let stdout = io::stdout();
         let mut out = stdout.lock();
+        if !pending.is_empty() {
+            let _ = out.write_all(&pending);
+        }
         let _ = out.write_all(b"\x1b[0m");
         if !reset.is_empty() {
             let _ = out.write_all(&reset);
