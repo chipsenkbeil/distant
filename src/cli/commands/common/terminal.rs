@@ -233,6 +233,14 @@ impl TerminalSanitizer {
                 ..
             } if self.strip_queries && (*params == [b'5'] || *params == [b'6']) => SeqAction::Strip,
 
+            // Private DSR: ESC[?5n or ESC[?6n (DECXCPR)
+            EscapeSeq::Csi {
+                private_marker: Some(b'?'),
+                params,
+                final_byte: b'n',
+                ..
+            } if self.strip_queries && (*params == [b'5'] || *params == [b'6']) => SeqAction::Strip,
+
             // XTVERSION: ESC[>q or ESC[>0q
             EscapeSeq::Csi {
                 private_marker: Some(b'>'),
@@ -264,6 +272,11 @@ impl TerminalSanitizer {
 
             // DECRQSS: ESC P $ q ... ST
             EscapeSeq::Dcs { content } if self.strip_queries && content.starts_with(b"$q") => {
+                SeqAction::Strip
+            }
+
+            // XTGETTCAP: ESC P + q <hex> ST
+            EscapeSeq::Dcs { content } if self.strip_queries && content.starts_with(b"+q") => {
                 SeqAction::Strip
             }
 
@@ -1233,6 +1246,87 @@ mod tests {
         assert!(
             sanitizer.pending.is_empty(),
             "pending should be cleared after cap flush"
+        );
+    }
+
+    #[test]
+    fn filter_should_strip_xtgettcap_tn_query() {
+        // XTGETTCAP for "TN" (hex 544E) with ST terminator
+        let input = b"\x1bP+q544E\x1b\\";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert!(out.is_empty(), "should strip XTGETTCAP TN query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_xtgettcap_rgb_query() {
+        // XTGETTCAP for "RGB" (hex 524742) with ST terminator
+        let input = b"\x1bP+q524742\x1b\\";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert!(out.is_empty(), "should strip XTGETTCAP RGB query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_xtgettcap_bel_terminator() {
+        // XTGETTCAP for "TN" with BEL terminator
+        let input = b"\x1bP+q544E\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert!(
+            out.is_empty(),
+            "should strip XTGETTCAP with BEL terminator: {out:?}"
+        );
+    }
+
+    #[test]
+    fn filter_should_strip_xtgettcap_in_mixed() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"hello");
+        input.extend_from_slice(b"\x1bP+q544E\x1b\\");
+        input.extend_from_slice(b"world");
+        input.extend_from_slice(b"\x1bP+q524742\x07");
+        input.extend_from_slice(b"!");
+
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(&input, &mut out);
+        assert_eq!(out, b"helloworld!");
+    }
+
+    #[test]
+    fn filter_should_strip_private_dsr_cursor() {
+        // DECXCPR: ESC[?6n
+        let input = b"\x1b[?6n";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert!(
+            out.is_empty(),
+            "should strip private DSR cursor query: {out:?}"
+        );
+    }
+
+    #[test]
+    fn filter_should_strip_private_dsr_status() {
+        // ESC[?5n
+        let input = b"\x1b[?5n";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert!(
+            out.is_empty(),
+            "should strip private DSR status query: {out:?}"
+        );
+    }
+
+    #[test]
+    fn filter_should_pass_through_non_query_private_dsr() {
+        // ESC[?1n — not a recognized query param, should pass through
+        let input = b"\x1b[?1n";
+        let mut out = Vec::new();
+        TerminalSanitizer::conpty().filter(input, &mut out);
+        assert_eq!(
+            out,
+            input.to_vec(),
+            "ESC[?1n should pass through (only ?5n/?6n are stripped)"
         );
     }
 }
