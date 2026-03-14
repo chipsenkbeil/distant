@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use russh::Channel;
@@ -7,6 +8,7 @@ use russh::client::Handle;
 
 use crate::ClientHandler;
 use crate::SshFamily;
+use crate::pool;
 
 /// Timeout in seconds for SSH operations (exec channels and SFTP sessions).
 ///
@@ -320,6 +322,104 @@ async fn exec_detect_windows(handle: &Handle<ClientHandler>) -> io::Result<bool>
     }
 
     // Neither matched Windows_NT. If both errored, propagate.
+    match (first_result, second_result) {
+        (Err(e1), Err(_)) => Err(e1),
+        _ => Ok(false),
+    }
+}
+
+/// Determines if the remote system is Windows, using pooled channels.
+///
+/// Uses the same layered detection strategy as [`is_windows`] but operates
+/// through the channel pool, which enables automatic eviction on
+/// `MaxSessions=1` servers.
+pub async fn is_windows_pooled(
+    pool: &Arc<pool::ChannelPool>,
+    remote_sshid: Option<&str>,
+) -> io::Result<bool> {
+    // Layer 1: SSH identification string (zero cost, already captured).
+    if let Some(sshid) = remote_sshid {
+        let sshid_lower = sshid.to_lowercase();
+        if sshid_lower.contains("windows") {
+            log::debug!("Windows detected via SSH ID: {sshid}");
+            return Ok(true);
+        }
+    }
+
+    // Layer 2: SFTP-based detection using pool (named session, evictable).
+    let sftp_result: Result<bool, io::Error> = async {
+        let sftp = pool.sftp("detect_family").await?;
+        let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
+        log::debug!("SFTP canonicalize(\".\") returned: {home}");
+        Ok(has_windows_drive_prefix(&home))
+    }
+    .await;
+
+    match sftp_result {
+        Ok(result) => {
+            log::debug!("Windows detected via SFTP: {result}");
+            return Ok(result);
+        }
+        Err(e) => {
+            log::debug!("SFTP-based Windows detection failed ({e}), falling back to exec");
+        }
+    }
+
+    // Layer 3: exec fallback using pool channels.
+    exec_detect_windows_pooled(pool).await
+}
+
+/// Run `echo %OS%` and PowerShell OS detection in parallel using pooled channels.
+///
+/// Returns `Ok(true)` as soon as either probe outputs `Windows_NT`.
+/// If both complete without a match, returns `Ok(false)`.
+/// Only returns `Err` if *both* probes fail.
+async fn exec_detect_windows_pooled(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> {
+    let timeout = Some(Duration::from_secs(10));
+
+    let is_win = |out: &ExecOutput| {
+        contains_subslice(&out.stdout, b"Windows_NT")
+            || contains_subslice(&out.stderr, b"Windows_NT")
+    };
+
+    // Open channels via pool (eviction handles MaxSessions=1 automatically)
+    let pooled1 = pool.open_exec().await?;
+    let (channel1, _permit1) = pooled1.take();
+    let mut echo_fut = std::pin::pin!(execute_output_on_channel(channel1, "echo %OS%", timeout));
+
+    let pooled2 = pool.open_exec().await?;
+    let (channel2, _permit2) = pooled2.take();
+    let mut ps_fut = std::pin::pin!(execute_output_on_channel(
+        channel2,
+        "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('OS')}\"",
+        timeout,
+    ));
+
+    let (first_result, echo_finished) = tokio::select! {
+        result = &mut echo_fut => (result, true),
+        result = &mut ps_fut => (result, false),
+    };
+
+    if let Ok(ref output) = first_result
+        && is_win(output)
+    {
+        log::debug!("Windows detected via exec (first probe)");
+        return Ok(true);
+    }
+
+    let second_result = if echo_finished {
+        ps_fut.await
+    } else {
+        echo_fut.await
+    };
+
+    if let Ok(ref output) = second_result
+        && is_win(output)
+    {
+        log::debug!("Windows detected via exec (second probe)");
+        return Ok(true);
+    }
+
     match (first_result, second_result) {
         (Err(e1), Err(_)) => Err(e1),
         _ => Ok(false),

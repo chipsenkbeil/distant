@@ -458,7 +458,12 @@ impl client::Handler for ClientHandler {
 
 /// Represents an ssh2 client
 pub struct Ssh {
-    handle: Handle<ClientHandler>,
+    /// SSH connection handle. `Some` before authentication, `None` after
+    /// (consumed by pool creation in [`Self::finalize_auth`]).
+    handle: Option<Handle<ClientHandler>>,
+    /// Channel pool for SSH channel management. `None` before authentication,
+    /// `Some` after (created in [`Self::finalize_auth`]).
+    pool: Option<Arc<pool::ChannelPool>>,
     host: String,
     port: u16,
     user: String,
@@ -714,7 +719,8 @@ impl Ssh {
             .cloned();
 
         Ok(Self {
-            handle,
+            handle: Some(handle),
+            pool: None,
             host: host.as_ref().to_string(),
             port,
             user,
@@ -1152,6 +1158,18 @@ impl Ssh {
         self.authenticated
     }
 
+    /// Marks authentication as complete and creates the channel pool.
+    ///
+    /// Consumes the raw SSH handle and wraps it in a [`pool::ChannelPool`]
+    /// so that all subsequent operations (detect_family, launch,
+    /// into_distant_client) use pooled channels.
+    fn finalize_auth(&mut self) {
+        self.authenticated = true;
+        if let Some(handle) = self.handle.take() {
+            self.pool = Some(pool::ChannelPool::new(handle));
+        }
+    }
+
     /// Authenticates the [`Ssh`] if not already authenticated
     pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
         use russh::{MethodKind, MethodSet};
@@ -1163,11 +1181,22 @@ impl Ssh {
         let mut methods_tried: Vec<String> = Vec::new();
         let mut server_methods: Option<MethodSet> = None;
 
+        // All handle access in authenticate() uses direct field access
+        // (`self.handle.as_mut()...`) instead of `self.handle_mut()` to allow
+        // partial borrows of other fields like `self.user`.
+        let handle_panic_msg = "SSH handle already consumed by pool";
+
         // Probe with "none" auth to discover which methods the server supports
-        match self.handle.authenticate_none(&self.user).await {
+        match self
+            .handle
+            .as_mut()
+            .expect(handle_panic_msg)
+            .authenticate_none(&self.user)
+            .await
+        {
             Ok(res) => {
                 if res.success() {
-                    self.authenticated = true;
+                    self.finalize_auth();
                     return Ok(());
                 }
                 if let russh::client::AuthResult::Failure {
@@ -1196,7 +1225,7 @@ impl Ssh {
                 auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
             let agent_socket = self.identity_agent.as_deref();
             if auth::try_cert_agent_auth(
-                &mut self.handle,
+                self.handle.as_mut().expect(handle_panic_msg),
                 &self.user,
                 &key_files,
                 agent_socket,
@@ -1205,7 +1234,7 @@ impl Ssh {
             )
             .await?
             {
-                self.authenticated = true;
+                self.finalize_auth();
                 return Ok(());
             }
         }
@@ -1214,14 +1243,14 @@ impl Ssh {
         if server_accepts(&server_methods, &MethodKind::PublicKey)
             && !self.opts.identities_only.unwrap_or(false)
             && auth::try_agent_auth(
-                &mut self.handle,
+                self.handle.as_mut().expect(handle_panic_msg),
                 &self.user,
                 &mut methods_tried,
                 &mut server_methods,
             )
             .await?
         {
-            self.authenticated = true;
+            self.finalize_auth();
             return Ok(());
         }
 
@@ -1234,7 +1263,7 @@ impl Ssh {
             }
             for key_file in &key_files {
                 if let Some(true) = auth::load_and_try_key(
-                    &mut self.handle,
+                    self.handle.as_mut().expect(handle_panic_msg),
                     &self.user,
                     key_file,
                     &handler,
@@ -1242,7 +1271,7 @@ impl Ssh {
                 )
                 .await?
                 {
-                    self.authenticated = true;
+                    self.finalize_auth();
                     return Ok(());
                 }
             }
@@ -1253,7 +1282,7 @@ impl Ssh {
         let mut user_was_prompted = false;
         if server_accepts(&server_methods, &MethodKind::KeyboardInteractive) {
             let (authenticated, prompted) = auth::try_keyboard_interactive(
-                &mut self.handle,
+                self.handle.as_mut().expect(handle_panic_msg),
                 &self.user,
                 &handler,
                 &mut methods_tried,
@@ -1262,7 +1291,7 @@ impl Ssh {
             .await?;
             user_was_prompted = prompted;
             if authenticated {
-                self.authenticated = true;
+                self.finalize_auth();
                 return Ok(());
             }
         }
@@ -1271,7 +1300,7 @@ impl Ssh {
         if server_accepts(&server_methods, &MethodKind::Password)
             && !user_was_prompted
             && auth::try_password_auth(
-                &mut self.handle,
+                self.handle.as_mut().expect(handle_panic_msg),
                 &self.user,
                 &handler,
                 &mut methods_tried,
@@ -1279,7 +1308,7 @@ impl Ssh {
             )
             .await?
         {
-            self.authenticated = true;
+            self.finalize_auth();
             return Ok(());
         }
 
@@ -1299,8 +1328,12 @@ impl Ssh {
             }
         }
 
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Not authenticated"))?;
         let sshid = self.remote_sshid.lock().await.clone();
-        let is_windows = utils::is_windows(&self.handle, sshid.as_deref()).await?;
+        let is_windows = utils::is_windows_pooled(pool, sshid.as_deref()).await?;
         let family = if is_windows {
             SshFamily::Windows
         } else {
@@ -1318,9 +1351,12 @@ impl Ssh {
     }
 
     /// Converts into a distant client
-    pub async fn into_distant_client(self) -> io::Result<Client> {
+    pub async fn into_distant_client(mut self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let pool = pool::ChannelPool::new(self.handle);
+        let pool = self
+            .pool
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Not authenticated"))?;
         let api = SshApi::new(pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
@@ -1345,9 +1381,12 @@ impl Ssh {
     }
 
     /// Converts into a pair of distant client and server ref
-    pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
+    pub async fn into_distant_pair(mut self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let pool = pool::ChannelPool::new(self.handle);
+        let pool = self
+            .pool
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Not authenticated"))?;
         let api = SshApi::new(pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
@@ -1389,13 +1428,13 @@ impl Ssh {
         let cmd = build_launch_args(family, &opts.binary, &opts.args)?;
         debug!("Executing launch command: {}", cmd);
 
-        // Use channel exec instead of PTY + shell to avoid interference
-        // from shell startup scripts (.bashrc, .zshrc, etc.)
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
+        // Open channel via pool (eviction handles MaxSessions=1 automatically)
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "Not authenticated"))?;
+        let pooled = pool.open_exec().await?;
+        let (channel, _pool_permit) = pooled.take();
 
         channel
             .exec(true, cmd.as_bytes())
