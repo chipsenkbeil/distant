@@ -7,7 +7,7 @@ mod algos;
 use std::collections::HashMap;
 
 pub use self::algos::Algorithms;
-pub use self::algos::AlgorithmsRule;
+pub(crate) use self::algos::AlgorithmsRule;
 use super::{Duration, PathBuf};
 use crate::DefaultAlgorithms;
 

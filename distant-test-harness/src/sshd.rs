@@ -12,7 +12,7 @@ use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use derive_more::{Deref, DerefMut, Display};
 use distant_core::Client;
-use distant_ssh::{Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use distant_ssh::{AuthResult, Ssh, SshAuthEvent, SshAuthHandler, SshOpts, SshSession};
 use log::*;
 use rstest::*;
 
@@ -840,9 +840,11 @@ pub async fn load_ssh_client(sshd: &Sshd) -> Ssh {
         for addr in &addrs {
             let addr_string = addr.to_string();
             let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                let mut ssh_client = Ssh::connect(&addr_string, opts.clone()).await?;
-                ssh_client.authenticate(MockSshAuthHandler).await?;
-                Ok::<_, std::io::Error>(ssh_client)
+                let session = SshSession::connect(&addr_string, opts.clone()).await?;
+                match session.authenticate(MockSshAuthHandler).await {
+                    AuthResult::Authenticated(ssh) => Ok(ssh),
+                    AuthResult::Failed { error, .. } => Err(error),
+                }
             })
             .await;
 
