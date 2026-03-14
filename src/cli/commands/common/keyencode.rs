@@ -7,7 +7,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Encode a crossterm [`KeyEvent`] into the byte string a remote terminal
 /// expects, or `None` for unrepresentable keys (modifier-only, media, etc.).
-pub fn encode_key(event: &KeyEvent) -> Option<String> {
+///
+/// When `application_cursor` is `true` (DECCKM mode is active), arrow keys
+/// and Home/End emit SS3 sequences (`ESC O x`) instead of CSI (`ESC [ x`).
+/// Applications like top, htop, and less enable DECCKM and expect SS3.
+pub fn encode_key(event: &KeyEvent, application_cursor: bool) -> Option<String> {
     let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
     let alt = event.modifiers.contains(KeyModifiers::ALT);
 
@@ -21,12 +25,48 @@ pub fn encode_key(event: &KeyEvent) -> Option<String> {
         KeyCode::Tab => "\t",
         KeyCode::BackTab => "\x1b[Z",
         KeyCode::Esc => "\x1b",
-        KeyCode::Up => "\x1b[A",
-        KeyCode::Down => "\x1b[B",
-        KeyCode::Right => "\x1b[C",
-        KeyCode::Left => "\x1b[D",
-        KeyCode::Home => "\x1b[H",
-        KeyCode::End => "\x1b[F",
+        KeyCode::Up => {
+            if application_cursor {
+                "\x1bOA"
+            } else {
+                "\x1b[A"
+            }
+        }
+        KeyCode::Down => {
+            if application_cursor {
+                "\x1bOB"
+            } else {
+                "\x1b[B"
+            }
+        }
+        KeyCode::Right => {
+            if application_cursor {
+                "\x1bOC"
+            } else {
+                "\x1b[C"
+            }
+        }
+        KeyCode::Left => {
+            if application_cursor {
+                "\x1bOD"
+            } else {
+                "\x1b[D"
+            }
+        }
+        KeyCode::Home => {
+            if application_cursor {
+                "\x1bOH"
+            } else {
+                "\x1b[H"
+            }
+        }
+        KeyCode::End => {
+            if application_cursor {
+                "\x1bOF"
+            } else {
+                "\x1b[F"
+            }
+        }
         KeyCode::Insert => "\x1b[2~",
         KeyCode::Delete => "\x1b[3~",
         KeyCode::PageUp => "\x1b[5~",
@@ -121,99 +161,134 @@ mod tests {
 
     #[test]
     fn printable_char_should_encode_directly() {
-        assert_eq!(encode_key(&key(KeyCode::Char('a'))).unwrap(), "a");
-        assert_eq!(encode_key(&key(KeyCode::Char('Z'))).unwrap(), "Z");
-        assert_eq!(encode_key(&key(KeyCode::Char('5'))).unwrap(), "5");
-        assert_eq!(encode_key(&key(KeyCode::Char('@'))).unwrap(), "@");
+        assert_eq!(encode_key(&key(KeyCode::Char('a')), false).unwrap(), "a");
+        assert_eq!(encode_key(&key(KeyCode::Char('Z')), false).unwrap(), "Z");
+        assert_eq!(encode_key(&key(KeyCode::Char('5')), false).unwrap(), "5");
+        assert_eq!(encode_key(&key(KeyCode::Char('@')), false).unwrap(), "@");
     }
 
     #[test]
     fn ctrl_c_should_encode_to_etx() {
-        assert_eq!(encode_key(&key_ctrl(KeyCode::Char('c'))).unwrap(), "\x03");
+        assert_eq!(
+            encode_key(&key_ctrl(KeyCode::Char('c')), false).unwrap(),
+            "\x03"
+        );
     }
 
     #[test]
     fn ctrl_a_should_encode_to_soh() {
-        assert_eq!(encode_key(&key_ctrl(KeyCode::Char('a'))).unwrap(), "\x01");
+        assert_eq!(
+            encode_key(&key_ctrl(KeyCode::Char('a')), false).unwrap(),
+            "\x01"
+        );
     }
 
     #[test]
     fn ctrl_z_should_encode_to_sub() {
-        assert_eq!(encode_key(&key_ctrl(KeyCode::Char('z'))).unwrap(), "\x1a");
+        assert_eq!(
+            encode_key(&key_ctrl(KeyCode::Char('z')), false).unwrap(),
+            "\x1a"
+        );
     }
 
     #[test]
     fn alt_a_should_encode_with_escape_prefix() {
-        assert_eq!(encode_key(&key_alt(KeyCode::Char('a'))).unwrap(), "\x1ba");
+        assert_eq!(
+            encode_key(&key_alt(KeyCode::Char('a')), false).unwrap(),
+            "\x1ba"
+        );
     }
 
     #[test]
     fn enter_should_encode_to_cr() {
-        assert_eq!(encode_key(&key(KeyCode::Enter)).unwrap(), "\r");
+        assert_eq!(encode_key(&key(KeyCode::Enter), false).unwrap(), "\r");
     }
 
     #[test]
     fn backspace_should_encode_to_del() {
-        assert_eq!(encode_key(&key(KeyCode::Backspace)).unwrap(), "\x7f");
+        assert_eq!(encode_key(&key(KeyCode::Backspace), false).unwrap(), "\x7f");
     }
 
     #[test]
     fn tab_should_encode_to_ht() {
-        assert_eq!(encode_key(&key(KeyCode::Tab)).unwrap(), "\t");
+        assert_eq!(encode_key(&key(KeyCode::Tab), false).unwrap(), "\t");
     }
 
     #[test]
     fn escape_should_encode_to_esc() {
-        assert_eq!(encode_key(&key(KeyCode::Esc)).unwrap(), "\x1b");
+        assert_eq!(encode_key(&key(KeyCode::Esc), false).unwrap(), "\x1b");
     }
 
     #[test]
     fn arrow_keys_should_encode_to_csi_sequences() {
-        assert_eq!(encode_key(&key(KeyCode::Up)).unwrap(), "\x1b[A");
-        assert_eq!(encode_key(&key(KeyCode::Down)).unwrap(), "\x1b[B");
-        assert_eq!(encode_key(&key(KeyCode::Right)).unwrap(), "\x1b[C");
-        assert_eq!(encode_key(&key(KeyCode::Left)).unwrap(), "\x1b[D");
+        assert_eq!(encode_key(&key(KeyCode::Up), false).unwrap(), "\x1b[A");
+        assert_eq!(encode_key(&key(KeyCode::Down), false).unwrap(), "\x1b[B");
+        assert_eq!(encode_key(&key(KeyCode::Right), false).unwrap(), "\x1b[C");
+        assert_eq!(encode_key(&key(KeyCode::Left), false).unwrap(), "\x1b[D");
+    }
+
+    #[test]
+    fn arrow_keys_should_encode_to_ss3_in_application_cursor_mode() {
+        assert_eq!(encode_key(&key(KeyCode::Up), true).unwrap(), "\x1bOA");
+        assert_eq!(encode_key(&key(KeyCode::Down), true).unwrap(), "\x1bOB");
+        assert_eq!(encode_key(&key(KeyCode::Right), true).unwrap(), "\x1bOC");
+        assert_eq!(encode_key(&key(KeyCode::Left), true).unwrap(), "\x1bOD");
     }
 
     #[test]
     fn function_keys_should_encode_correctly() {
-        assert_eq!(encode_key(&key(KeyCode::F(1))).unwrap(), "\x1bOP");
-        assert_eq!(encode_key(&key(KeyCode::F(4))).unwrap(), "\x1bOS");
-        assert_eq!(encode_key(&key(KeyCode::F(5))).unwrap(), "\x1b[15~");
-        assert_eq!(encode_key(&key(KeyCode::F(12))).unwrap(), "\x1b[24~");
+        assert_eq!(encode_key(&key(KeyCode::F(1)), false).unwrap(), "\x1bOP");
+        assert_eq!(encode_key(&key(KeyCode::F(4)), false).unwrap(), "\x1bOS");
+        assert_eq!(encode_key(&key(KeyCode::F(5)), false).unwrap(), "\x1b[15~");
+        assert_eq!(encode_key(&key(KeyCode::F(12)), false).unwrap(), "\x1b[24~");
     }
 
     #[test]
     fn f13_should_return_none() {
-        assert!(encode_key(&key(KeyCode::F(13))).is_none());
+        assert!(encode_key(&key(KeyCode::F(13)), false).is_none());
     }
 
     #[test]
     fn home_end_should_encode_correctly() {
-        assert_eq!(encode_key(&key(KeyCode::Home)).unwrap(), "\x1b[H");
-        assert_eq!(encode_key(&key(KeyCode::End)).unwrap(), "\x1b[F");
+        assert_eq!(encode_key(&key(KeyCode::Home), false).unwrap(), "\x1b[H");
+        assert_eq!(encode_key(&key(KeyCode::End), false).unwrap(), "\x1b[F");
+    }
+
+    #[test]
+    fn home_end_should_encode_to_ss3_in_application_cursor_mode() {
+        assert_eq!(encode_key(&key(KeyCode::Home), true).unwrap(), "\x1bOH");
+        assert_eq!(encode_key(&key(KeyCode::End), true).unwrap(), "\x1bOF");
     }
 
     #[test]
     fn insert_delete_page_should_encode_correctly() {
-        assert_eq!(encode_key(&key(KeyCode::Insert)).unwrap(), "\x1b[2~");
-        assert_eq!(encode_key(&key(KeyCode::Delete)).unwrap(), "\x1b[3~");
-        assert_eq!(encode_key(&key(KeyCode::PageUp)).unwrap(), "\x1b[5~");
-        assert_eq!(encode_key(&key(KeyCode::PageDown)).unwrap(), "\x1b[6~");
+        assert_eq!(encode_key(&key(KeyCode::Insert), false).unwrap(), "\x1b[2~");
+        assert_eq!(encode_key(&key(KeyCode::Delete), false).unwrap(), "\x1b[3~");
+        assert_eq!(encode_key(&key(KeyCode::PageUp), false).unwrap(), "\x1b[5~");
+        assert_eq!(
+            encode_key(&key(KeyCode::PageDown), false).unwrap(),
+            "\x1b[6~"
+        );
     }
 
     #[test]
     fn backtab_should_encode_to_csi_z() {
-        assert_eq!(encode_key(&key(KeyCode::BackTab)).unwrap(), "\x1b[Z");
+        assert_eq!(encode_key(&key(KeyCode::BackTab), false).unwrap(), "\x1b[Z");
     }
 
     #[test]
     fn ctrl_at_should_encode_to_nul() {
-        assert_eq!(encode_key(&key_ctrl(KeyCode::Char('@'))).unwrap(), "\x00");
+        assert_eq!(
+            encode_key(&key_ctrl(KeyCode::Char('@')), false).unwrap(),
+            "\x00"
+        );
     }
 
     #[test]
     fn ctrl_bracket_should_encode_to_esc() {
-        assert_eq!(encode_key(&key_ctrl(KeyCode::Char('['))).unwrap(), "\x1b");
+        assert_eq!(
+            encode_key(&key_ctrl(KeyCode::Char('[')), false).unwrap(),
+            "\x1b"
+        );
     }
 }

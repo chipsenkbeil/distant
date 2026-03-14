@@ -52,7 +52,6 @@ struct PredictionOverlay {
     cells: Vec<PredictedCell>,
     last_input_time: Option<Instant>,
     input_byte_count: usize,
-    backspace_predicted: bool,
 }
 
 /// Direct byte passthrough terminal renderer with predictive echo.
@@ -143,27 +142,28 @@ impl TerminalFramebuffer {
     /// to render the prediction overlay on the local terminal (empty if
     /// predictions are suppressed).
     pub fn on_keystroke(&mut self, event: &KeyEvent) -> Option<(String, Vec<u8>)> {
-        let encoded = encode_key(event)?;
+        let app_cursor = self.vt_parser.screen().application_cursor();
+        let encoded = encode_key(event, app_cursor)?;
+
+        let epoch_before = self.overlay.epoch_counter;
         self.overlay.on_input(&encoded, self.vt_parser.screen());
+        let is_epoch_boundary = self.overlay.epoch_counter != epoch_before;
 
         let mut display_bytes = Vec::new();
-
-        // Handle backspace prediction for existing text
-        if self.overlay.backspace_predicted {
-            self.overlay.backspace_predicted = false;
-            if self.displayed_count > 0 {
-                self.append_erase(&mut display_bytes);
-            }
-            display_bytes.extend_from_slice(b"\x08 \x08");
-            return Some((encoded, display_bytes));
-        }
 
         let has_new = self.overlay.should_display()
             && !self.in_alternate_screen()
             && !self.overlay.cells.is_empty();
 
-        // Erase old predictions (even if no new ones — e.g., after Enter)
-        if self.displayed_count > 0 {
+        // Erase old predictions ONLY when:
+        // - Displaying new predictions (erase + redisplay), OR
+        // - A non-epoch-boundary keystroke with no new predictions
+        //   (e.g., backspace removes last prediction)
+        //
+        // For epoch boundaries (Enter, Escape, etc.) with no new predictions,
+        // leave predictions visible. render_server_output will erase them
+        // atomically with server output, preventing visible flash.
+        if self.displayed_count > 0 && (has_new || !is_epoch_boundary) {
             self.append_erase(&mut display_bytes);
         }
 
@@ -255,7 +255,6 @@ impl PredictionOverlay {
             cells: Vec::new(),
             last_input_time: None,
             input_byte_count: 0,
-            backspace_predicted: false,
         }
     }
 
@@ -305,18 +304,9 @@ impl PredictionOverlay {
                     self.new_epoch();
                     return;
                 }
-                // Backspace: remove last prediction or predict erasure
+                // Backspace: remove last prediction cell
                 0x7f | 0x08 => {
-                    if !self.cells.is_empty() {
-                        self.cells.pop();
-                    } else {
-                        // Predict backspace erasure from shadow screen.
-                        // The server will echo \b \b (move left, space, move left).
-                        let (_, cursor_col) = screen.cursor_position();
-                        if cursor_col > 0 {
-                            self.backspace_predicted = true;
-                        }
-                    }
+                    self.cells.pop();
                     return;
                 }
                 // Other control characters (Ctrl+A through Ctrl+Z minus already handled)
@@ -1033,17 +1023,8 @@ mod tests {
         );
     }
 
-    fn key_backspace() -> KeyEvent {
-        KeyEvent {
-            code: crossterm::event::KeyCode::Backspace,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-            kind: crossterm::event::KeyEventKind::Press,
-            state: crossterm::event::KeyEventState::NONE,
-        }
-    }
-
     #[test]
-    fn erase_should_clear_old_predictions_on_epoch_boundary() {
+    fn enter_should_not_erase_predictions_immediately() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
         fb.process_server_output(b"$ ");
 
@@ -1053,17 +1034,18 @@ mod tests {
         }
         assert_eq!(fb.displayed_count, 3);
 
-        // Press Enter — epoch boundary clears predictions
+        // Press Enter — epoch boundary, but erase is deferred
         let (_, display_bytes) = fb.on_keystroke(&key_enter()).unwrap();
 
-        // Should contain erase sequence: DECRC + SGR reset + 3 spaces + DECRC
+        // Should NOT contain spaces (no immediate erase)
         assert!(
-            display_bytes.contains(&b' '),
-            "display bytes should contain spaces for erasure"
+            !display_bytes.contains(&b' '),
+            "display bytes should NOT contain spaces — erase is deferred"
         );
+        // displayed_count stays at 3 — will be erased by render_server_output
         assert_eq!(
-            fb.displayed_count, 0,
-            "displayed_count should be 0 after erase"
+            fb.displayed_count, 3,
+            "displayed_count should remain 3 (erase deferred)"
         );
     }
 
@@ -1107,40 +1089,6 @@ mod tests {
         assert_eq!(
             cursor_col, 5,
             "cursor should be at end of predictions (col 5), got col {cursor_col}"
-        );
-    }
-
-    #[test]
-    fn backspace_should_predict_erasure() {
-        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
-
-        // Server sends "$ hello" — cursor at col 7
-        fb.process_server_output(b"$ hello");
-
-        // User presses backspace with no pending predictions
-        let (encoded, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
-
-        // Should encode as DEL (0x7f)
-        assert_eq!(encoded.as_bytes(), b"\x7f");
-
-        // Display bytes should contain backspace prediction: \b \b
-        assert!(
-            display_bytes.windows(3).any(|w| w == b"\x08 \x08"),
-            "display bytes should contain backspace prediction \\b \\b, got: {:?}",
-            display_bytes
-        );
-    }
-
-    #[test]
-    fn backspace_should_not_predict_at_column_zero() {
-        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
-
-        // Cursor at column 0 (default) — no prediction possible
-        let (_, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
-        assert!(
-            display_bytes.is_empty(),
-            "backspace at col 0 should not predict, got: {:?}",
-            display_bytes
         );
     }
 
@@ -1214,5 +1162,67 @@ mod tests {
 
         fb.resize(120, 40);
         assert_eq!(fb.displayed_count, 0, "resize should reset displayed_count");
+    }
+
+    #[test]
+    fn render_server_output_should_erase_stale_predictions() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "abc" — predictions displayed
+        for ch in ['a', 'b', 'c'] {
+            fb.on_keystroke(&key_char(ch));
+        }
+        assert_eq!(fb.displayed_count, 3);
+
+        // Press Enter — erase is deferred, predictions stay visible
+        fb.on_keystroke(&key_enter());
+        assert_eq!(
+            fb.displayed_count, 3,
+            "displayed_count should remain 3 after Enter"
+        );
+
+        // Server echoes — render_server_output should erase stale predictions
+        let output = fb.render_server_output(b"abc\r\n$ ");
+
+        // Output should start with DECRC (erase)
+        assert!(
+            output.starts_with(b"\x1b8"),
+            "output should start with DECRC for erase"
+        );
+        assert_eq!(
+            fb.displayed_count, 0,
+            "displayed_count should be 0 after server output"
+        );
+    }
+
+    #[test]
+    fn typing_after_enter_should_erase_and_redisplay() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "abc" — predictions displayed
+        for ch in ['a', 'b', 'c'] {
+            fb.on_keystroke(&key_char(ch));
+        }
+        assert_eq!(fb.displayed_count, 3);
+
+        // Press Enter — erase deferred
+        fb.on_keystroke(&key_enter());
+        assert_eq!(fb.displayed_count, 3);
+
+        // Type 'l' before server responds — should erase old and display new
+        let (_, display_bytes) = fb.on_keystroke(&key_char('l')).unwrap();
+
+        // Should contain spaces (erasing old 3-char prediction)
+        assert!(
+            display_bytes.contains(&b' '),
+            "display bytes should contain spaces for erasing old predictions"
+        );
+        // After erase + new prediction, displayed_count should be 1
+        assert_eq!(
+            fb.displayed_count, 1,
+            "displayed_count should be 1 for new prediction"
+        );
     }
 }

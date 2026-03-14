@@ -41,8 +41,33 @@ pub struct TerminalSanitizer {
     /// Whether to strip XTWINOPS resize sequences (`ESC[8;<rows>;<cols>t`).
     strip_xtwinops: bool,
     /// Whether to strip terminal query sequences (DA1, DA2, DA3, DSR, DECRQM,
-    /// XTVERSION, and OSC queries ending with `?`).
+    /// XTVERSION, Kitty keyboard query, DECRQSS, and OSC queries ending with `?`).
     strip_queries: bool,
+}
+
+/// Classified escape sequence extracted by `parse_escape`.
+enum EscapeSeq<'a> {
+    /// CSI sequence: `ESC [` private_marker? params intermediates final_byte.
+    Csi {
+        private_marker: Option<u8>,
+        params: &'a [u8],
+        intermediates: &'a [u8],
+        final_byte: u8,
+    },
+    /// OSC sequence: `ESC ]` content (BEL | ST).
+    Osc { content: &'a [u8] },
+    /// DCS sequence: `ESC P` content (BEL | ST).
+    Dcs { content: &'a [u8] },
+    /// SS3 sequence: `ESC O` byte.
+    Ss3,
+    /// Two-character escape: `ESC` byte.
+    TwoChar,
+}
+
+/// Action to take for a parsed escape sequence.
+enum SeqAction {
+    Strip,
+    PassThrough,
 }
 
 impl TerminalSanitizer {
@@ -67,34 +92,24 @@ impl TerminalSanitizer {
 
     /// Filter remote output bytes, stripping blocked sequences.
     ///
-    /// Scans `input` for escape sequences matching blocked DEC private modes,
-    /// XTWINOPS resize sequences, and terminal query sequences (when
-    /// `strip_queries` is enabled). All other bytes (including standard CSI
-    /// sequences like SGR colors and cursor movement) are passed through
-    /// unchanged into `out`.
+    /// Scans `input` for escape sequences (CSI, OSC, DCS, SS3, two-char)
+    /// and classifies each one. Blocked sequences are silently dropped;
+    /// everything else is passed through unchanged into `out`.
     pub fn filter(&self, input: &[u8], out: &mut Vec<u8>) {
         let mut i = 0;
         while i < input.len() {
             if input[i] == 0x1b
-                && i + 1 < input.len()
-                && input[i + 1] == b'['
-                && let Some(seq_len) = self.scan_sequence(&input[i..])
+                && let Some((seq, len)) = Self::parse_escape(&input[i..])
             {
-                trace!(
-                    "Filtered terminal sequence: {:02x?}",
-                    &input[i..i + seq_len]
-                );
-                i += seq_len;
-                continue;
-            }
-            if input[i] == 0x1b
-                && i + 1 < input.len()
-                && input[i + 1] == b']'
-                && self.strip_queries
-                && let Some(seq_len) = self.scan_osc_query(&input[i..])
-            {
-                trace!("Filtered terminal query: {:02x?}", &input[i..i + seq_len]);
-                i += seq_len;
+                match self.classify(&seq) {
+                    SeqAction::Strip => {
+                        trace!("Filtered terminal sequence: {:02x?}", &input[i..i + len]);
+                    }
+                    SeqAction::PassThrough => {
+                        out.extend_from_slice(&input[i..i + len]);
+                    }
+                }
+                i += len;
                 continue;
             }
             out.push(input[i]);
@@ -115,16 +130,181 @@ impl TerminalSanitizer {
         seq
     }
 
-    /// Scan for an OSC query sequence starting at `buf[0] == ESC, buf[1] == ']'`.
+    /// Classify a parsed escape sequence as Strip or PassThrough.
     ///
-    /// Matches OSC sequences whose content ends with `?` before the string
-    /// terminator (either BEL `\x07` or ST `ESC \`). These are terminal queries
-    /// (e.g., color queries like `\x1b]10;?\x07`) that would cause the local
-    /// terminal to respond with unwanted input.
+    /// All filtering decisions are centralized in this single match.
+    fn classify(&self, seq: &EscapeSeq) -> SeqAction {
+        match seq {
+            // ── Terminal queries (strip_queries) ──
+
+            // DA1: ESC[c or ESC[0c
+            EscapeSeq::Csi {
+                private_marker: None,
+                params,
+                final_byte: b'c',
+                ..
+            } if self.strip_queries && (params.is_empty() || *params == [b'0']) => SeqAction::Strip,
+
+            // DA2: ESC[>c or ESC[>0c
+            EscapeSeq::Csi {
+                private_marker: Some(b'>'),
+                params,
+                final_byte: b'c',
+                ..
+            } if self.strip_queries && (params.is_empty() || *params == [b'0']) => SeqAction::Strip,
+
+            // DA3: ESC[=c
+            EscapeSeq::Csi {
+                private_marker: Some(b'='),
+                final_byte: b'c',
+                ..
+            } if self.strip_queries => SeqAction::Strip,
+
+            // DSR: ESC[5n or ESC[6n
+            EscapeSeq::Csi {
+                private_marker: None,
+                params,
+                final_byte: b'n',
+                ..
+            } if self.strip_queries && (*params == [b'5'] || *params == [b'6']) => SeqAction::Strip,
+
+            // XTVERSION: ESC[>q or ESC[>0q
+            EscapeSeq::Csi {
+                private_marker: Some(b'>'),
+                params,
+                final_byte: b'q',
+                ..
+            } if self.strip_queries && (params.is_empty() || *params == [b'0']) => SeqAction::Strip,
+
+            // DECRQM: ESC[?<digits>$p
+            EscapeSeq::Csi {
+                private_marker: Some(b'?'),
+                intermediates,
+                final_byte: b'p',
+                ..
+            } if self.strip_queries && *intermediates == [b'$'] => SeqAction::Strip,
+
+            // Kitty keyboard query: ESC[?u (no params)
+            EscapeSeq::Csi {
+                private_marker: Some(b'?'),
+                params,
+                final_byte: b'u',
+                ..
+            } if self.strip_queries && params.is_empty() => SeqAction::Strip,
+
+            // OSC queries: content ends with '?'
+            EscapeSeq::Osc { content } if self.strip_queries && content.last() == Some(&b'?') => {
+                SeqAction::Strip
+            }
+
+            // DECRQSS: ESC P $ q ... ST
+            EscapeSeq::Dcs { content } if self.strip_queries && content.starts_with(b"$q") => {
+                SeqAction::Strip
+            }
+
+            // ── Blocked DEC private modes ──
+
+            // ESC[?<mode>h or ESC[?<mode>l
+            EscapeSeq::Csi {
+                private_marker: Some(b'?'),
+                params,
+                final_byte,
+                ..
+            } if (*final_byte == b'h' || *final_byte == b'l')
+                && Self::is_blocked_mode(params, self.blocked_modes) =>
+            {
+                SeqAction::Strip
+            }
+
+            // ── Blocked resize ──
+
+            // XTWINOPS: ESC[8;<rows>;<cols>t
+            EscapeSeq::Csi {
+                private_marker: None,
+                params,
+                final_byte: b't',
+                ..
+            } if self.strip_xtwinops && Self::is_xtwinops_resize(params) => SeqAction::Strip,
+
+            // ── Everything else passes through ──
+            _ => SeqAction::PassThrough,
+        }
+    }
+
+    /// Parse an escape sequence starting at `buf[0] == ESC`.
     ///
-    /// Returns the total byte length of the sequence if it is a query, or `None`
-    /// if it is a non-query OSC or the sequence is incomplete.
-    fn scan_osc_query(&self, buf: &[u8]) -> Option<usize> {
+    /// Returns the classified sequence and its total byte length, or `None`
+    /// if the sequence is incomplete or unrecognized.
+    fn parse_escape(buf: &[u8]) -> Option<(EscapeSeq<'_>, usize)> {
+        if buf.len() < 2 || buf[0] != 0x1b {
+            return None;
+        }
+
+        match buf[1] {
+            b'[' => Self::parse_csi(buf),
+            b']' => Self::parse_osc(buf),
+            b'P' => Self::parse_dcs(buf),
+            b'O' => {
+                if buf.len() < 3 {
+                    return None;
+                }
+                Some((EscapeSeq::Ss3, 3))
+            }
+            // Two-char escapes (DECSC, DECRC, etc.)
+            b if b.is_ascii_graphic() || b == b' ' => Some((EscapeSeq::TwoChar, 2)),
+            _ => None,
+        }
+    }
+
+    /// Parse a CSI sequence: `ESC [` private_marker? params intermediates final.
+    fn parse_csi(buf: &[u8]) -> Option<(EscapeSeq<'_>, usize)> {
+        if buf.len() < 3 {
+            return None;
+        }
+
+        let mut j = 2;
+
+        // Optional private marker: ?, >, =
+        let private_marker = if j < buf.len() && matches!(buf[j], b'?' | b'>' | b'=') {
+            j += 1;
+            Some(buf[j - 1])
+        } else {
+            None
+        };
+
+        // Parameters: digits, ;, :
+        let params_start = j;
+        while j < buf.len() && (buf[j].is_ascii_digit() || buf[j] == b';' || buf[j] == b':') {
+            j += 1;
+        }
+        let params = &buf[params_start..j];
+
+        // Intermediates: 0x20..=0x2F ($, #, space, etc.)
+        let intermediates_start = j;
+        while j < buf.len() && (0x20..=0x2F).contains(&buf[j]) {
+            j += 1;
+        }
+        let intermediates = &buf[intermediates_start..j];
+
+        // Final byte: 0x40..=0x7E
+        if j >= buf.len() || !(0x40..=0x7E).contains(&buf[j]) {
+            return None;
+        }
+        let final_byte = buf[j];
+
+        Some((
+            EscapeSeq::Csi {
+                private_marker,
+                params,
+                intermediates,
+                final_byte,
+            },
+            j + 1,
+        ))
+    }
+
+    /// Parse an OSC sequence: `ESC ]` content (BEL | `ESC \`).
+    fn parse_osc(buf: &[u8]) -> Option<(EscapeSeq<'_>, usize)> {
         if buf.len() < 2 || buf[0] != 0x1b || buf[1] != b']' {
             return None;
         }
@@ -132,20 +312,22 @@ impl TerminalSanitizer {
         let mut j = 2;
         while j < buf.len() {
             match buf[j] {
-                // BEL terminator
                 0x07 => {
-                    if j > 2 && buf[j - 1] == b'?' {
-                        return Some(j + 1);
-                    }
-                    return None;
+                    return Some((
+                        EscapeSeq::Osc {
+                            content: &buf[2..j],
+                        },
+                        j + 1,
+                    ));
                 }
-                // Possible ST terminator (ESC \)
                 0x1b => {
                     if j + 1 < buf.len() && buf[j + 1] == b'\\' {
-                        if j > 2 && buf[j - 1] == b'?' {
-                            return Some(j + 2);
-                        }
-                        return None;
+                        return Some((
+                            EscapeSeq::Osc {
+                                content: &buf[2..j],
+                            },
+                            j + 2,
+                        ));
                     }
                     return None;
                 }
@@ -153,95 +335,77 @@ impl TerminalSanitizer {
             }
         }
 
-        // Incomplete — no terminator found, pass through
+        // Incomplete — no terminator found
         None
     }
 
-    /// Scan for a blocked sequence starting at `buf[0] == ESC, buf[1] == '['`.
-    ///
-    /// Returns the total byte length of the sequence if it matches a blocked
-    /// pattern, or `None` if it should be passed through.
-    fn scan_sequence(&self, buf: &[u8]) -> Option<usize> {
-        if buf.len() < 3 || buf[0] != 0x1b || buf[1] != b'[' {
+    /// Parse a DCS sequence: `ESC P` content (BEL | `ESC \`).
+    fn parse_dcs(buf: &[u8]) -> Option<(EscapeSeq<'_>, usize)> {
+        if buf.len() < 2 || buf[0] != 0x1b || buf[1] != b'P' {
             return None;
         }
 
-        // ESC[?<number>h or ESC[?<number>l — private mode set/reset
-        if buf[2] == b'?' {
-            let mut j = 3;
-            while j < buf.len() && buf[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j >= buf.len() || j == 3 {
-                return None; // Incomplete or no digits
-            }
-            if buf[j] == b'h' || buf[j] == b'l' {
-                let mode_str = std::str::from_utf8(&buf[3..j]).ok()?;
-                let mode: u32 = mode_str.parse().ok()?;
-                if self.blocked_modes.contains(&mode) {
-                    return Some(j + 1);
+        let mut j = 2;
+        while j < buf.len() {
+            match buf[j] {
+                0x07 => {
+                    return Some((
+                        EscapeSeq::Dcs {
+                            content: &buf[2..j],
+                        },
+                        j + 1,
+                    ));
                 }
-            }
-            // DECRQM: ESC[?<digits>$p
-            if self.strip_queries && buf[j] == b'$' && j + 1 < buf.len() && buf[j + 1] == b'p' {
-                return Some(j + 2);
-            }
-            return None;
-        }
-
-        // CSI query sequences (DA1, DA2, DA3, DSR, XTVERSION)
-        if self.strip_queries {
-            // DA1: ESC[c or ESC[0c
-            if buf[2] == b'c' {
-                return Some(3);
-            }
-            if buf[2] == b'0' && buf.len() > 3 && buf[3] == b'c' {
-                return Some(4);
-            }
-            // DA2: ESC[>c or ESC[>0c
-            // XTVERSION: ESC[>q or ESC[>0q
-            if buf[2] == b'>' && buf.len() > 3 {
-                if buf[3] == b'c' || buf[3] == b'q' {
-                    return Some(4);
+                0x1b => {
+                    if j + 1 < buf.len() && buf[j + 1] == b'\\' {
+                        return Some((
+                            EscapeSeq::Dcs {
+                                content: &buf[2..j],
+                            },
+                            j + 2,
+                        ));
+                    }
+                    return None;
                 }
-                if buf[3] == b'0' && buf.len() > 4 && (buf[4] == b'c' || buf[4] == b'q') {
-                    return Some(5);
-                }
-            }
-            // DA3: ESC[=c
-            if buf[2] == b'=' && buf.len() > 3 && buf[3] == b'c' {
-                return Some(4);
-            }
-            // DSR: ESC[5n or ESC[6n
-            if (buf[2] == b'5' || buf[2] == b'6') && buf.len() > 3 && buf[3] == b'n' {
-                return Some(4);
+                _ => j += 1,
             }
         }
 
-        // ESC[8;<digits>;<digits>t — XTWINOPS resize
-        if self.strip_xtwinops && buf[2] == b'8' && buf.len() > 3 && buf[3] == b';' {
-            let mut j = 4;
-            // First parameter: rows (digits)
-            let start = j;
-            while j < buf.len() && buf[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j == start || j >= buf.len() || buf[j] != b';' {
-                return None;
-            }
-            j += 1; // skip ';'
-            // Second parameter: cols (digits)
-            let start = j;
-            while j < buf.len() && buf[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j == start || j >= buf.len() || buf[j] != b't' {
-                return None;
-            }
-            return Some(j + 1); // include 't'
-        }
-
+        // Incomplete — no terminator found
         None
+    }
+
+    /// Check if CSI params represent a blocked DEC private mode number.
+    fn is_blocked_mode(params: &[u8], blocked_modes: &[u32]) -> bool {
+        if let Ok(s) = std::str::from_utf8(params)
+            && let Ok(mode) = s.parse::<u32>()
+        {
+            return blocked_modes.contains(&mode);
+        }
+        false
+    }
+
+    /// Check if CSI params represent an XTWINOPS resize: `8;<rows>;<cols>`.
+    fn is_xtwinops_resize(params: &[u8]) -> bool {
+        let s = match std::str::from_utf8(params) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        let mut parts = s.split(';');
+        if parts.next() != Some("8") {
+            return false;
+        }
+        let rows = match parts.next().and_then(|p| p.parse::<u32>().ok()) {
+            Some(r) if r > 0 => r,
+            _ => return false,
+        };
+        let cols = match parts.next().and_then(|p| p.parse::<u32>().ok()) {
+            Some(c) if c > 0 => c,
+            _ => return false,
+        };
+        let _ = (rows, cols);
+        parts.next().is_none()
     }
 }
 
@@ -613,95 +777,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_sequence_should_return_none_for_non_csi() {
-        assert!(TerminalSanitizer::CONPTY.scan_sequence(b"hello").is_none());
-        assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1bO").is_none());
-    }
-
-    #[test]
-    fn scan_sequence_should_return_none_for_unblocked_modes() {
-        // ?25h (show cursor) — not a blocked mode
-        assert!(
-            TerminalSanitizer::CONPTY
-                .scan_sequence(b"\x1b[?25h")
-                .is_none()
-        );
-        // ?1049h (alternate screen) — not blocked
-        assert!(
-            TerminalSanitizer::CONPTY
-                .scan_sequence(b"\x1b[?1049h")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn scan_sequence_should_return_length_for_1004h() {
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1004h"),
-            Some(8)
-        );
-    }
-
-    #[test]
-    fn scan_sequence_should_return_length_for_9001l() {
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?9001l"),
-            Some(8)
-        );
-    }
-
-    #[test]
-    fn scan_sequence_should_return_length_for_mouse_modes() {
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1000h"),
-            Some(8)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1002l"),
-            Some(8)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1003h"),
-            Some(8)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1005l"),
-            Some(8)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1006h"),
-            Some(8)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?1015l"),
-            Some(8)
-        );
-    }
-
-    #[test]
-    fn scan_sequence_should_return_length_for_xtwinops() {
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[8;24;80t"),
-            Some(10)
-        );
-        assert_eq!(
-            TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[8;50;120t"),
-            Some(11)
-        );
-    }
-
-    #[test]
-    fn scan_sequence_should_return_none_for_incomplete_sequence() {
-        assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[").is_none());
-        assert!(TerminalSanitizer::CONPTY.scan_sequence(b"\x1b[?").is_none());
-        assert!(
-            TerminalSanitizer::CONPTY
-                .scan_sequence(b"\x1b[?1004")
-                .is_none()
-        );
-    }
-
-    #[test]
     fn reset_sequence_should_disable_all_blocked_modes() {
         let reset = TerminalSanitizer::CONPTY.reset_sequence();
         let reset_str = String::from_utf8(reset).unwrap();
@@ -903,5 +978,84 @@ mod tests {
         let mut out = Vec::new();
         TerminalSanitizer::CONPTY.filter(input, &mut out);
         assert_eq!(out, input.to_vec(), "incomplete OSC should pass through");
+    }
+
+    #[test]
+    fn filter_should_strip_kitty_keyboard_query() {
+        let input = b"\x1b[?u";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip kitty keyboard query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_decrqss_sgr_query() {
+        let input = b"\x1bP$qm\x1b\\";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(out.is_empty(), "should strip DECRQSS SGR query: {out:?}");
+    }
+
+    #[test]
+    fn filter_should_strip_decrqss_in_mixed() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"hello");
+        input.extend_from_slice(b"\x1bP$qm\x1b\\");
+        input.extend_from_slice(b"world");
+
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(&input, &mut out);
+        assert_eq!(out, b"helloworld");
+    }
+
+    #[test]
+    fn filter_should_pass_through_non_query_dcs() {
+        // DECDLD (font loading) — not a query, should pass through
+        let input = b"\x1bPfoo\x1b\\";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "non-query DCS should pass through");
+    }
+
+    #[test]
+    fn filter_should_pass_through_ss3_sequences() {
+        let input = b"\x1bOA";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "SS3 sequences should pass through");
+    }
+
+    #[test]
+    fn filter_should_pass_through_two_char_escapes() {
+        // DECSC (ESC 7) and DECRC (ESC 8)
+        let input = b"\x1b7\x1b8";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert_eq!(out, input.to_vec(), "two-char escapes should pass through");
+    }
+
+    #[test]
+    fn filter_should_strip_kitty_query_in_mixed() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"\x1b[1;31m"); // SGR — pass through
+        input.extend_from_slice(b"text");
+        input.extend_from_slice(b"\x1b[?u"); // Kitty query — strip
+        input.extend_from_slice(b"\x1bP$qm\x1b\\"); // DECRQSS — strip
+        input.extend_from_slice(b" more");
+
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(&input, &mut out);
+        assert_eq!(out, b"\x1b[1;31mtext more");
+    }
+
+    #[test]
+    fn filter_should_strip_decrqss_with_bel_terminator() {
+        let input = b"\x1bP$qm\x07";
+        let mut out = Vec::new();
+        TerminalSanitizer::CONPTY.filter(input, &mut out);
+        assert!(
+            out.is_empty(),
+            "should strip DECRQSS with BEL terminator: {out:?}"
+        );
     }
 }
