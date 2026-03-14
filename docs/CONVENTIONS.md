@@ -102,6 +102,8 @@ Prefer:
 - Avoid blocking calls in async context — use spawn_blocking if needed
 - Prefer `async fn` where the compiler allows; use pinned futures in trait
   definitions
+- Keep async blocks small — if an async block passed to a combinator (e.g.,
+  `get_or_try_init`) exceeds ~10 lines, extract it into a named async method
 
 ## Naming
 
@@ -118,9 +120,19 @@ Prefer:
 2. External crate imports (alphabetical)
 3. Internal `crate::` imports
 - Import types used in signatures and pattern matches — avoid inline
-  `crate::module::Type` references. Only use longer paths for module-level
-  function calls (e.g., `russh::keys::decode_secret_key()`) or when there
-  are name conflicts.
+  `crate::module::Type` references
+- For functions: import the parent module (`use crate::utils;`) and call
+  via `utils::func()`. Do not import functions directly unless they are
+  used frequently in a tight scope (e.g., test helpers).
+
+## Inline Comments
+
+- Always include a blank line above a line comment unless the comment is
+  at the start of a function/block or inside a nested block (if/match arm)
+- Don't reference private functions in doc comments — describe the behavior
+  instead
+- Remove comments that restate what the test name or assertion message
+  already communicates
 
 ## Serialization
 

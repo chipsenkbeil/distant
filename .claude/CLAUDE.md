@@ -53,6 +53,9 @@ cargo nextest run --profile ci --all-features --workspace --all-targets
 12. Nested test modules with `_tests` suffix — flatten with subject prefix
 13. Inline type references when imports are available — import types at module top
 14. Module doc comments referencing implementation details — describe purpose, not provenance
+15. Importing functions directly (`use crate::utils::some_func;`) — import the module (`use crate::utils;`) and call `utils::some_func()` instead
+16. Large async blocks inlined into `get_or_try_init` / similar combinators — extract into a named method or function
+17. Patching dependencies to change visibility (`pub(crate)` → `pub`) — find alternative approaches (wrapper types, own structs, etc.)
 
 ## Agent Orchestration Guide
 
