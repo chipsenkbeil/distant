@@ -9,7 +9,6 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
-use log::trace;
 
 use super::keyencode::encode_key;
 use super::predict::{PredictMode, RttEstimator};
@@ -117,8 +116,11 @@ impl TerminalFramebuffer {
         let sanitized = self.process_server_output(bytes);
         output.extend_from_slice(&sanitized);
 
-        // Re-display remaining predictions after server output
-        if self.overlay.should_display()
+        // Re-display remaining predictions after server output, but only
+        // if the current epoch has been confirmed by a matching echo.
+        let epoch_confirmed = self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
+        if epoch_confirmed
+            && self.overlay.should_display()
             && !self.in_alternate_screen()
             && (!self.overlay.cells.is_empty() || !self.overlay.backspace_predictions.is_empty())
         {
@@ -140,8 +142,9 @@ impl TerminalFramebuffer {
         self.overlay
             .confirm_backspace_predictions(self.vt_parser.screen());
 
-        // Epoch recovery: if no predictions are pending, synchronize
-        // confirmed_epoch so future predictions aren't permanently suppressed.
+        // Epoch recovery: if no predictions are pending and the epoch has
+        // fallen far behind (gap > 1), catch up to one behind so that
+        // future predictions only require a single server-echo confirmation.
         if self.overlay.cells.is_empty()
             && self.overlay.backspace_predictions.is_empty()
             && self.overlay.epoch_counter > self.overlay.confirmed_epoch + 1
@@ -171,7 +174,13 @@ impl TerminalFramebuffer {
 
         let mut display_bytes = Vec::new();
 
-        let has_new = self.overlay.should_display()
+        // Predictions are only displayed when the current epoch has been
+        // confirmed by the server echoing a matching character. This prevents
+        // password leaks: after Enter the epoch advances, and if the server
+        // never echoes (password prompt), predictions stay hidden.
+        let epoch_confirmed = self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
+        let has_new = epoch_confirmed
+            && self.overlay.should_display()
             && !self.in_alternate_screen()
             && (!self.overlay.cells.is_empty() || !self.overlay.backspace_predictions.is_empty());
 
@@ -392,11 +401,6 @@ impl PredictionOverlay {
                     if !self.cells.is_empty() {
                         self.cells.pop();
                     } else {
-                        // Tentative epoch check (password suppression)
-                        if self.epoch_counter > self.confirmed_epoch + 1 {
-                            return;
-                        }
-
                         let (cursor_row, cursor_col) = screen.cursor_position();
                         if self.input_floor.is_none() {
                             self.input_floor = Some((cursor_row, cursor_col));
@@ -467,16 +471,6 @@ impl PredictionOverlay {
     }
 
     fn add_prediction(&mut self, ch: char, screen: &vt100::Screen) {
-        // Tentative epoch: if the current epoch is ahead of confirmed by >1,
-        // don't display (password prompt suppression).
-        if self.epoch_counter > self.confirmed_epoch + 1 {
-            trace!(
-                "Tentative epoch {}: suppressing prediction '{}'",
-                self.epoch_counter, ch
-            );
-            return;
-        }
-
         let (base_row, base_col) = screen.cursor_position();
         if self.input_floor.is_none() {
             self.input_floor = Some((base_row, base_col));
@@ -724,26 +718,35 @@ mod tests {
     }
 
     #[test]
-    fn tentative_epoch_should_suppress_predictions() {
-        let mut o = overlay_on_confirmed();
-        let parser = parser_80x24();
+    fn tentative_epoch_should_suppress_display() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
 
-        // epoch 0 is confirmed. Create epoch 1 (e.g., after Enter)
-        o.on_input("\r", parser.screen());
-        assert_eq!(o.epoch_counter, 1);
+        // Type "su" — epoch 0, confirmed 0 → displayed
+        for ch in "su".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        assert_eq!(fb.displayed_count, 2);
 
-        // Now type in epoch 1 — this is fine (epoch 1 = confirmed_epoch + 1)
-        o.on_input("p", parser.screen());
-        // epoch 1 hasn't been confirmed yet but is only 1 ahead → allowed
-        assert_eq!(o.cells.len(), 1);
+        // Enter → epoch 1, cells non-empty → no catch-up, confirmed=0
+        fb.on_keystroke(&key_enter());
 
-        // Create epoch 2 without confirming epoch 1
-        o.on_input("\r", parser.screen());
-        assert_eq!(o.epoch_counter, 2);
-
-        // Now type in epoch 2 — this is tentative (2 > 0 + 1)
-        o.on_input("s", parser.screen());
-        assert!(o.cells.is_empty(), "tentative epoch should suppress");
+        // Type 'p' in epoch 1 — prediction is added to cells but NOT displayed
+        // because epoch 1 > confirmed 0.
+        let (_, display_bytes) = fb.on_keystroke(&key_char('p')).unwrap();
+        assert_eq!(
+            fb.overlay.cells.len(),
+            1,
+            "prediction should be added to cells"
+        );
+        assert_eq!(
+            fb.displayed_count, 0,
+            "prediction should not be displayed in unconfirmed epoch"
+        );
+        assert!(
+            !display_bytes.contains(&b'p'),
+            "display bytes should not contain 'p'"
+        );
     }
 
     #[test]
@@ -910,25 +913,26 @@ mod tests {
         let parser = parser_80x24();
 
         // Create multiple epoch boundaries without any predictions between them.
-        // Each new_epoch should catch up confirmed_epoch since cells are empty.
+        // Each new_epoch catches up confirmed_epoch to epoch-1 since cells are empty.
         o.on_input("\r", parser.screen()); // epoch 1, cells were empty
         o.on_input("\r", parser.screen()); // epoch 2, cells were empty
         o.on_input("\r", parser.screen()); // epoch 3, cells were empty
 
-        // confirmed_epoch should have caught up
-        assert!(
-            o.epoch_counter <= o.confirmed_epoch + 1,
-            "confirmed_epoch should catch up: epoch={}, confirmed={}",
+        // confirmed_epoch should be one behind epoch_counter
+        assert_eq!(
+            o.confirmed_epoch,
+            o.epoch_counter.saturating_sub(1),
+            "confirmed_epoch should catch up to epoch-1: epoch={}, confirmed={}",
             o.epoch_counter,
             o.confirmed_epoch
         );
 
-        // Predictions should now be allowed
+        // Predictions are always added to cells (display gating happens higher up)
         o.on_input("a", parser.screen());
         assert_eq!(
             o.cells.len(),
             1,
-            "predictions should be allowed after epoch recovery"
+            "predictions should be added after epoch recovery"
         );
     }
 
@@ -936,43 +940,35 @@ mod tests {
     fn epoch_should_recover_after_server_output_clears_cells() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
 
-        // Type a character (adds prediction in epoch 0)
-        let ev = KeyEvent {
-            code: crossterm::event::KeyCode::Char('a'),
-            modifiers: crossterm::event::KeyModifiers::NONE,
-            kind: crossterm::event::KeyEventKind::Press,
-            state: crossterm::event::KeyEventState::NONE,
-        };
-        fb.on_keystroke(&ev);
+        // Type 'a' (adds prediction in epoch 0)
+        fb.on_keystroke(&key_char('a'));
 
         // Enter creates epoch 1 (cells had 'a' so no catch-up)
-        let enter = KeyEvent {
-            code: crossterm::event::KeyCode::Enter,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-            kind: crossterm::event::KeyEventKind::Press,
-            state: crossterm::event::KeyEventState::NONE,
-        };
-        fb.on_keystroke(&enter);
+        fb.on_keystroke(&key_enter());
 
-        // Another Enter creates epoch 2 (cells were empty -> catch-up)
-        fb.on_keystroke(&enter);
+        // Another Enter creates epoch 2 (cells empty → catch-up to 1)
+        fb.on_keystroke(&key_enter());
 
         // Server output echoes back and moves cursor past predictions
         fb.process_server_output(b"a\r\n$ ");
 
-        // Epoch recovery in process_server_output should catch up
-        assert!(
-            fb.overlay.epoch_counter <= fb.overlay.confirmed_epoch + 1,
-            "confirmed_epoch should catch up after server output: epoch={}, confirmed={}",
+        // Epoch recovery: gap was 2 > 1+1? No, epoch=2, confirmed=1.
+        // 2 > 1+1 → false. So recovery doesn't fire, but confirmed is
+        // already at 1 from new_epoch catch-up.
+        assert_eq!(
+            fb.overlay.confirmed_epoch,
+            fb.overlay.epoch_counter.saturating_sub(1),
+            "confirmed_epoch should be epoch-1: epoch={}, confirmed={}",
             fb.overlay.epoch_counter,
             fb.overlay.confirmed_epoch
         );
 
-        // New predictions should be allowed
-        fb.on_keystroke(&ev);
+        // Predictions are added to cells (always). The display gate
+        // requires epoch confirmation via server echo.
+        fb.on_keystroke(&key_char('a'));
         assert!(
             !fb.overlay.cells.is_empty(),
-            "predictions should resume after epoch recovery via server output"
+            "predictions should be added after epoch recovery"
         );
     }
 
@@ -1147,29 +1143,39 @@ mod tests {
         feed_keystroke(&mut fb, &mut display, &key_ctrl_c());
         feed_server(&mut fb, &mut display, b"^C\r\n$ ");
 
-        // User types 'l' — predictions MUST resume.
-        let (encoded, display_bytes) = fb.on_keystroke(&key_char('l')).unwrap();
-        assert_eq!(encoded, "l");
-        assert!(
-            !display_bytes.is_empty(),
-            "predictions should resume after epoch recovery"
-        );
-        assert!(
-            display_bytes.contains(&b'l'),
-            "display bytes should contain predicted 'l'"
+        // User types 'l' — added silently (first char after epoch boundary
+        // requires server echo to confirm the epoch).
+        feed_keystroke(&mut fb, &mut display, &key_char('l'));
+        assert_eq!(
+            fb.displayed_count, 0,
+            "first char after epoch boundary should not be displayed"
         );
 
-        // Verify 'l' appears in the display at the prompt row.
+        // Server echoes 'l' — confirms the epoch.
+        feed_server(&mut fb, &mut display, b"l");
+
+        // User types 's' — predictions MUST resume now.
+        let (encoded, display_bytes) = fb.on_keystroke(&key_char('s')).unwrap();
+        assert_eq!(encoded, "s");
+        assert!(
+            !display_bytes.is_empty(),
+            "predictions should resume after epoch confirmation"
+        );
+        assert!(
+            display_bytes.contains(&b's'),
+            "display bytes should contain predicted 's'"
+        );
+
+        // Verify 's' appears in the display at the prompt row.
         display.process(&display_bytes);
-        // Find the last row containing "$ " — that's our prompt row.
         let prompt_row = (0..24u16)
             .rev()
             .find(|&r| display_row(&display, r).contains("$ "))
             .expect("should find a prompt row");
         let row_text = display_row(&display, prompt_row);
         assert!(
-            row_text.contains("$ l"),
-            "prompt row should show predicted 'l', got: {row_text:?}"
+            row_text.contains("$ ls"),
+            "prompt row should show predicted 's' after 'l', got: {row_text:?}"
         );
     }
 
@@ -1347,7 +1353,7 @@ mod tests {
     }
 
     #[test]
-    fn typing_after_enter_should_erase_and_redisplay() {
+    fn typing_after_enter_should_erase_old_predictions() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
         fb.process_server_output(b"$ ");
 
@@ -1361,7 +1367,8 @@ mod tests {
         fb.on_keystroke(&key_enter());
         assert_eq!(fb.displayed_count, 3);
 
-        // Type 'l' before server responds — should erase old and display new
+        // Type 'l' before server responds — epoch 1 > confirmed 0, so the
+        // prediction is suppressed. But old predictions are still erased.
         let (_, display_bytes) = fb.on_keystroke(&key_char('l')).unwrap();
 
         // Should contain spaces (erasing old 3-char prediction)
@@ -1369,10 +1376,10 @@ mod tests {
             display_bytes.contains(&b' '),
             "display bytes should contain spaces for erasing old predictions"
         );
-        // After erase + new prediction, displayed_count should be 1
+        // No new prediction was added (suppressed), so displayed_count is 0
         assert_eq!(
-            fb.displayed_count, 1,
-            "displayed_count should be 1 for new prediction"
+            fb.displayed_count, 0,
+            "displayed_count should be 0 (prediction suppressed in unconfirmed epoch)"
         );
     }
 
@@ -1525,37 +1532,51 @@ mod tests {
     }
 
     #[test]
-    fn backspace_prediction_should_respect_tentative_epoch() {
+    fn forward_prediction_in_tentative_epoch_should_not_display() {
         let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
         fb.process_server_output(b"$ ");
 
-        // Type "passwd" + Enter (creates epoch 1; cells non-empty -> no catch-up)
-        for ch in "passwd".chars() {
+        // Type "su" — displayed (epoch 0, confirmed 0)
+        for ch in "su".chars() {
             fb.on_keystroke(&key_char(ch));
         }
+        assert_eq!(fb.displayed_count, 2);
+
+        // Enter → epoch 1, cells non-empty → no catch-up. confirmed=0.
         fb.on_keystroke(&key_enter());
 
-        // Type "x" in epoch 1 (allowed: epoch 1 <= confirmed 0 + 1)
-        fb.on_keystroke(&key_char('x'));
-
-        // Another Enter without server confirmation (creates epoch 2;
-        // cells non-empty -> no catch-up)
-        fb.on_keystroke(&key_enter());
-
-        // Now epoch_counter=2, confirmed_epoch=0 => tentative (2 > 0+1)
+        // epoch_counter=1, confirmed_epoch=0 → tentative
         assert!(
-            fb.overlay.epoch_counter > fb.overlay.confirmed_epoch + 1,
+            fb.overlay.epoch_counter > fb.overlay.confirmed_epoch,
             "should be in tentative epoch: epoch={}, confirmed={}",
             fb.overlay.epoch_counter,
             fb.overlay.confirmed_epoch
         );
 
-        // Press backspace — should NOT add backspace prediction in tentative epoch
-        fb.on_keystroke(&key_backspace());
-        assert!(
-            fb.overlay.backspace_predictions.is_empty(),
-            "backspace prediction should be suppressed in tentative epoch"
+        // Type 'x' — prediction IS added to cells but NOT displayed
+        let (_, display_bytes) = fb.on_keystroke(&key_char('x')).unwrap();
+        assert_eq!(
+            fb.overlay.cells.len(),
+            1,
+            "prediction should be added to overlay"
         );
+        assert_eq!(
+            fb.displayed_count, 0,
+            "prediction should not be displayed in tentative epoch"
+        );
+        assert!(
+            !display_bytes.contains(&b'x'),
+            "display bytes should not contain 'x' in tentative epoch"
+        );
+
+        // Backspace — pops the prediction from cells, nothing to display
+        let (_, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
+        assert!(
+            fb.overlay.cells.is_empty(),
+            "backspace should pop the tentative prediction"
+        );
+        assert_eq!(fb.displayed_count, 0);
+        assert!(display_bytes.is_empty() || !display_bytes.contains(&b' '));
     }
 
     #[test]
@@ -1738,6 +1759,87 @@ mod tests {
         assert_eq!(
             row0, "$ hell",
             "server echo should not cause double-delete, got: {row0:?}"
+        );
+    }
+
+    #[test]
+    fn password_entry_should_not_display() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        // Server sends initial prompt.
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types "su" + Enter — server echoes "su" and sends password prompt.
+        for ch in "su".chars() {
+            feed_keystroke(&mut fb, &mut display, &key_char(ch));
+        }
+        feed_keystroke(&mut fb, &mut display, &key_enter());
+        feed_server(&mut fb, &mut display, b"su\r\nPassword: ");
+
+        // User types password characters — server does NOT echo them.
+        // Predictions are added to cells (silently) but NOT displayed.
+        for ch in "secret".chars() {
+            let (_, display_bytes) = fb.on_keystroke(&key_char(ch)).unwrap();
+            assert_eq!(
+                fb.displayed_count, 0,
+                "password char '{ch}' should not be displayed"
+            );
+            assert!(
+                !display_bytes.contains(&(ch as u8)),
+                "display bytes should not contain password char '{ch}'"
+            );
+        }
+
+        // Verify the password prompt row doesn't show any predicted chars.
+        let prompt_row = (0..24u16)
+            .rev()
+            .find(|&r| display_row(&display, r).contains("Password"))
+            .expect("should find Password prompt row");
+        let row_text = display_row(&display, prompt_row);
+        assert!(
+            !row_text.contains("secret"),
+            "password should not appear on screen, got: {row_text:?}"
+        );
+    }
+
+    #[test]
+    fn predictions_should_resume_after_server_echo_in_new_epoch() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        // Server sends initial prompt.
+        feed_server(&mut fb, &mut display, b"$ ");
+
+        // User types "ls" + Enter.
+        for ch in "ls".chars() {
+            feed_keystroke(&mut fb, &mut display, &key_char(ch));
+        }
+        feed_keystroke(&mut fb, &mut display, &key_enter());
+
+        // Server echoes "ls", shows output, sends new prompt.
+        feed_server(&mut fb, &mut display, b"ls\r\nfile.txt\r\n$ ");
+
+        // User types 'a' — server echoes 'a', confirming the epoch.
+        feed_keystroke(&mut fb, &mut display, &key_char('a'));
+        feed_server(&mut fb, &mut display, b"a");
+
+        // Epoch should now be confirmed.
+        assert_eq!(
+            fb.overlay.epoch_counter, fb.overlay.confirmed_epoch,
+            "epoch should be confirmed after server echo"
+        );
+
+        // User types 'b' — prediction should appear.
+        let (_, display_bytes) = fb.on_keystroke(&key_char('b')).unwrap();
+        assert_eq!(
+            fb.overlay.cells.len(),
+            1,
+            "prediction should be allowed after epoch confirmation"
+        );
+        assert!(
+            display_bytes.contains(&b'b'),
+            "display bytes should contain predicted 'b'"
         );
     }
 }
