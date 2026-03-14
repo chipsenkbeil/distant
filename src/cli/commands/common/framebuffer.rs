@@ -39,6 +39,16 @@ struct PredictedCell {
     sent_at: Instant,
 }
 
+/// A predicted backspace erasure.
+struct BackspacePrediction {
+    row: u16,
+    col: u16,
+    /// Original character at this position (from shadow screen).
+    original_char: String,
+    epoch: u64,
+    sent_at: Instant,
+}
+
 /// Manages prediction overlay state without byte-level parsing.
 ///
 /// Predictions are placed at positions computed from the vt100 cursor
@@ -50,6 +60,7 @@ struct PredictionOverlay {
     epoch_counter: u64,
     confirmed_epoch: u64,
     cells: Vec<PredictedCell>,
+    backspace_predictions: Vec<BackspacePrediction>,
     last_input_time: Option<Instant>,
     input_byte_count: usize,
 }
@@ -67,6 +78,7 @@ pub struct TerminalFramebuffer {
     overlay: PredictionOverlay,
     sanitizer: TerminalSanitizer,
     displayed_count: usize,
+    backspace_displayed: usize,
 }
 
 impl TerminalFramebuffer {
@@ -82,6 +94,7 @@ impl TerminalFramebuffer {
             overlay: PredictionOverlay::new(predict_mode),
             sanitizer: TerminalSanitizer::CONPTY,
             displayed_count: 0,
+            backspace_displayed: 0,
         }
     }
 
@@ -92,7 +105,7 @@ impl TerminalFramebuffer {
         let mut output = Vec::new();
 
         // Erase displayed predictions before server output
-        if self.displayed_count > 0 {
+        if self.displayed_count > 0 || self.backspace_displayed > 0 {
             self.append_erase(&mut output);
         }
 
@@ -103,7 +116,7 @@ impl TerminalFramebuffer {
         // Re-display remaining predictions after server output
         if self.overlay.should_display()
             && !self.in_alternate_screen()
-            && !self.overlay.cells.is_empty()
+            && (!self.overlay.cells.is_empty() || !self.overlay.backspace_predictions.is_empty())
         {
             self.append_predictions(&mut output);
         }
@@ -120,10 +133,13 @@ impl TerminalFramebuffer {
 
         self.vt_parser.process(&sanitized);
         self.overlay.confirm_predictions(self.vt_parser.screen());
+        self.overlay
+            .confirm_backspace_predictions(self.vt_parser.screen());
 
         // Epoch recovery: if no predictions are pending, synchronize
         // confirmed_epoch so future predictions aren't permanently suppressed.
         if self.overlay.cells.is_empty()
+            && self.overlay.backspace_predictions.is_empty()
             && self.overlay.epoch_counter > self.overlay.confirmed_epoch + 1
         {
             self.overlay.confirmed_epoch = self.overlay.epoch_counter.saturating_sub(1);
@@ -153,7 +169,7 @@ impl TerminalFramebuffer {
 
         let has_new = self.overlay.should_display()
             && !self.in_alternate_screen()
-            && !self.overlay.cells.is_empty();
+            && (!self.overlay.cells.is_empty() || !self.overlay.backspace_predictions.is_empty());
 
         // Erase old predictions ONLY when:
         // - Displaying new predictions (erase + redisplay), OR
@@ -163,7 +179,8 @@ impl TerminalFramebuffer {
         // For epoch boundaries (Enter, Escape, etc.) with no new predictions,
         // leave predictions visible. render_server_output will erase them
         // atomically with server output, preventing visible flash.
-        if self.displayed_count > 0 && (has_new || !is_epoch_boundary) {
+        let anything_displayed = self.displayed_count > 0 || self.backspace_displayed > 0;
+        if anything_displayed && (has_new || !is_epoch_boundary) {
             self.append_erase(&mut display_bytes);
         }
 
@@ -182,7 +199,9 @@ impl TerminalFramebuffer {
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.vt_parser.screen_mut().set_size(rows, cols);
         self.overlay.cells.clear();
+        self.overlay.backspace_predictions.clear();
         self.displayed_count = 0;
+        self.backspace_displayed = 0;
     }
 
     /// Returns `true` if the shadow screen is in alternate screen mode.
@@ -207,22 +226,49 @@ impl TerminalFramebuffer {
     }
 
     /// Erase currently-displayed prediction chars from the terminal.
-    /// Restores cursor to server position (DECRC), writes spaces over
-    /// prediction area, restores cursor again.
+    /// Restores cursor to server position (DECRC), restores original
+    /// characters for backspace predictions, writes spaces over forward
+    /// predictions, then restores cursor again.
     fn append_erase(&mut self, buf: &mut Vec<u8>) {
         // DECRC — go to saved server cursor position
         buf.extend_from_slice(b"\x1b8");
         // Reset SGR (clear any underline from predictions)
         buf.extend_from_slice(b"\x1b[m");
-        // Write spaces to overwrite prediction chars
-        buf.resize(buf.len() + self.displayed_count, b' ');
+
+        let bs = self.backspace_displayed;
+        let fwd = self.displayed_count;
+
+        if bs > 0 {
+            // Clamp to available predictions — new_epoch() may have cleared
+            // the vec while backspace_displayed is still nonzero.
+            let available = self.overlay.backspace_predictions.len().min(bs);
+
+            // write! to Vec<u8> is infallible
+            write!(buf, "\x1b[{}D", bs).unwrap();
+            // Restore original characters where still available
+            for bp in &self.overlay.backspace_predictions[..available] {
+                buf.extend_from_slice(bp.original_char.as_bytes());
+            }
+            // Fill remaining positions with spaces if predictions were cleared
+            if available < bs {
+                buf.resize(buf.len() + (bs - available), b' ');
+            }
+            // Cursor is now at server cursor position
+        }
+
+        // Erase forward predictions past server cursor
+        if fwd > bs {
+            buf.resize(buf.len() + (fwd - bs), b' ');
+        }
+
         // DECRC — return to server cursor position
         buf.extend_from_slice(b"\x1b8");
         self.displayed_count = 0;
+        self.backspace_displayed = 0;
     }
 
     /// Write prediction display: DECSC + [underline] + chars + [underline off].
-    /// Does NOT emit DECRC — cursor stays at prediction end (fixes cursor lag).
+    /// Does NOT emit DECRC — cursor stays at predicted position (fixes cursor lag).
     fn append_predictions(&mut self, buf: &mut Vec<u8>) {
         // DECSC — save server cursor position
         buf.extend_from_slice(b"\x1b7");
@@ -231,17 +277,45 @@ impl TerminalFramebuffer {
         if underline {
             buf.extend_from_slice(b"\x1b[4m");
         }
-        for pred in &self.overlay.cells {
-            let mut char_buf = [0u8; 4];
-            let s = pred.ch.encode_utf8(&mut char_buf);
-            buf.extend_from_slice(s.as_bytes());
+
+        let bs_count = self.overlay.backspace_predictions.len();
+        let fwd_count = self.overlay.cells.len();
+
+        // write! to Vec<u8> is infallible (Vec's Write impl never errors)
+        if bs_count > 0 && fwd_count == 0 {
+            // Backspace only — erase characters behind cursor
+            write!(buf, "\x1b[{}D", bs_count).unwrap();
+            buf.resize(buf.len() + bs_count, b' ');
+            write!(buf, "\x1b[{}D", bs_count).unwrap();
+        } else if bs_count > 0 && fwd_count > 0 {
+            // Combined — backspace + forward
+            write!(buf, "\x1b[{}D", bs_count).unwrap();
+            for pred in &self.overlay.cells {
+                let mut char_buf = [0u8; 4];
+                let s = pred.ch.encode_utf8(&mut char_buf);
+                buf.extend_from_slice(s.as_bytes());
+            }
+            if fwd_count < bs_count {
+                let remaining = bs_count - fwd_count;
+                buf.resize(buf.len() + remaining, b' ');
+                write!(buf, "\x1b[{}D", remaining).unwrap();
+            }
+        } else {
+            // Forward only (existing behavior)
+            for pred in &self.overlay.cells {
+                let mut char_buf = [0u8; 4];
+                let s = pred.ch.encode_utf8(&mut char_buf);
+                buf.extend_from_slice(s.as_bytes());
+            }
         }
+
         if underline {
             buf.extend_from_slice(b"\x1b[24m");
         }
 
-        // NO DECRC — leave cursor at end of predictions
-        self.displayed_count = self.overlay.cells.len();
+        // NO DECRC — leave cursor at predicted position
+        self.displayed_count = fwd_count;
+        self.backspace_displayed = bs_count;
     }
 }
 
@@ -253,6 +327,7 @@ impl PredictionOverlay {
             epoch_counter: 0,
             confirmed_epoch: 0,
             cells: Vec::new(),
+            backspace_predictions: Vec::new(),
             last_input_time: None,
             input_byte_count: 0,
         }
@@ -284,6 +359,7 @@ impl PredictionOverlay {
                 self.input_byte_count += encoded.len();
                 if self.input_byte_count >= BULK_PASTE_THRESHOLD {
                     self.cells.clear();
+                    self.backspace_predictions.clear();
                     self.last_input_time = Some(now);
                     return;
                 }
@@ -304,9 +380,36 @@ impl PredictionOverlay {
                     self.new_epoch();
                     return;
                 }
-                // Backspace: remove last prediction cell
+                // Backspace: remove last prediction cell, or predict erasure
                 0x7f | 0x08 => {
-                    self.cells.pop();
+                    if !self.cells.is_empty() {
+                        self.cells.pop();
+                    } else {
+                        // Tentative epoch check (password suppression)
+                        if self.epoch_counter > self.confirmed_epoch + 1 {
+                            return;
+                        }
+
+                        let (cursor_row, cursor_col) = screen.cursor_position();
+                        let predicted_col =
+                            cursor_col as i32 - self.backspace_predictions.len() as i32;
+
+                        if predicted_col > 0 {
+                            let target_col = (predicted_col - 1) as u16;
+                            if let Some(cell) = screen.cell(cursor_row, target_col) {
+                                let content = cell.contents();
+                                if !content.is_empty() && content.len() <= 4 {
+                                    self.backspace_predictions.push(BackspacePrediction {
+                                        row: cursor_row,
+                                        col: target_col,
+                                        original_char: content.to_string(),
+                                        epoch: self.epoch_counter,
+                                        sent_at: Instant::now(),
+                                    });
+                                }
+                            }
+                        }
+                    }
                     return;
                 }
                 // Other control characters (Ctrl+A through Ctrl+Z minus already handled)
@@ -339,10 +442,11 @@ impl PredictionOverlay {
 
     fn new_epoch(&mut self) {
         self.epoch_counter += 1;
-        if self.cells.is_empty() {
+        if self.cells.is_empty() && self.backspace_predictions.is_empty() {
             self.confirmed_epoch = self.epoch_counter.saturating_sub(1);
         }
         self.cells.clear();
+        self.backspace_predictions.clear();
     }
 
     fn add_prediction(&mut self, ch: char, screen: &vt100::Screen) {
@@ -358,8 +462,10 @@ impl PredictionOverlay {
 
         let (base_row, base_col) = screen.cursor_position();
         let (_, term_width) = screen.size();
+        let backspace_offset = self.backspace_predictions.len() as u16;
+        let effective_col = base_col.saturating_sub(backspace_offset);
         let offset = self.cells.len() as u16;
-        let total_col = base_col + offset;
+        let total_col = effective_col + offset;
         let (pred_row, pred_col) = if total_col >= term_width {
             (
                 base_row.saturating_add(total_col / term_width),
@@ -411,6 +517,30 @@ impl PredictionOverlay {
                 return false;
             }
 
+            true
+        });
+    }
+
+    /// Confirm or discard backspace predictions by checking cursor position.
+    fn confirm_backspace_predictions(&mut self, screen: &vt100::Screen) {
+        let (cursor_row, cursor_col) = screen.cursor_position();
+        let Self {
+            backspace_predictions,
+            rtt,
+            confirmed_epoch,
+            ..
+        } = self;
+
+        backspace_predictions.retain(|bp| {
+            if bp.sent_at.elapsed() > PREDICTION_EXPIRY {
+                return false;
+            }
+            // Server cursor moved back to/past this position → confirmed
+            if cursor_row < bp.row || (cursor_row == bp.row && cursor_col <= bp.col) {
+                rtt.update(bp.sent_at.elapsed());
+                *confirmed_epoch = (*confirmed_epoch).max(bp.epoch);
+                return false;
+            }
             true
         });
     }
@@ -1223,6 +1353,230 @@ mod tests {
         assert_eq!(
             fb.displayed_count, 1,
             "displayed_count should be 1 for new prediction"
+        );
+    }
+
+    fn key_backspace() -> KeyEvent {
+        KeyEvent {
+            code: crossterm::event::KeyCode::Backspace,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn backspace_should_predict_erasure_from_shadow_screen() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // Feed server output to move shadow screen cursor to col 5
+        fb.process_server_output(b"hello");
+
+        // Press backspace — should predict erasure of 'o' at col 4
+        let (encoded, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
+        assert_eq!(encoded, "\x7f");
+
+        assert_eq!(fb.overlay.backspace_predictions.len(), 1);
+        assert_eq!(fb.overlay.backspace_predictions[0].original_char, "o");
+        assert_eq!(fb.overlay.backspace_predictions[0].col, 4);
+        assert_eq!(fb.overlay.backspace_predictions[0].row, 0);
+
+        // Display bytes should contain CUB (cursor back) sequence
+        assert!(
+            !display_bytes.is_empty(),
+            "display bytes should be non-empty for backspace prediction"
+        );
+        let display_str = String::from_utf8_lossy(&display_bytes);
+        assert!(
+            display_str.contains("\x1b[1D"),
+            "display bytes should contain CUB sequence, got: {display_str:?}"
+        );
+    }
+
+    #[test]
+    fn backspace_should_not_predict_at_column_zero() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+
+        // No server output — cursor at col 0
+        let (encoded, display_bytes) = fb.on_keystroke(&key_backspace()).unwrap();
+        assert_eq!(encoded, "\x7f");
+
+        assert!(
+            fb.overlay.backspace_predictions.is_empty(),
+            "no backspace prediction should be added at col 0"
+        );
+        assert!(
+            display_bytes.is_empty(),
+            "display bytes should be empty when no prediction is made"
+        );
+    }
+
+    #[test]
+    fn backspace_prediction_should_restore_on_server_echo() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"hello");
+
+        // Press backspace — predicts erasure of 'o' at col 4
+        fb.on_keystroke(&key_backspace());
+        assert_eq!(fb.backspace_displayed, 1);
+        assert_eq!(fb.overlay.backspace_predictions.len(), 1);
+        assert_eq!(fb.overlay.backspace_predictions[0].original_char, "o");
+
+        // Server echoes backspace (BS + space + BS erases the character)
+        let output = fb.render_server_output(b"\x08 \x08");
+
+        // After server echo, the backspace prediction should be confirmed
+        // (server cursor moved back to col 4, which is <= bp.col 4)
+        assert_eq!(
+            fb.backspace_displayed, 0,
+            "backspace_displayed should be 0 after server echo"
+        );
+
+        // Output should contain the erase sequence (DECRC) since predictions were displayed
+        assert!(
+            output.starts_with(b"\x1b8"),
+            "output should start with DECRC for erasing displayed predictions"
+        );
+    }
+
+    #[test]
+    fn multiple_backspace_should_predict_multiple_erasures() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"abc");
+
+        // Press backspace 3 times
+        fb.on_keystroke(&key_backspace());
+        fb.on_keystroke(&key_backspace());
+        fb.on_keystroke(&key_backspace());
+
+        assert_eq!(fb.overlay.backspace_predictions.len(), 3);
+
+        // Original chars should be in order of backspace press
+        assert_eq!(fb.overlay.backspace_predictions[0].original_char, "c");
+        assert_eq!(fb.overlay.backspace_predictions[1].original_char, "b");
+        assert_eq!(fb.overlay.backspace_predictions[2].original_char, "a");
+
+        // Columns should go backwards
+        assert_eq!(fb.overlay.backspace_predictions[0].col, 2);
+        assert_eq!(fb.overlay.backspace_predictions[1].col, 1);
+        assert_eq!(fb.overlay.backspace_predictions[2].col, 0);
+    }
+
+    #[test]
+    fn typing_after_backspace_should_combine() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"hello");
+
+        // Press backspace twice — erases 'o' at col 4 and 'l' at col 3
+        fb.on_keystroke(&key_backspace());
+        fb.on_keystroke(&key_backspace());
+        assert_eq!(fb.overlay.backspace_predictions.len(), 2);
+
+        // Type 'x' and 'y'
+        fb.on_keystroke(&key_char('x'));
+        fb.on_keystroke(&key_char('y'));
+
+        // Backspace predictions remain
+        assert_eq!(fb.overlay.backspace_predictions.len(), 2);
+        // Forward predictions placed after backspace offset
+        assert_eq!(fb.overlay.cells.len(), 2);
+        assert_eq!(fb.overlay.cells[0].col, 3);
+        assert_eq!(fb.overlay.cells[1].col, 4);
+    }
+
+    #[test]
+    fn backspace_prediction_should_respect_tentative_epoch() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "passwd" + Enter (creates epoch 1; cells non-empty -> no catch-up)
+        for ch in "passwd".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        fb.on_keystroke(&key_enter());
+
+        // Type "x" in epoch 1 (allowed: epoch 1 <= confirmed 0 + 1)
+        fb.on_keystroke(&key_char('x'));
+
+        // Another Enter without server confirmation (creates epoch 2;
+        // cells non-empty -> no catch-up)
+        fb.on_keystroke(&key_enter());
+
+        // Now epoch_counter=2, confirmed_epoch=0 => tentative (2 > 0+1)
+        assert!(
+            fb.overlay.epoch_counter > fb.overlay.confirmed_epoch + 1,
+            "should be in tentative epoch: epoch={}, confirmed={}",
+            fb.overlay.epoch_counter,
+            fb.overlay.confirmed_epoch
+        );
+
+        // Press backspace — should NOT add backspace prediction in tentative epoch
+        fb.on_keystroke(&key_backspace());
+        assert!(
+            fb.overlay.backspace_predictions.is_empty(),
+            "backspace prediction should be suppressed in tentative epoch"
+        );
+    }
+
+    #[test]
+    fn backspace_then_enter_then_server_should_not_panic() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"hello");
+
+        // Press backspace — backspace_displayed becomes 1
+        fb.on_keystroke(&key_backspace());
+        assert_eq!(fb.backspace_displayed, 1);
+
+        // Press Enter — new_epoch clears backspace_predictions, but backspace_displayed stays
+        fb.on_keystroke(&key_enter());
+        assert!(
+            fb.overlay.backspace_predictions.is_empty(),
+            "new_epoch should clear backspace_predictions"
+        );
+
+        // Server output — should NOT panic even though backspace_predictions
+        // is empty while backspace_displayed is nonzero
+        let output = fb.render_server_output(b"hello\r\n$ ");
+        assert_eq!(
+            fb.backspace_displayed, 0,
+            "backspace_displayed should be reset after render_server_output"
+        );
+
+        // Output should start with DECRC (erase) since things were displayed
+        assert!(
+            output.starts_with(b"\x1b8"),
+            "output should start with DECRC for erase"
+        );
+    }
+
+    #[test]
+    fn backspace_display_should_show_erasure_on_screen() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        let mut display = vt100::Parser::new(24, 80, 0);
+
+        // Feed server "$ hello" to both
+        feed_server(&mut fb, &mut display, b"$ hello");
+        let row0 = display_row(&display, 0);
+        assert_eq!(row0, "$ hello");
+
+        // Press backspace via feed_keystroke
+        feed_keystroke(&mut fb, &mut display, &key_backspace());
+
+        // Display should show "$ hell" (the 'o' is erased)
+        let row0 = display_row(&display, 0);
+        assert_eq!(
+            row0, "$ hell",
+            "backspace prediction should erase 'o', got: {row0:?}"
+        );
+
+        // Feed server backspace echo
+        feed_server(&mut fb, &mut display, b"\x08 \x08");
+
+        // Display should still show "$ hell" (no double-delete)
+        let row0 = display_row(&display, 0);
+        assert_eq!(
+            row0, "$ hell",
+            "server echo should not cause double-delete, got: {row0:?}"
         );
     }
 }
