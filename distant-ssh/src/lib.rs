@@ -1219,6 +1219,7 @@ mod tests {
         let handler = LocalSshAuthHandler;
         handler.on_banner("test banner").await;
         handler.on_error("test error").await;
+
         // These just log — verifying they don't panic is sufficient
     }
 
@@ -2748,6 +2749,7 @@ mod tests {
     #[test]
     fn default_known_hosts_files_should_include_system_paths() {
         let files = SshSession::default_known_hosts_files();
+
         // Should contain at least the system paths
         #[cfg(unix)]
         {
@@ -2780,6 +2782,7 @@ mod tests {
                 files
             );
         }
+
         // User paths should come before system paths
         if let Some(home) = dirs::home_dir() {
             let user_kh = home.join(".ssh").join("known_hosts");
@@ -2827,6 +2830,7 @@ mod tests {
         std::fs::write(&config_path, [0xFF, 0xFE, 0x00, 0x01]).unwrap();
 
         let result = config::try_parse_ssh_config_file(&config_path, "host");
+
         // ssh2-config is fairly permissive — it may return Some with empty params
         // or None on parse failure. Either is acceptable; the key assertion is that
         // the function does not panic on binary input.
@@ -2851,6 +2855,7 @@ mod tests {
         .unwrap();
 
         let params = config::try_parse_ssh_config_file(&config_path, "corp-vm").unwrap();
+
         // ssh2-config splits unsupported field values into words
         let proxy = params
             .unsupported_fields
@@ -3159,6 +3164,7 @@ port 2222
 
         assert_eq!(params.host_name.as_deref(), Some("recognized.example.com"));
         assert_eq!(params.port, Some(2222));
+
         // Unrecognized keys are silently ignored; ResolvedConfig has no catch-all field
     }
 

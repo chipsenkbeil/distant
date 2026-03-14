@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 use crate::SshFamily;
 use crate::pool::{ChannelPool, PooledSftp};
 use crate::process::Process;
+use crate::utils;
 use crate::utils::SftpPathBuf;
 
 /// Represents implementation of [`Api`] for SSH.
@@ -155,6 +156,28 @@ impl SshApi {
             Ok(Some(resolved_path))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Detect the default shell on the remote system.
+    ///
+    /// On Windows, queries `ComSpec` via PowerShell. On Unix, reads `/etc/passwd`.
+    async fn detect_shell(&self, is_windows: bool, username: &str) -> io::Result<String> {
+        if is_windows {
+            let (channel, _permit) = self.pool.open_exec().await?.take();
+            let output = utils::execute_output_on_channel(
+                channel,
+                "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
+                Some(std::time::Duration::from_secs(utils::SSH_TIMEOUT_SECS)),
+            )
+            .await?;
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            let sftp = self.get_sftp().await?;
+            match Self::shell_from_passwd(&sftp, username).await {
+                Some(shell) => Ok(shell),
+                None => Ok("/bin/sh".to_string()),
+            }
         }
     }
 
@@ -629,8 +652,6 @@ impl Api for SshApi {
         async move {
             debug!("[Conn {}] Copying {} to {}", ctx.connection_id, src, dst);
 
-            use crate::utils::execute_output_on_channel;
-
             let src_str = src.as_str();
             let dst_str = dst.as_str();
 
@@ -645,9 +666,8 @@ impl Api for SshApi {
                 format!("cp -r \"{}\" \"{}\"", src_str, dst_str)
             };
 
-            let pooled = pool.open_exec().await?;
-            let (channel, _permit) = pooled.take();
-            let output = execute_output_on_channel(channel, &command, None).await?;
+            let (channel, _permit) = pool.open_exec().await?.take();
+            let output = utils::execute_output_on_channel(channel, &command, None).await?;
 
             if !output.success {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -1071,6 +1091,7 @@ impl Api for SshApi {
                     let sftp = self.get_sftp().await?;
                     let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
 
+                    // Fix Windows paths: /C:/... -> C:\...
                     let current_dir = self.sftp_from_wire(path_str).to_remote_path().to_string();
 
                     Result::<_, io::Error>::Ok(current_dir)
@@ -1082,27 +1103,7 @@ impl Api for SshApi {
 
             let shell = self
                 .cached_shell
-                .get_or_try_init(async {
-                    if is_windows {
-                        let pooled = self.pool.open_exec().await?;
-                        let (channel, _permit) = pooled.take();
-                        let output = crate::utils::execute_output_on_channel(
-                            channel,
-                            "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
-                            Some(std::time::Duration::from_secs(crate::utils::SSH_TIMEOUT_SECS)),
-                        )
-                        .await?;
-                        Result::<_, io::Error>::Ok(
-                            String::from_utf8_lossy(&output.stdout).trim().to_string(),
-                        )
-                    } else {
-                        let sftp = self.get_sftp().await?;
-                        match Self::shell_from_passwd(&sftp, &username).await {
-                            Some(shell) => Ok(shell),
-                            None => Ok("/bin/sh".to_string()),
-                        }
-                    }
-                })
+                .get_or_try_init(self.detect_shell(is_windows, &username))
                 .await?
                 .clone();
 

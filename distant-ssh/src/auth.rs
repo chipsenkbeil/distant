@@ -13,7 +13,7 @@ use log::*;
 use russh::MethodSet;
 use russh::client::Handle;
 use russh::client::{AuthResult, KeyboardInteractiveAuthResponse};
-use russh::keys::PrivateKeyWithHashAlg;
+use russh::keys::{Algorithm, Certificate, PrivateKeyWithHashAlg};
 use russh::keys::agent::client::AgentClient;
 
 use crate::{ClientHandler, SshAuthEvent, SshAuthHandler, SshAuthPrompt};
@@ -293,7 +293,7 @@ fn discover_cert_files(key_files: &[PathBuf]) -> Vec<PathBuf> {
 /// Try certificate authentication with a connected agent.
 ///
 /// Iterates over discovered certificate files, loads each one, and attempts
-/// `authenticate_certificate_with` using the given agent for signing.
+/// certificate-based public key authentication using the agent for signing.
 async fn try_certs_with_agent<S>(
     handle: &mut Handle<ClientHandler>,
     user: &str,
@@ -316,7 +316,7 @@ where
             }
         };
 
-        let cert = match russh::keys::Certificate::from_openssh(&contents) {
+        let cert = match Certificate::from_openssh(&contents) {
             Ok(c) => c,
             Err(e) => {
                 debug!("Failed to parse certificate {:?}: {}", expanded, e);
@@ -326,7 +326,7 @@ where
 
         // Determine hash_alg for RSA certs
         let hash_alg = match cert.algorithm() {
-            russh::keys::Algorithm::Rsa { hash } => hash,
+            Algorithm::Rsa { hash } => hash,
             _ => None,
         };
 
@@ -2292,7 +2292,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let key_path = tmp.path().join("id_ed25519");
         std::fs::write(&key_path, "fake key").unwrap();
-        // Deliberately do NOT create id_ed25519-cert.pub
 
         let result = discover_cert_files(&[key_path]);
         assert!(
