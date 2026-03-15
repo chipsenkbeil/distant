@@ -200,8 +200,6 @@ impl TerminalSanitizer {
     /// All filtering decisions are centralized in this single match.
     fn classify(&self, seq: &EscapeSeq) -> SeqAction {
         match seq {
-            // ── Terminal queries (strip_queries) ──
-
             // DA1: ESC[c or ESC[0c
             EscapeSeq::Csi {
                 private_marker: None,
@@ -280,8 +278,6 @@ impl TerminalSanitizer {
                 SeqAction::Strip
             }
 
-            // ── Blocked DEC private modes ──
-
             // ESC[?<mode>h or ESC[?<mode>l
             EscapeSeq::Csi {
                 private_marker: Some(b'?'),
@@ -294,8 +290,6 @@ impl TerminalSanitizer {
                 SeqAction::Strip
             }
 
-            // ── Blocked resize ──
-
             // XTWINOPS: ESC[8;<rows>;<cols>t
             EscapeSeq::Csi {
                 private_marker: None,
@@ -304,7 +298,7 @@ impl TerminalSanitizer {
                 ..
             } if self.strip_xtwinops && Self::is_xtwinops_resize(params) => SeqAction::Strip,
 
-            // ── Everything else passes through ──
+            // Everything else passes through
             _ => SeqAction::PassThrough,
         }
     }
