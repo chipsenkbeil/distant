@@ -547,18 +547,7 @@ fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::R
 impl SshSession {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        // Resolve SSH config: try `ssh -G` first (handles Match blocks, Include,
-        // etc.), then fall back to the built-in ssh2-config parser.
-        let ssh_config = match config::query_openssh(host.as_ref()).await {
-            Some(cfg) => {
-                debug!("SSH config resolved via ssh -G");
-                cfg
-            }
-            None => {
-                debug!("ssh -G unavailable, falling back to ssh2-config parser");
-                config::parse_ssh_config(host.as_ref())?
-            }
-        };
+        let ssh_config = config::ResolvedConfig::for_host(host.as_ref()).await?;
 
         // Resolve the actual hostname to connect to (SSH config HostName directive)
         let connect_host = ssh_config.host_name.as_deref().unwrap_or(host.as_ref());
@@ -594,7 +583,7 @@ impl SshSession {
         );
 
         // Build russh configuration
-        let russh_cfg = config::build_russh_config(&opts, &ssh_config)?;
+        let russh_cfg = ssh_config.to_russh_config()?;
 
         // Verbose diagnostics
         if opts.verbose {
@@ -951,7 +940,7 @@ impl Ssh {
         }
 
         let sshid = self.remote_sshid.lock().await.clone();
-        let is_windows = utils::is_windows_pooled(&self.pool, sshid.as_deref()).await?;
+        let is_windows = utils::is_windows(&self.pool, sshid.as_deref()).await?;
         let family = if is_windows {
             SshFamily::Windows
         } else {
@@ -1195,7 +1184,6 @@ impl Ssh {
 mod tests {
     use std::io::Write;
 
-    use rstest::rstest;
     use ssh2_config::{ParseRule, SshConfig};
 
     use super::*;
@@ -1494,102 +1482,38 @@ mod tests {
     }
 
     #[test]
-    fn build_russh_config_should_use_defaults_when_no_overrides() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_use_defaults_when_no_overrides() {
         let resolved = config::ResolvedConfig::default();
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
 
         assert!(cfg.keepalive_interval.is_none());
     }
 
     #[test]
-    fn build_russh_config_should_set_keepalive_from_server_alive_interval() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_set_keepalive_from_server_alive_interval() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.server_alive_interval = Some(Duration::from_secs(60));
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(60)));
     }
 
     #[test]
-    fn build_russh_config_should_set_short_keepalive() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_set_short_keepalive() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.server_alive_interval = Some(Duration::from_secs(5));
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(5)));
     }
 
     #[test]
-    fn build_russh_config_should_leave_keepalive_none_when_unset() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_leave_keepalive_none_when_unset() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.server_alive_interval = None;
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert!(cfg.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_russh_config_should_succeed_with_verbose_opts() {
-        let mut opts = SshOpts::default();
-        opts.verbose = true;
-        let resolved = config::ResolvedConfig::default();
-
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
-        assert!(cfg.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_russh_config_should_succeed_with_populated_opts() {
-        let mut opts = SshOpts::default();
-        opts.port = Some(2222);
-        opts.user = Some("testuser".to_string());
-        opts.identity_files.push(PathBuf::from("/tmp/id_rsa"));
-
-        let resolved = config::ResolvedConfig::default();
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
-        assert!(cfg.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_return_defaults_with_empty_params() {
-        let resolved = config::ResolvedConfig::default();
-        let preferred = config::build_preferred_algorithms(&resolved);
-
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(preferred.kex, default_preferred.kex);
-        assert_eq!(preferred.cipher, default_preferred.cipher);
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_use_defaults_despite_custom_params() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.port = Some(9999);
-        resolved.user = Some("custom-user".to_string());
-
-        let preferred = config::build_preferred_algorithms(&resolved);
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(preferred.kex, default_preferred.kex);
-    }
-
-    #[rstest]
-    #[case::nonexistent("nonexistent-host.example.com")]
-    #[case::localhost("localhost")]
-    #[case::wildcard("*")]
-    #[case::empty("")]
-    #[case::ipv4("192.168.1.1")]
-    #[case::ipv6("::1")]
-    #[case::fqdn("server.example.co.uk")]
-    #[case::hyphenated("my-server-01.internal")]
-    #[case::underscore("my_server_01")]
-    fn parse_ssh_config_should_not_error_for_any_hostname(#[case] host: &str) {
-        // parse_ssh_config reads the real ~/.ssh/config (or returns defaults).
-        // We can't assert specific field values since the user's config may have
-        // wildcard matches. The unwrap proves it never errors for valid input.
-        let _params = config::parse_ssh_config(host).unwrap();
     }
 
     struct MockSshAuthHandler {
@@ -2037,30 +1961,27 @@ mod tests {
     }
 
     #[test]
-    fn build_russh_config_should_allow_zero_keepalive() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_allow_zero_keepalive() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.server_alive_interval = Some(Duration::from_secs(0));
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(0)));
     }
 
     #[test]
-    fn build_russh_config_should_allow_large_keepalive() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_allow_large_keepalive() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.server_alive_interval = Some(Duration::from_secs(3600));
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(3600)));
     }
 
     #[test]
-    fn build_russh_config_should_include_preferred_algorithms() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_include_preferred_algorithms() {
         let resolved = config::ResolvedConfig::default();
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
 
         let default_preferred = russh::Preferred::default();
         assert_eq!(cfg.preferred.kex, default_preferred.kex);
@@ -2309,200 +2230,22 @@ mod tests {
     }
 
     #[test]
-    fn build_russh_config_should_set_default_keepalive_from_tcp_keep_alive() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_set_default_keepalive_from_tcp_keep_alive() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.tcp_keep_alive = Some(true);
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(15)));
     }
 
     #[test]
-    fn build_russh_config_should_prefer_server_alive_interval_over_tcp_keep_alive() {
-        let opts = SshOpts::default();
+    fn to_russh_config_should_prefer_server_alive_interval_over_tcp_keep_alive() {
         let mut resolved = config::ResolvedConfig::default();
         resolved.tcp_keep_alive = Some(true);
         resolved.server_alive_interval = Some(Duration::from_secs(30));
 
-        let cfg = config::build_russh_config(&opts, &resolved).unwrap();
+        let cfg = resolved.to_russh_config().unwrap();
         assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(30)));
-    }
-
-    /// Convert a [`HostParams`] from ssh2-config into a [`config::ResolvedConfig`] for testing.
-    fn resolved_from_host_params(params: &ssh2_config::HostParams) -> config::ResolvedConfig {
-        config::ResolvedConfig {
-            host_name: params.host_name.clone(),
-            port: params.port,
-            user: params.user.clone(),
-            identity_files: params.identity_file.clone().unwrap_or_default(),
-            proxy_command: params
-                .unsupported_fields
-                .get("proxycommand")
-                .map(|v| v.join(" "))
-                .filter(|s| !s.is_empty()),
-            proxy_jump: params.proxy_jump.clone(),
-            server_alive_interval: params.server_alive_interval,
-            tcp_keep_alive: params.tcp_keep_alive,
-            connect_timeout: params.connect_timeout,
-            compression: params.compression,
-            ciphers: if params.ciphers.is_default() {
-                Vec::new()
-            } else {
-                params.ciphers.algorithms().to_vec()
-            },
-            kex_algorithms: if params.kex_algorithms.is_default() {
-                Vec::new()
-            } else {
-                params.kex_algorithms.algorithms().to_vec()
-            },
-            host_key_algorithms: if params.host_key_algorithms.is_default() {
-                Vec::new()
-            } else {
-                params.host_key_algorithms.algorithms().to_vec()
-            },
-            macs: if params.mac.is_default() {
-                Vec::new()
-            } else {
-                params.mac.algorithms().to_vec()
-            },
-            pubkey_accepted_algorithms: if params.pubkey_accepted_algorithms.is_default() {
-                Vec::new()
-            } else {
-                params.pubkey_accepted_algorithms.algorithms().to_vec()
-            },
-            strict_host_key_checking: params
-                .unsupported_fields
-                .get("stricthostkeychecking")
-                .and_then(|v| v.first())
-                .cloned(),
-            identities_only: params
-                .unsupported_fields
-                .get("identitiesonly")
-                .and_then(|v| v.first())
-                .cloned(),
-            identity_agent: params
-                .unsupported_fields
-                .get("identityagent")
-                .and_then(|v| v.first())
-                .cloned(),
-            user_known_hosts_files: params
-                .unsupported_fields
-                .get("userknownhostsfile")
-                .cloned()
-                .unwrap_or_default(),
-            global_known_hosts_files: params
-                .unsupported_fields
-                .get("globalknownhostsfile")
-                .cloned()
-                .unwrap_or_default(),
-        }
-    }
-
-    /// Helper: parse a temp SSH config and return a ResolvedConfig for testing.
-    fn parse_config_str(config_text: &str) -> config::ResolvedConfig {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config");
-        let mut f = std::fs::File::create(&path).unwrap();
-        write!(f, "{}", config_text).unwrap();
-
-        let mut reader = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
-        let ssh_config = SshConfig::default()
-            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
-            .unwrap();
-        resolved_from_host_params(&ssh_config.query("testhost"))
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_ciphers() {
-        let params = parse_config_str(
-            "Host testhost\n  Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com\n",
-        );
-
-        let preferred = config::build_preferred_algorithms(&params);
-        assert!(preferred.cipher.len() <= 2);
-        assert!(
-            preferred
-                .cipher
-                .iter()
-                .any(|c| c.as_ref() == "chacha20-poly1305@openssh.com")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_skip_unsupported_cipher() {
-        let params = parse_config_str(
-            "Host testhost\n  Ciphers aes256-gcm@openssh.com,nonexistent-cipher\n",
-        );
-
-        let preferred = config::build_preferred_algorithms(&params);
-        assert!(
-            preferred
-                .cipher
-                .iter()
-                .all(|c| c.as_ref() != "nonexistent-cipher")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_kex() {
-        let params = parse_config_str("Host testhost\n  KexAlgorithms curve25519-sha256\n");
-
-        let preferred = config::build_preferred_algorithms(&params);
-        assert!(
-            preferred
-                .kex
-                .iter()
-                .any(|k| k.as_ref() == "curve25519-sha256")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_mac() {
-        let params = parse_config_str("Host testhost\n  MACs hmac-sha2-256\n");
-
-        let preferred = config::build_preferred_algorithms(&params);
-        assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_filter_cert_host_key_algorithms() {
-        let params = parse_config_str(
-            "Host testhost\n  HostKeyAlgorithms ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512-cert-v01@openssh.com,ssh-ed25519,rsa-sha2-512\n",
-        );
-
-        let preferred = config::build_preferred_algorithms(&params);
-
-        // Only the plain (non-cert) algorithms should survive filtering.
-        // Cert variants parse as Algorithm::Other(...) and must be rejected.
-        assert_eq!(
-            preferred.key.as_ref(),
-            &[
-                russh::keys::Algorithm::Ed25519,
-                russh::keys::Algorithm::Rsa {
-                    hash: Some(russh::keys::HashAlg::Sha512),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_keep_plain_host_key_algorithms() {
-        let params =
-            parse_config_str("Host testhost\n  HostKeyAlgorithms ssh-ed25519,rsa-sha2-256\n");
-
-        let preferred = config::build_preferred_algorithms(&params);
-
-        // All plain algorithms are recognized by russh and should be preserved.
-        assert_eq!(
-            preferred.key.as_ref(),
-            &[
-                russh::keys::Algorithm::Ed25519,
-                russh::keys::Algorithm::Rsa {
-                    hash: Some(russh::keys::HashAlg::Sha256),
-                },
-            ]
-        );
     }
 
     /// Generate an Ed25519 public key for host-key tests.
@@ -2798,513 +2541,6 @@ mod tests {
                     "User known_hosts should come before system known_hosts"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn try_parse_ssh_config_file_should_return_none_for_missing_file() {
-        let result =
-            config::try_parse_ssh_config_file(Path::new("/nonexistent/path/config"), "host");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn try_parse_ssh_config_file_should_parse_valid_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("ssh_config");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(f, "Host testhost\n  HostName 10.0.0.1\n  Port 2222").unwrap();
-
-        let result = config::try_parse_ssh_config_file(&config_path, "testhost");
-        assert!(result.is_some());
-        let params = result.unwrap();
-        assert_eq!(params.host_name.as_deref(), Some("10.0.0.1"));
-        assert_eq!(params.port, Some(2222));
-    }
-
-    #[test]
-    fn try_parse_ssh_config_file_should_not_panic_on_invalid_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("bad_config");
-        // Write binary garbage that can't be parsed as SSH config
-        std::fs::write(&config_path, [0xFF, 0xFE, 0x00, 0x01]).unwrap();
-
-        let result = config::try_parse_ssh_config_file(&config_path, "host");
-
-        // ssh2-config is fairly permissive — it may return Some with empty params
-        // or None on parse failure. Either is acceptable; the key assertion is that
-        // the function does not panic on binary input.
-        if let Some(params) = result {
-            // If parsed, the garbage should not produce meaningful SSH settings
-            assert!(
-                params.host_name.is_none(),
-                "Binary garbage should not produce a valid HostName"
-            );
-        }
-    }
-
-    #[test]
-    fn try_parse_ssh_config_file_should_extract_unsupported_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("ssh_config");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(
-            f,
-            "Host corp-vm\n  ProxyCommand exec ssh -W %h:%p jump\n  IdentitiesOnly yes"
-        )
-        .unwrap();
-
-        let params = config::try_parse_ssh_config_file(&config_path, "corp-vm").unwrap();
-
-        // ssh2-config splits unsupported field values into words
-        let proxy = params
-            .unsupported_fields
-            .get("proxycommand")
-            .map(|v| v.join(" "));
-        assert_eq!(
-            proxy.as_deref(),
-            Some("exec ssh -W %h:%p jump"),
-            "ProxyCommand should be in unsupported_fields (rejoined)"
-        );
-
-        let id_only = params
-            .unsupported_fields
-            .get("identitiesonly")
-            .and_then(|v| v.first());
-        assert_eq!(
-            id_only.map(|s| s.as_str()),
-            Some("yes"),
-            "IdentitiesOnly should be in unsupported_fields"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_config_should_merge_system_and_user_configs() {
-        // This test verifies the merge behavior by testing try_parse_ssh_config_file
-        // directly, since parse_ssh_config reads from fixed system paths
-        let dir = tempfile::tempdir().unwrap();
-
-        // Simulate system config (has HostName but not User)
-        let system_path = dir.path().join("system_config");
-        let mut f = std::fs::File::create(&system_path).unwrap();
-        writeln!(f, "Host myhost\n  HostName 10.0.0.1\n  Port 22").unwrap();
-
-        // Simulate user config (has User but not HostName)
-        let user_path = dir.path().join("user_config");
-        let mut f = std::fs::File::create(&user_path).unwrap();
-        writeln!(f, "Host myhost\n  User deployer\n  Port 2222").unwrap();
-
-        let system_params = config::try_parse_ssh_config_file(&system_path, "myhost").unwrap();
-        let mut user_params = config::try_parse_ssh_config_file(&user_path, "myhost").unwrap();
-
-        // User has Port=2222 but no HostName; system has HostName and Port=22
-        assert_eq!(user_params.port, Some(2222));
-        assert!(user_params.host_name.is_none());
-        assert_eq!(system_params.host_name.as_deref(), Some("10.0.0.1"));
-
-        // After merge, user values take precedence
-        user_params.overwrite_if_none(&system_params);
-        assert_eq!(user_params.port, Some(2222), "User port should win");
-        assert_eq!(
-            user_params.host_name.as_deref(),
-            Some("10.0.0.1"),
-            "System HostName should fill in missing user HostName"
-        );
-        assert_eq!(
-            user_params.user.as_deref(),
-            Some("deployer"),
-            "User should be preserved"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_extract_basic_fields() {
-        let output = "\
-hostname devvm24531.example.com
-user example
-port 22
-identityfile ~/.ssh/id_rsa
-identityfile ~/.ssh/id_ed25519
-proxycommand x2ssh -fallback -tunnel %h
-identitiesonly no
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.host_name.as_deref(), Some("devvm24531.example.com"));
-        assert_eq!(params.user.as_deref(), Some("example"));
-        assert_eq!(params.port, Some(22));
-
-        assert_eq!(params.identity_files.len(), 2);
-        assert_eq!(params.identity_files[0], PathBuf::from("~/.ssh/id_rsa"));
-        assert_eq!(params.identity_files[1], PathBuf::from("~/.ssh/id_ed25519"));
-
-        assert_eq!(
-            params.proxy_command.as_deref(),
-            Some("x2ssh -fallback -tunnel %h")
-        );
-
-        assert_eq!(params.identities_only.as_deref(), Some("no"));
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_proxycommand_none() {
-        let output = "\
-hostname example.com
-proxycommand none
-port 22
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            params.proxy_command.is_none(),
-            "proxycommand 'none' should not be stored"
-        );
-        assert_eq!(params.host_name.as_deref(), Some("example.com"));
-        assert_eq!(params.port, Some(22));
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_proxycommand_none_case_insensitive() {
-        let output = "proxycommand NONE\nhostname host.example.com\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            params.proxy_command.is_none(),
-            "proxycommand 'NONE' (uppercase) should not be stored"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_algorithms() {
-        let output = "\
-hostname algo-host.example.com
-ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
-kexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256
-hostkeyalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
-macs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com
-pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            !params.ciphers.is_empty(),
-            "ciphers should be overridden (not empty)"
-        );
-        assert_eq!(
-            &params.ciphers,
-            &[
-                "chacha20-poly1305@openssh.com",
-                "aes256-gcm@openssh.com",
-                "aes128-gcm@openssh.com",
-            ]
-        );
-
-        assert!(
-            !params.kex_algorithms.is_empty(),
-            "kexalgorithms should be overridden"
-        );
-        assert_eq!(
-            &params.kex_algorithms,
-            &["sntrup761x25519-sha512@openssh.com", "curve25519-sha256",]
-        );
-
-        assert!(
-            !params.host_key_algorithms.is_empty(),
-            "hostkeyalgorithms should be overridden"
-        );
-        assert_eq!(
-            &params.host_key_algorithms,
-            &["ssh-ed25519-cert-v01@openssh.com", "ssh-ed25519",]
-        );
-
-        assert!(!params.macs.is_empty(), "macs should be overridden");
-        assert_eq!(
-            &params.macs,
-            &["umac-128-etm@openssh.com", "hmac-sha2-256-etm@openssh.com",]
-        );
-
-        assert!(
-            !params.pubkey_accepted_algorithms.is_empty(),
-            "pubkeyacceptedalgorithms should be overridden"
-        );
-        assert_eq!(
-            &params.pubkey_accepted_algorithms,
-            &["ssh-ed25519-cert-v01@openssh.com", "ssh-ed25519",]
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_return_none_for_empty_output() {
-        assert!(
-            config::parse_ssh_g_output("").is_none(),
-            "Empty string should return None"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_return_none_for_whitespace_only() {
-        assert!(
-            config::parse_ssh_g_output("   \n  \n\n").is_none(),
-            "Whitespace-only input should return None"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_proxy_jump() {
-        let output = "\
-hostname target.example.com
-proxyjump jump1.example.com,jump2.example.com:2222,user@jump3.example.com
-port 22
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        let proxy_jump = params.proxy_jump.as_ref().unwrap();
-        assert_eq!(proxy_jump.len(), 3);
-        assert_eq!(proxy_jump[0], "jump1.example.com");
-        assert_eq!(proxy_jump[1], "jump2.example.com:2222");
-        assert_eq!(proxy_jump[2], "user@jump3.example.com");
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_proxyjump_none() {
-        let output = "hostname host.example.com\nproxyjump none\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-        assert!(
-            params.proxy_jump.is_none(),
-            "proxyjump 'none' should not populate proxy_jump"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_known_hosts_files() {
-        let output = "\
-hostname kh-host.example.com
-userknownhostsfile /Users/user/.ssh/known_hosts /Users/user/.ssh/known_hosts2
-globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(
-            params.user_known_hosts_files,
-            &[
-                "/Users/user/.ssh/known_hosts",
-                "/Users/user/.ssh/known_hosts2",
-            ]
-        );
-
-        assert_eq!(
-            params.global_known_hosts_files,
-            &["/etc/ssh/ssh_known_hosts", "/etc/ssh/ssh_known_hosts2",]
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_keepalive_and_timeout() {
-        let output = "\
-hostname keepalive-host.example.com
-serveraliveinterval 60
-tcpkeepalive yes
-connecttimeout 30
-compression no
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.server_alive_interval, Some(Duration::from_secs(60)));
-        assert_eq!(params.tcp_keep_alive, Some(true));
-        assert_eq!(params.connect_timeout, Some(Duration::from_secs(30)));
-        assert_eq!(params.compression, Some(false));
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_zero_intervals() {
-        let output = "\
-hostname zero-host.example.com
-serveraliveinterval 0
-connecttimeout 0
-tcpkeepalive no
-compression yes
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            params.server_alive_interval.is_none(),
-            "serveraliveinterval 0 should remain None"
-        );
-        assert!(
-            params.connect_timeout.is_none(),
-            "connecttimeout 0 should remain None"
-        );
-        assert_eq!(params.tcp_keep_alive, Some(false));
-        assert_eq!(params.compression, Some(true));
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_stricthostkeychecking() {
-        let output = "hostname strict-host.example.com\nstricthostkeychecking accept-new\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(
-            params.strict_host_key_checking.as_deref(),
-            Some("accept-new")
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_ignore_unrecognized_keys() {
-        let output = "\
-hostname recognized.example.com
-somefuturekey some-value
-anothernewkey another-value
-port 2222
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.host_name.as_deref(), Some("recognized.example.com"));
-        assert_eq!(params.port, Some(2222));
-
-        // Unrecognized keys are silently ignored; ResolvedConfig has no catch-all field
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_lines_without_space() {
-        let output = "hostname correct.example.com\nmalformedline\nport 443\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.host_name.as_deref(), Some("correct.example.com"));
-        assert_eq!(params.port, Some(443));
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_handle_invalid_port() {
-        let output = "hostname bad-port.example.com\nport notanumber\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.host_name.as_deref(), Some("bad-port.example.com"));
-        assert!(
-            params.port.is_none(),
-            "Non-numeric port should leave port as None"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_single_proxy_jump_hop() {
-        let output = "hostname target.example.com\nproxyjump bastion.example.com\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        let proxy_jump = params.proxy_jump.as_ref().unwrap();
-        assert_eq!(proxy_jump.len(), 1);
-        assert_eq!(proxy_jump[0], "bastion.example.com");
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_full_representative_output() {
-        let output = "\
-hostname devvm24531.example.com
-user example
-port 22
-identityfile ~/.ssh/id_rsa
-identityfile ~/.ssh/id_ed25519
-proxycommand x2ssh -fallback -tunnel %h
-identitiesonly no
-userknownhostsfile /Users/user/.ssh/known_hosts /Users/user/.ssh/known_hosts2
-globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/ssh/ssh_known_hosts2
-stricthostkeychecking accept-new
-serveraliveinterval 0
-tcpkeepalive yes
-connecttimeout 30
-compression no
-ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
-kexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256
-hostkeyalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
-macs umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com
-pubkeyacceptedalgorithms ssh-ed25519-cert-v01@openssh.com,ssh-ed25519
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(params.host_name.as_deref(), Some("devvm24531.example.com"));
-        assert_eq!(params.user.as_deref(), Some("example"));
-        assert_eq!(params.port, Some(22));
-        assert_eq!(params.identity_files.len(), 2);
-        assert!(params.proxy_command.is_some());
-        assert!(params.identities_only.is_some());
-        assert!(!params.user_known_hosts_files.is_empty());
-        assert!(!params.global_known_hosts_files.is_empty());
-        assert!(params.strict_host_key_checking.is_some());
-        assert!(params.server_alive_interval.is_none());
-        assert_eq!(params.tcp_keep_alive, Some(true));
-        assert_eq!(params.connect_timeout, Some(Duration::from_secs(30)));
-        assert_eq!(params.compression, Some(false));
-        assert!(!params.ciphers.is_empty());
-        assert_eq!(params.ciphers.len(), 3);
-        assert!(!params.kex_algorithms.is_empty());
-        assert!(!params.host_key_algorithms.is_empty());
-        assert!(!params.macs.is_empty());
-        assert!(!params.pubkey_accepted_algorithms.is_empty());
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_keep_default_algorithms_when_not_present() {
-        let output = "hostname minimal.example.com\nport 22\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            params.ciphers.is_empty(),
-            "ciphers should remain empty when not in output"
-        );
-        assert!(
-            params.kex_algorithms.is_empty(),
-            "kex_algorithms should remain empty when not in output"
-        );
-        assert!(
-            params.host_key_algorithms.is_empty(),
-            "host_key_algorithms should remain empty when not in output"
-        );
-        assert!(
-            params.macs.is_empty(),
-            "macs should remain empty when not in output"
-        );
-        assert!(
-            params.pubkey_accepted_algorithms.is_empty(),
-            "pubkey_accepted_algorithms should remain empty when not in output"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_parse_identity_agent() {
-        let output = "\
-hostname agent-host.example.com
-identityagent /tmp/ssh-agent.sock
-port 22
-";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert_eq!(
-            params.identity_agent.as_deref(),
-            Some("/tmp/ssh-agent.sock")
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_identity_agent_none() {
-        let output = "hostname agent-host.example.com\nidentityagent none\n";
-        let params = config::parse_ssh_g_output(output).unwrap();
-
-        assert!(
-            params.identity_agent.is_none(),
-            "identityagent 'none' should not be stored"
-        );
-    }
-
-    #[test]
-    fn parse_ssh_g_output_should_skip_identity_agent_none_case_insensitive() {
-        for value in ["NONE", "None", "NoNe"] {
-            let output = format!("hostname agent-host.example.com\nidentityagent {value}\n");
-            let params = config::parse_ssh_g_output(&output).unwrap();
-
-            assert!(
-                params.identity_agent.is_none(),
-                "identityagent '{value}' should not be stored"
-            );
         }
     }
 }
