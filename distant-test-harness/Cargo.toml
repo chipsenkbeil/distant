@@ -28,14 +28,23 @@ tokio = { version = "1", features = ["full"] }
 whoami = "2"
 which = "8"
 rand = "0.8"
+rpassword = "7.4.0"
+ctrlc = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-rpassword = "7.4.0"
 
 [[bin]]
-name = "predict-pty-helper"
-path = "src/bin/predict_pty_helper.rs"
+name = "pty-echo"
+path = "src/bin/pty_echo.rs"
+
+[[bin]]
+name = "pty-password"
+path = "src/bin/pty_password.rs"
+
+[[bin]]
+name = "pty-interactive"
+path = "src/bin/pty_interactive.rs"
 
 [[bin]]
 name = "tcp-to-stdio"
