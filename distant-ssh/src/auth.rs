@@ -373,7 +373,7 @@ where
 /// Attempt SSH certificate authentication using the agent.
 ///
 /// Discovers certificate files from identity files, connects to the platform-
-/// appropriate SSH agent, and tries `authenticate_certificate_with` for each cert.
+/// appropriate SSH agent, and tries certificate-based signing for each cert found.
 pub(crate) async fn try_cert_agent_auth(
     handle: &mut Handle<ClientHandler>,
     user: &str,

@@ -158,52 +158,6 @@ impl SshApi {
             Ok(None)
         }
     }
-
-    /// Detect the default shell on the remote system.
-    ///
-    /// On Windows, queries `ComSpec` via PowerShell. On Unix, reads `/etc/passwd`.
-    async fn detect_shell(&self, is_windows: bool, username: &str) -> io::Result<String> {
-        if is_windows {
-            let (channel, _permit) = self.pool.open_exec().await?.take();
-            let output = utils::execute_output_on_channel(
-                channel,
-                "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
-                Some(std::time::Duration::from_secs(utils::SSH_TIMEOUT_SECS)),
-            )
-            .await?;
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        } else {
-            let sftp = self.get_sftp().await?;
-            match Self::shell_from_passwd(&sftp, username).await {
-                Some(shell) => Ok(shell),
-                None => Ok("/bin/sh".to_string()),
-            }
-        }
-    }
-
-    /// Read /etc/passwd via SFTP and extract the shell for the given username.
-    async fn shell_from_passwd(sftp: &SftpSession, username: &str) -> Option<String> {
-        use tokio::io::AsyncReadExt;
-
-        let mut file = sftp.open("/etc/passwd").await.ok()?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).await.ok()?;
-
-        let prefix = format!("{username}:");
-        for line in contents.lines() {
-            if line.starts_with(&prefix) {
-                let fields: Vec<&str> = line.split(':').collect();
-                if fields.len() >= 7 {
-                    let shell = fields[6].trim();
-                    if !shell.is_empty() {
-                        return Some(shell.to_string());
-                    }
-                }
-            }
-        }
-
-        None
-    }
 }
 
 impl Api for SshApi {
@@ -1103,7 +1057,7 @@ impl Api for SshApi {
 
             let shell = self
                 .cached_shell
-                .get_or_try_init(self.detect_shell(is_windows, &username))
+                .get_or_try_init(utils::query_shell(&self.pool, is_windows, &username))
                 .await?
                 .clone();
 

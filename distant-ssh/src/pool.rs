@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use log::*;
 use russh::Channel;
-use russh::client::Handle;
+use russh::client::{Handle, Msg};
 use russh_sftp::client::SftpSession;
 use tokio::sync::Mutex;
 
@@ -20,7 +20,7 @@ const EVICT_BACKOFF_MS: u64 = 50;
 /// Type-erased named cache entry.
 enum NamedEntry {
     Sftp(Arc<SftpSession>),
-    Exec(Channel<russh::client::Msg>),
+    Exec(Channel<Msg>),
 }
 
 /// Inner pool state protected by a mutex.
@@ -111,7 +111,7 @@ impl ChannelPool {
     }
 
     /// Open a channel with reactive eviction on failure.
-    async fn open_channel(&self) -> io::Result<Channel<russh::client::Msg>> {
+    async fn open_channel(&self) -> io::Result<Channel<Msg>> {
         for attempt in 0..=MAX_EVICT_RETRIES {
             match self.handle.channel_open_session().await {
                 Ok(channel) => {
@@ -165,7 +165,6 @@ impl ChannelPool {
         inner.open_count = inner.open_count.saturating_sub(1);
 
         debug!("Evicting LRU pool entry: {name}");
-
         match entry {
             NamedEntry::Sftp(session) => {
                 // Drop the Arc — when all references are gone, the SFTP session
@@ -208,6 +207,7 @@ pub struct PooledSftp {
 
 impl Deref for PooledSftp {
     type Target = SftpSession;
+
     fn deref(&self) -> &SftpSession {
         self.session.as_ref().expect("PooledSftp used after drop")
     }
@@ -229,20 +229,20 @@ impl Drop for PooledSftp {
 /// RAII guard for an exec channel. Derefs to `Channel<Msg>`.
 /// On Drop: closes the channel and decrements pool open count.
 pub struct PooledExec {
-    channel: Option<Channel<russh::client::Msg>>,
+    channel: Option<Channel<Msg>>,
     id: Option<String>,
     pool: Weak<ChannelPool>,
 }
 
 impl Deref for PooledExec {
-    type Target = Channel<russh::client::Msg>;
-    fn deref(&self) -> &Channel<russh::client::Msg> {
+    type Target = Channel<Msg>;
+    fn deref(&self) -> &Channel<Msg> {
         self.channel.as_ref().expect("PooledExec used after drop")
     }
 }
 
 impl DerefMut for PooledExec {
-    fn deref_mut(&mut self) -> &mut Channel<russh::client::Msg> {
+    fn deref_mut(&mut self) -> &mut Channel<Msg> {
         self.channel.as_mut().expect("PooledExec used after drop")
     }
 }
@@ -265,7 +265,7 @@ impl PooledExec {
     /// Extract the raw channel for ownership transfer (spawn/shell).
     /// Returns the channel and a permit that tracks the pool slot.
     /// The slot is freed when the permit is dropped.
-    pub fn take(mut self) -> (Channel<russh::client::Msg>, PoolPermit) {
+    pub fn take(mut self) -> (Channel<Msg>, PoolPermit) {
         let channel = self
             .channel
             .take()
