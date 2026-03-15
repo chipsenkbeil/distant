@@ -14,6 +14,10 @@ use ssh2_config::{HostParams, ParseRule, SshConfig};
 /// SSH timeout for `ssh -G` queries, in seconds.
 const SSH_G_TIMEOUT_SECS: u64 = 10;
 
+/// Default keepalive interval (in seconds) when `TCPKeepAlive yes` is set
+/// but no explicit `ServerAliveInterval` is configured.
+const DEFAULT_KEEPALIVE_SECS: u64 = 15;
+
 /// Resolved SSH configuration from either `ssh -G` or the built-in parser.
 ///
 /// Serves as an intermediate representation between raw SSH config sources
@@ -136,13 +140,12 @@ impl ResolvedConfig {
         let mut russh_config = russh::client::Config::default();
 
         russh_config.preferred = self.preferred_algorithms();
-
         // Map keepalive: prefer server_alive_interval, fall back to tcp_keep_alive
         if let Some(interval) = self.server_alive_interval {
             russh_config.keepalive_interval = Some(interval);
         } else if self.tcp_keep_alive == Some(true) {
             // TCP keepalive requested but no interval specified; use a sensible default
-            russh_config.keepalive_interval = Some(Duration::from_secs(15));
+            russh_config.keepalive_interval = Some(Duration::from_secs(DEFAULT_KEEPALIVE_SECS));
         }
 
         // Map connection timeout
@@ -157,11 +160,14 @@ impl ResolvedConfig {
     /// algorithms that russh actually supports. Unsupported algorithm names are
     /// logged and skipped.
     fn preferred_algorithms(&self) -> russh::Preferred {
+        use russh::cipher::Name as CipherName;
+        use russh::compression::Name as CompressionName;
         use russh::keys::Algorithm;
+        use russh::mac::Name as MacName;
 
         let mut preferred = russh::Preferred::default();
 
-        // Map KexAlgorithms
+        // Filter SSH config KEX algorithms to russh-supported names
         if !self.kex_algorithms.is_empty() {
             let kex: Vec<russh::kex::Name> = self
                 .kex_algorithms
@@ -188,7 +194,7 @@ impl ResolvedConfig {
             }
         }
 
-        // Map HostKeyAlgorithms
+        // Filter SSH config host key algorithms to russh-supported names
         if !self.host_key_algorithms.is_empty() {
             let keys: Vec<Algorithm> = self
                 .host_key_algorithms
@@ -218,10 +224,10 @@ impl ResolvedConfig {
 
         // Map Ciphers
         if !self.ciphers.is_empty() {
-            let ciphers: Vec<russh::cipher::Name> = self
+            let ciphers: Vec<CipherName> = self
                 .ciphers
                 .iter()
-                .filter_map(|s| match russh::cipher::Name::try_from(s.as_str()) {
+                .filter_map(|s| match CipherName::try_from(s.as_str()) {
                     Ok(name) => Some(name),
                     Err(_) => {
                         debug!("Skipping unsupported cipher from SSH config: {}", s);
@@ -236,10 +242,10 @@ impl ResolvedConfig {
 
         // Map MACs
         if !self.macs.is_empty() {
-            let macs: Vec<russh::mac::Name> = self
+            let macs: Vec<MacName> = self
                 .macs
                 .iter()
-                .filter_map(|s| match russh::mac::Name::try_from(s.as_str()) {
+                .filter_map(|s| match MacName::try_from(s.as_str()) {
                     Ok(name) => Some(name),
                     Err(_) => {
                         debug!("Skipping unsupported MAC from SSH config: {}", s);
@@ -254,9 +260,9 @@ impl ResolvedConfig {
 
         // Map Compression
         if let Some(true) = self.compression {
-            let compressed: Vec<russh::compression::Name> = ["zlib@openssh.com", "zlib", "none"]
+            let compressed: Vec<CompressionName> = ["zlib@openssh.com", "zlib", "none"]
                 .iter()
-                .filter_map(|s| russh::compression::Name::try_from(*s).ok())
+                .filter_map(|s| CompressionName::try_from(*s).ok())
                 .collect();
             if !compressed.is_empty() {
                 preferred.compression = compressed.into();
@@ -1207,5 +1213,90 @@ port 22
                 .any(|c| c.as_ref().contains("zlib")),
             "compression should include a zlib variant"
         );
+    }
+
+    #[test]
+    fn to_russh_config_should_use_defaults_when_no_overrides() {
+        let resolved = ResolvedConfig::default();
+        let cfg = resolved.to_russh_config().unwrap();
+
+        assert!(cfg.keepalive_interval.is_none());
+    }
+
+    #[test]
+    fn to_russh_config_should_set_keepalive_from_server_alive_interval() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.server_alive_interval = Some(Duration::from_secs(60));
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn to_russh_config_should_set_short_keepalive() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.server_alive_interval = Some(Duration::from_secs(5));
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn to_russh_config_should_leave_keepalive_none_when_unset() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.server_alive_interval = None;
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert!(cfg.keepalive_interval.is_none());
+    }
+
+    #[test]
+    fn to_russh_config_should_allow_zero_keepalive() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.server_alive_interval = Some(Duration::from_secs(0));
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn to_russh_config_should_allow_large_keepalive() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.server_alive_interval = Some(Duration::from_secs(3600));
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn to_russh_config_should_include_preferred_algorithms() {
+        let resolved = ResolvedConfig::default();
+        let cfg = resolved.to_russh_config().unwrap();
+
+        let default_preferred = russh::Preferred::default();
+        assert_eq!(cfg.preferred.kex, default_preferred.kex);
+        assert_eq!(cfg.preferred.cipher, default_preferred.cipher);
+    }
+
+    #[test]
+    fn to_russh_config_should_set_default_keepalive_from_tcp_keep_alive() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.tcp_keep_alive = Some(true);
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(
+            cfg.keepalive_interval,
+            Some(Duration::from_secs(DEFAULT_KEEPALIVE_SECS))
+        );
+    }
+
+    #[test]
+    fn to_russh_config_should_prefer_server_alive_interval_over_tcp_keep_alive() {
+        let mut resolved = ResolvedConfig::default();
+        resolved.tcp_keep_alive = Some(true);
+        resolved.server_alive_interval = Some(Duration::from_secs(30));
+
+        let cfg = resolved.to_russh_config().unwrap();
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(30)));
     }
 }

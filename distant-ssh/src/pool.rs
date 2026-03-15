@@ -17,24 +17,18 @@ const MAX_EVICT_RETRIES: usize = 5;
 /// Base backoff delay between eviction retries (multiplied by attempt number).
 const EVICT_BACKOFF_MS: u64 = 50;
 
-/// Type-erased named cache entry.
-enum NamedEntry {
-    Sftp(Arc<SftpSession>),
-    Exec(Channel<Msg>),
-}
-
 /// Inner pool state protected by a mutex.
 struct PoolInner {
-    /// Named entries in LRU order (index 0 = oldest).
-    named: Vec<(String, NamedEntry)>,
-    /// Total open channels (named + transient).
+    /// Cached SFTP session (evictable to free a channel slot).
+    sftp: Option<Arc<SftpSession>>,
+    /// Total open channels (SFTP + transient exec).
     open_count: usize,
 }
 
 /// A channel pool that manages SSH channel allocation with reactive eviction.
 ///
-/// When `MaxSessions` is reached, the pool evicts the least-recently-used named
-/// entry to make room for new channels. For servers with `MaxSessions > 1`, the
+/// When `MaxSessions` is reached, the pool evicts the cached SFTP session
+/// to make room for new channels. For servers with `MaxSessions > 1`, the
 /// first open always succeeds — zero overhead.
 pub struct ChannelPool {
     handle: Handle<ClientHandler>,
@@ -46,29 +40,19 @@ impl ChannelPool {
         Arc::new(Self {
             handle,
             inner: Mutex::new(PoolInner {
-                named: Vec::new(),
+                sftp: None,
                 open_count: 0,
             }),
         })
     }
 
-    /// Get or create a named SFTP session.
-    pub async fn sftp(self: &Arc<Self>, id: &str) -> io::Result<PooledSftp> {
+    /// Get or create the cached SFTP session.
+    pub async fn sftp(self: &Arc<Self>) -> io::Result<PooledSftp> {
         {
-            let mut inner = self.inner.lock().await;
-            if let Some(pos) = inner.named.iter().position(|(k, _)| k == id)
-                && matches!(inner.named[pos].1, NamedEntry::Sftp(_))
-            {
-                let (key, entry) = inner.named.remove(pos);
-                let NamedEntry::Sftp(session) = entry else {
-                    unreachable!();
-                };
-                inner
-                    .named
-                    .push((key, NamedEntry::Sftp(Arc::clone(&session))));
+            let inner = self.inner.lock().await;
+            if let Some(session) = &inner.sftp {
                 return Ok(PooledSftp {
-                    session: Some(session),
-                    id: Some(id.to_string()),
+                    session: Some(Arc::clone(session)),
                     pool: Arc::downgrade(self),
                 });
             }
@@ -88,24 +72,20 @@ impl ChannelPool {
 
         {
             let mut inner = self.inner.lock().await;
-            inner
-                .named
-                .push((id.to_string(), NamedEntry::Sftp(Arc::clone(&session))));
+            inner.sftp = Some(Arc::clone(&session));
         }
 
         Ok(PooledSftp {
             session: Some(session),
-            id: Some(id.to_string()),
             pool: Arc::downgrade(self),
         })
     }
 
-    /// Open a transient (unnamed) exec channel.
+    /// Open a transient exec channel.
     pub async fn open_exec(self: &Arc<Self>) -> io::Result<PooledExec> {
         let channel = self.open_channel().await?;
         Ok(PooledExec {
             channel: Some(channel),
-            id: None,
             pool: Arc::downgrade(self),
         })
     }
@@ -126,7 +106,7 @@ impl ChannelPool {
                         )));
                     }
 
-                    let evicted = self.evict_lru().await;
+                    let evicted = self.evict_sftp().await;
                     if !evicted {
                         return Err(io::Error::other(format!(
                             "Failed to open channel (no evictable entries): {e}"
@@ -135,7 +115,7 @@ impl ChannelPool {
 
                     let delay = EVICT_BACKOFF_MS * (attempt as u64 + 1);
                     debug!(
-                        "Channel open failed, evicted LRU entry. Retrying in {delay}ms (attempt {})",
+                        "Channel open failed, evicted SFTP session. Retrying in {delay}ms (attempt {})",
                         attempt + 1
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
@@ -145,49 +125,23 @@ impl ChannelPool {
         unreachable!()
     }
 
-    /// Evict the least-recently-used named entry. Prefers SFTP over exec.
-    /// Returns true if an entry was evicted.
-    async fn evict_lru(&self) -> bool {
+    /// Evict the cached SFTP session to free a channel slot.
+    /// Returns true if a session was evicted.
+    async fn evict_sftp(&self) -> bool {
         let mut inner = self.inner.lock().await;
-
-        if inner.named.is_empty() {
-            return false;
+        if inner.sftp.take().is_some() {
+            inner.open_count = inner.open_count.saturating_sub(1);
+            debug!("Evicted SFTP session to free channel slot");
+            true
+        } else {
+            false
         }
-
-        // Prefer evicting SFTP entries (index 0 = oldest)
-        let sftp_pos = inner
-            .named
-            .iter()
-            .position(|(_, entry)| matches!(entry, NamedEntry::Sftp(_)));
-
-        let pos = sftp_pos.unwrap_or(0);
-        let (name, entry) = inner.named.remove(pos);
-        inner.open_count = inner.open_count.saturating_sub(1);
-
-        debug!("Evicting LRU pool entry: {name}");
-        match entry {
-            NamedEntry::Sftp(session) => {
-                // Drop the Arc — when all references are gone, the SFTP session
-                // and its underlying channel will be closed asynchronously.
-                drop(session);
-            }
-            NamedEntry::Exec(channel) => {
-                // Close the exec channel in a background task.
-                tokio::spawn(async move {
-                    let _ = channel.close().await;
-                });
-            }
-        }
-
-        true
     }
 
-    /// Return a named SFTP session to the pool cache.
-    async fn return_sftp(&self, id: String, session: Arc<SftpSession>) {
+    /// Return the SFTP session to the pool cache.
+    async fn return_sftp(&self, session: Arc<SftpSession>) {
         let mut inner = self.inner.lock().await;
-        if !inner.named.iter().any(|(k, _)| k == &id) {
-            inner.named.push((id, NamedEntry::Sftp(session)));
-        }
+        inner.sftp = Some(session);
     }
 
     /// Decrement the open channel count.
@@ -198,10 +152,9 @@ impl ChannelPool {
 }
 
 /// RAII guard for an SFTP session. Derefs to `SftpSession`.
-/// On Drop: returns named sessions to pool cache, drops unnamed ones.
+/// On Drop: returns the session to the pool cache.
 pub struct PooledSftp {
     session: Option<Arc<SftpSession>>,
-    id: Option<String>,
     pool: Weak<ChannelPool>,
 }
 
@@ -216,11 +169,9 @@ impl Deref for PooledSftp {
 impl Drop for PooledSftp {
     fn drop(&mut self) {
         let session = self.session.take().expect("PooledSftp double-drop");
-        if let Some(id) = self.id.take()
-            && let Some(pool) = self.pool.upgrade()
-        {
+        if let Some(pool) = self.pool.upgrade() {
             tokio::spawn(async move {
-                pool.return_sftp(id, session).await;
+                pool.return_sftp(session).await;
             });
         }
     }
@@ -230,7 +181,6 @@ impl Drop for PooledSftp {
 /// On Drop: closes the channel and decrements pool open count.
 pub struct PooledExec {
     channel: Option<Channel<Msg>>,
-    id: Option<String>,
     pool: Weak<ChannelPool>,
 }
 

@@ -52,9 +52,9 @@ impl SshApi {
         }
     }
 
-    /// Get or create a named SFTP session via the channel pool.
+    /// Get or create the cached SFTP session via the channel pool.
     async fn get_sftp(&self) -> io::Result<PooledSftp> {
-        self.pool.sftp("sftp").await
+        self.pool.sftp().await
     }
 
     /// Convert a [`RemotePath`] (native format) to an [`SftpPathBuf`].
@@ -892,8 +892,7 @@ impl Api for SshApi {
             };
 
             // Open a channel via the pool and extract ownership
-            let pooled = pool.open_exec().await?;
-            let (channel, permit) = pooled.take();
+            let (channel, permit) = pool.open_exec().await?.take();
 
             let SpawnResult {
                 id,

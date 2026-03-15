@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use russh::Channel;
 use russh::client::{Handle, Msg};
+use russh_sftp::client::SftpSession;
 
 use crate::ClientHandler;
 use crate::SshFamily;
@@ -238,7 +239,7 @@ pub async fn is_windows(
 
     // Layer 2: SFTP-based detection using pool (named session, evictable).
     let sftp_result: Result<bool, io::Error> = async {
-        let sftp = pool.sftp("detect_family").await?;
+        let sftp = pool.sftp().await?;
         let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
         log::debug!("SFTP canonicalize(\".\") returned: {home}");
         Ok(has_windows_drive_prefix(&home))
@@ -259,7 +260,11 @@ pub async fn is_windows(
     exec_detect_windows(pool).await
 }
 
-/// Run `echo %OS%` and PowerShell OS detection in parallel using pooled channels.
+/// Run `echo %OS%` and PowerShell OS detection using pooled channels.
+///
+/// Attempts to open two exec channels for parallel probing. If the second
+/// channel fails (e.g. `MaxSessions=1`), falls back to running probes
+/// sequentially on one channel at a time.
 ///
 /// Returns `Ok(true)` as soon as either probe outputs `Windows_NT`.
 /// If both complete without a match, returns `Ok(false)`.
@@ -272,54 +277,89 @@ async fn exec_detect_windows(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> 
             || contains_subslice(&out.stderr, b"Windows_NT")
     };
 
-    // Open channels via pool (eviction handles MaxSessions=1 automatically)
-    let pooled1 = pool.open_exec().await?;
-    let (channel1, _permit1) = pooled1.take();
-    let mut echo_fut = std::pin::pin!(execute_output_on_channel(channel1, "echo %OS%", timeout));
+    let ps_cmd = "powershell.exe -NonInteractive -Command \
+                  \"& {[Environment]::GetEnvironmentVariable('OS')}\"";
 
-    let pooled2 = pool.open_exec().await?;
-    let (channel2, _permit2) = pooled2.take();
-    let mut ps_fut = std::pin::pin!(execute_output_on_channel(
-        channel2,
-        "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('OS')}\"",
-        timeout,
-    ));
+    // Open first exec channel
+    let (channel1, _permit1) = pool.open_exec().await?.take();
 
-    let (first_result, echo_finished) = tokio::select! {
-        result = &mut echo_fut => (result, true),
-        result = &mut ps_fut => (result, false),
-    };
+    // Try to open a second channel for parallel probing
+    match pool.open_exec().await {
+        Ok(pooled2) => {
+            // Parallel path: two channels available
+            let (channel2, _permit2) = pooled2.take();
+            let mut echo_fut =
+                std::pin::pin!(execute_output_on_channel(channel1, "echo %OS%", timeout));
+            let mut ps_fut = std::pin::pin!(execute_output_on_channel(channel2, ps_cmd, timeout));
 
-    if let Ok(ref output) = first_result
-        && is_win(output)
-    {
-        log::debug!("Windows detected via exec (first probe)");
-        return Ok(true);
-    }
+            let (first_result, echo_finished) = tokio::select! {
+                result = &mut echo_fut => (result, true),
+                result = &mut ps_fut => (result, false),
+            };
 
-    let second_result = if echo_finished {
-        ps_fut.await
-    } else {
-        echo_fut.await
-    };
+            if let Ok(ref output) = first_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (first probe)");
+                return Ok(true);
+            }
 
-    if let Ok(ref output) = second_result
-        && is_win(output)
-    {
-        log::debug!("Windows detected via exec (second probe)");
-        return Ok(true);
-    }
+            let second_result = if echo_finished {
+                ps_fut.await
+            } else {
+                echo_fut.await
+            };
 
-    match (first_result, second_result) {
-        (Err(e1), Err(_)) => Err(e1),
-        _ => Ok(false),
+            if let Ok(ref output) = second_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (second probe)");
+                return Ok(true);
+            }
+
+            match (first_result, second_result) {
+                (Err(e1), Err(_)) => Err(e1),
+                _ => Ok(false),
+            }
+        }
+        Err(_) => {
+            // Sequential fallback: MaxSessions=1, only one channel at a time
+            log::debug!("Second exec channel unavailable, falling back to sequential probes");
+
+            let echo_result = execute_output_on_channel(channel1, "echo %OS%", timeout).await;
+
+            // _permit1 is dropped here, freeing the slot
+            drop(_permit1);
+
+            if let Ok(ref output) = echo_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (sequential echo)");
+                return Ok(true);
+            }
+
+            // Open a fresh channel for the PowerShell probe
+            let (channel2, _permit2) = pool.open_exec().await?.take();
+            let ps_result = execute_output_on_channel(channel2, ps_cmd, timeout).await;
+
+            if let Ok(ref output) = ps_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (sequential powershell)");
+                return Ok(true);
+            }
+
+            match (echo_result, ps_result) {
+                (Err(e1), Err(_)) => Err(e1),
+                _ => Ok(false),
+            }
+        }
     }
 }
 
 /// Query the remote system's username via `whoami`.
 pub async fn query_username(pool: &Arc<pool::ChannelPool>) -> io::Result<String> {
-    let pooled = pool.open_exec().await?;
-    let (channel, _permit) = pooled.take();
+    let (channel, _permit) = pool.open_exec().await?.take();
     let output = execute_output_on_channel(channel, "whoami", SSH_EXEC_TIMEOUT).await?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -334,8 +374,7 @@ pub async fn query_shell(
     username: &str,
 ) -> io::Result<String> {
     if is_windows {
-        let pooled = pool.open_exec().await?;
-        let (channel, _permit) = pooled.take();
+        let (channel, _permit) = pool.open_exec().await?.take();
         let output = execute_output_on_channel(
             channel,
             "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
@@ -344,7 +383,7 @@ pub async fn query_shell(
         .await?;
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        let sftp = pool.sftp("query_shell").await?;
+        let sftp = pool.sftp().await?;
         match shell_from_passwd(&sftp, username).await {
             Some(shell) => Ok(shell),
             None => Ok("/bin/sh".to_string()),
@@ -353,10 +392,7 @@ pub async fn query_shell(
 }
 
 /// Read `/etc/passwd` via SFTP and extract the shell for the given username.
-async fn shell_from_passwd(
-    sftp: &russh_sftp::client::SftpSession,
-    username: &str,
-) -> Option<String> {
+async fn shell_from_passwd(sftp: &SftpSession, username: &str) -> Option<String> {
     use tokio::io::AsyncReadExt;
 
     let mut file = sftp.open("/etc/passwd").await.ok()?;

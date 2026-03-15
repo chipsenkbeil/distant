@@ -41,6 +41,7 @@ mod proxy;
 
 use api::SshApi;
 use auth::{expand_tilde, format_methods};
+use config::ResolvedConfig;
 use pool::ChannelPool;
 
 /// Represents the family of the remote machine connected over SSH
@@ -547,7 +548,7 @@ fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::R
 impl SshSession {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        let ssh_config = config::ResolvedConfig::for_host(host.as_ref()).await?;
+        let ssh_config = ResolvedConfig::for_host(host.as_ref()).await?;
 
         // Resolve the actual hostname to connect to (SSH config HostName directive)
         let connect_host = ssh_config.host_name.as_deref().unwrap_or(host.as_ref());
@@ -1481,41 +1482,6 @@ mod tests {
         assert!(result.contains("stderr: '"));
     }
 
-    #[test]
-    fn to_russh_config_should_use_defaults_when_no_overrides() {
-        let resolved = config::ResolvedConfig::default();
-        let cfg = resolved.to_russh_config().unwrap();
-
-        assert!(cfg.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn to_russh_config_should_set_keepalive_from_server_alive_interval() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.server_alive_interval = Some(Duration::from_secs(60));
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(60)));
-    }
-
-    #[test]
-    fn to_russh_config_should_set_short_keepalive() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.server_alive_interval = Some(Duration::from_secs(5));
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(5)));
-    }
-
-    #[test]
-    fn to_russh_config_should_leave_keepalive_none_when_unset() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.server_alive_interval = None;
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert!(cfg.keepalive_interval.is_none());
-    }
-
     struct MockSshAuthHandler {
         responses: Vec<String>,
         verify_result: bool,
@@ -1960,34 +1926,6 @@ mod tests {
         assert_eq!(first_key, "Key000");
     }
 
-    #[test]
-    fn to_russh_config_should_allow_zero_keepalive() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.server_alive_interval = Some(Duration::from_secs(0));
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(0)));
-    }
-
-    #[test]
-    fn to_russh_config_should_allow_large_keepalive() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.server_alive_interval = Some(Duration::from_secs(3600));
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(3600)));
-    }
-
-    #[test]
-    fn to_russh_config_should_include_preferred_algorithms() {
-        let resolved = config::ResolvedConfig::default();
-        let cfg = resolved.to_russh_config().unwrap();
-
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(cfg.preferred.kex, default_preferred.kex);
-        assert_eq!(cfg.preferred.cipher, default_preferred.cipher);
-    }
-
     #[test_log::test(tokio::test)]
     async fn mock_ssh_auth_handler_should_accept_ip_address_host() {
         let handler = MockSshAuthHandler {
@@ -2227,25 +2165,6 @@ mod tests {
         let params = config.query("other-server");
 
         assert!(params.host_name.is_none());
-    }
-
-    #[test]
-    fn to_russh_config_should_set_default_keepalive_from_tcp_keep_alive() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.tcp_keep_alive = Some(true);
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(15)));
-    }
-
-    #[test]
-    fn to_russh_config_should_prefer_server_alive_interval_over_tcp_keep_alive() {
-        let mut resolved = config::ResolvedConfig::default();
-        resolved.tcp_keep_alive = Some(true);
-        resolved.server_alive_interval = Some(Duration::from_secs(30));
-
-        let cfg = resolved.to_russh_config().unwrap();
-        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(30)));
     }
 
     /// Generate an Ed25519 public key for host-key tests.
