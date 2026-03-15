@@ -57,6 +57,7 @@ anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5.66"
 console = "0.16.2"
+crossterm = "0.29"
 derive_more = { version = "2.1.1", default-features = false, features = ["display", "from", "error", "is_variant"] }
 dialoguer = { version = "0.12.0", default-features = false }
 distant-core = { workspace = true }
@@ -72,8 +73,8 @@ serde_json = "1.0.149"
 shell-words = "1.1.1"
 service-manager = { version = "0.11.0", features = ["clap", "serde"] }
 terminal_size = "0.2.6"
-termwiz = "0.23.3"
 tokio = { version = "1.50.0", features = ["full"] }
+vt100 = "0.16.2"
 toml_edit = { version = "0.25.4", features = ["serde"] }
 typed-path = "0.12.3"
 which = "8.0.0"
@@ -100,6 +101,7 @@ distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
 env_logger = "0.11.9"
 expectrl = "0.8"
 indoc = "2.0.7"
+portable-pty = "0.9.0"
 predicates = "3.1.4"
 regex = "1"
 rstest = "0.26.1"
@@ -126,7 +128,7 @@ workspace = true
 [patch.crates-io]
 # Patched nix 0.29.0: removes IFF_NOTRAILERS for NetBSD (removed upstream
 # in libc 0.2.180). Backport of nix-rust/nix#2724 (landed in nix 0.31.0).
-# Remove this patch when upstream crates (termwiz, russh-cryptovec) update to nix >= 0.31.
+# Remove this patch when upstream crates (russh-cryptovec) update to nix >= 0.31.
 nix = { path = "patches/nix-0.29.0" }
 # Patched ssh2-config 0.7.0: removes git2 build-dependency (only used for
 # dev-only RELOAD_SSH_ALGO workflow). Eliminates unnecessary C build deps.

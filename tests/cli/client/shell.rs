@@ -1,8 +1,8 @@
 //! Integration tests for the `distant shell` CLI subcommand.
 //!
 //! Uses `expectrl` to spawn the shell process inside a real PTY, which is
-//! required because `distant shell` uses `termwiz::terminal::new_terminal()`
-//! and needs stdin/stdout to be a TTY.
+//! required because `distant shell` uses crossterm raw mode and needs
+//! stdin/stdout to be a TTY.
 //!
 //! On Windows, `expectrl`'s ConPTY `expect()` cannot read actual text output
 //! (only escape sequences flow through the pipe), so we use file-based

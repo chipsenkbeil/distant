@@ -461,6 +461,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             connection,
             current_dir,
             environment,
+            predict,
             network,
         } => {
             debug!("Connecting to manager");
@@ -490,6 +491,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     environment.into_map(),
                     current_dir,
                     MAX_PIPE_CHUNK_SIZE,
+                    predict,
                 )
                 .await?;
         }
@@ -500,6 +502,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             cmd_str,
             current_dir,
             environment,
+            predict,
             lsp,
             pty,
             shell,
@@ -575,6 +578,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         environment.into_map(),
                         current_dir,
                         MAX_PIPE_CHUNK_SIZE,
+                        predict,
                     )
                     .await?;
             } else {
@@ -1140,6 +1144,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             network,
             current_dir,
             environment,
+            predict,
             new,
             cmd,
         } => {
@@ -1221,6 +1226,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     environment.into_map(),
                     current_dir,
                     MAX_PIPE_CHUNK_SIZE,
+                    predict,
                 )
                 .await?;
         }
