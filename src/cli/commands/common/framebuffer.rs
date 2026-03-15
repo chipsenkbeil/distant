@@ -118,7 +118,11 @@ impl TerminalFramebuffer {
 
         // Re-display remaining predictions after server output, but only
         // if the current epoch has been confirmed by a matching echo.
-        let epoch_confirmed = self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
+        // Fast/FastAdaptive modes skip the epoch gate entirely.
+        let epoch_confirmed = matches!(
+            self.overlay.mode,
+            PredictMode::Fast | PredictMode::FastAdaptive
+        ) || self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
         if epoch_confirmed
             && self.overlay.should_display()
             && !self.in_alternate_screen()
@@ -178,7 +182,11 @@ impl TerminalFramebuffer {
         // confirmed by the server echoing a matching character. This prevents
         // password leaks: after Enter the epoch advances, and if the server
         // never echoes (password prompt), predictions stay hidden.
-        let epoch_confirmed = self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
+        // Fast/FastAdaptive modes skip the epoch gate entirely.
+        let epoch_confirmed = matches!(
+            self.overlay.mode,
+            PredictMode::Fast | PredictMode::FastAdaptive
+        ) || self.overlay.epoch_counter <= self.overlay.confirmed_epoch;
         let has_new = epoch_confirmed
             && self.overlay.should_display()
             && !self.in_alternate_screen()
@@ -357,8 +365,10 @@ impl PredictionOverlay {
     fn should_display(&self) -> bool {
         match self.mode {
             PredictMode::Off => false,
-            PredictMode::On => true,
-            PredictMode::Adaptive => self.rtt.srtt() >= ADAPTIVE_RTT_THRESHOLD,
+            PredictMode::On | PredictMode::Fast => true,
+            PredictMode::Adaptive | PredictMode::FastAdaptive => {
+                self.rtt.srtt() >= ADAPTIVE_RTT_THRESHOLD
+            }
         }
     }
 
@@ -580,6 +590,14 @@ mod tests {
 
     fn overlay_adaptive() -> PredictionOverlay {
         PredictionOverlay::new(PredictMode::Adaptive)
+    }
+
+    fn overlay_fast() -> PredictionOverlay {
+        PredictionOverlay::new(PredictMode::Fast)
+    }
+
+    fn overlay_fast_adaptive() -> PredictionOverlay {
+        PredictionOverlay::new(PredictMode::FastAdaptive)
     }
 
     /// Create an overlay with epoch 0 confirmed so predictions display.
@@ -1807,6 +1825,108 @@ mod tests {
             !row_text.contains("secret"),
             "password should not appear on screen, got: {row_text:?}"
         );
+    }
+
+    #[test]
+    fn fast_mode_should_display_without_epoch_confirmation() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::Fast);
+        fb.process_server_output(b"$ ");
+
+        // Type "su" + Enter → epoch 1
+        for ch in "su".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        fb.on_keystroke(&key_enter());
+
+        // Type 'p' in epoch 1 — Fast mode skips epoch gate, so prediction
+        // should be displayed immediately without waiting for server echo.
+        let (_, display_bytes) = fb.on_keystroke(&key_char('p')).unwrap();
+        assert!(
+            fb.displayed_count > 0,
+            "Fast mode should display prediction without epoch confirmation"
+        );
+        assert!(
+            display_bytes.contains(&b'p'),
+            "display bytes should contain 'p' in Fast mode"
+        );
+    }
+
+    #[test]
+    fn fast_adaptive_mode_should_require_rtt_threshold() {
+        let mut o = overlay_fast_adaptive();
+        // Drive SRTT below the 30ms threshold
+        for _ in 0..50 {
+            o.rtt.update(Duration::from_millis(1));
+        }
+        assert!(
+            !o.should_display(),
+            "FastAdaptive should not display with low RTT"
+        );
+
+        // Drive SRTT above the 30ms threshold
+        for _ in 0..50 {
+            o.rtt.update(Duration::from_millis(100));
+        }
+        assert!(
+            o.should_display(),
+            "FastAdaptive should display with high RTT"
+        );
+    }
+
+    #[test]
+    fn fast_adaptive_mode_should_skip_epoch_when_active() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::FastAdaptive);
+
+        // Default SRTT is 100ms (above 30ms threshold) so predictions are active.
+        assert!(fb.overlay.should_display());
+
+        fb.process_server_output(b"$ ");
+
+        // Type "su" + Enter → epoch 1
+        for ch in "su".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        fb.on_keystroke(&key_enter());
+
+        // Type 'p' in epoch 1 — FastAdaptive skips epoch gate when active.
+        let (_, display_bytes) = fb.on_keystroke(&key_char('p')).unwrap();
+        assert!(
+            fb.displayed_count > 0,
+            "FastAdaptive should display prediction without epoch confirmation when RTT is high"
+        );
+        assert!(
+            display_bytes.contains(&b'p'),
+            "display bytes should contain 'p' in FastAdaptive mode"
+        );
+    }
+
+    #[test]
+    fn on_mode_should_still_require_epoch_confirmation() {
+        let mut fb = TerminalFramebuffer::new(24, 80, PredictMode::On);
+        fb.process_server_output(b"$ ");
+
+        // Type "su" + Enter → epoch 1
+        for ch in "su".chars() {
+            fb.on_keystroke(&key_char(ch));
+        }
+        fb.on_keystroke(&key_enter());
+
+        // Type 'p' in epoch 1 — On mode still requires epoch confirmation.
+        let (_, display_bytes) = fb.on_keystroke(&key_char('p')).unwrap();
+        assert_eq!(
+            fb.displayed_count, 0,
+            "On mode should NOT display prediction without epoch confirmation"
+        );
+        assert!(
+            !display_bytes.contains(&b'p'),
+            "display bytes should not contain 'p' when epoch is unconfirmed"
+        );
+    }
+
+    #[test]
+    fn fast_mode_should_always_display() {
+        let o = overlay_fast();
+        assert!(o.should_display(), "Fast mode should always display");
     }
 
     #[test]

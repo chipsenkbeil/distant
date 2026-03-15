@@ -24,6 +24,14 @@ pub enum PredictMode {
 
     /// Always predict — every printable keystroke is echoed locally.
     On,
+
+    /// Always predict and skip epoch confirmation — predictions display
+    /// immediately after epoch boundaries without waiting for server echo.
+    Fast,
+
+    /// Predict when SRTT exceeds 30 ms (like `Adaptive`), but once active,
+    /// skip epoch confirmation (like `Fast`).
+    FastAdaptive,
 }
 
 /// Jacobson/Karels smoothed RTT estimator.
