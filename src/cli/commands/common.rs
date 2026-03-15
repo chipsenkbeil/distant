@@ -7,3 +7,4 @@ pub mod stdin;
 pub mod terminal;
 
 pub use link::*;
+pub use predict::PredictMode;

@@ -5,9 +5,9 @@ use distant_core::protocol::{Environment, PtySize, RemotePath};
 use distant_core::{Channel, ChannelExt, RemoteCommand};
 use terminal_size::{Height, Width, terminal_size};
 
-use super::super::common::predict::PredictMode;
-use super::super::common::terminal::TerminalSession;
 use super::{CliError, CliResult};
+use crate::cli::commands::common::predict::PredictMode;
+use crate::cli::commands::common::terminal::TerminalSession;
 
 /// Inserts `TERM=xterm-256color` into the environment if no `TERM` key is present.
 fn ensure_term_env(env: &mut Environment) {

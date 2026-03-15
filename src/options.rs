@@ -547,7 +547,8 @@ pub enum ClientSubcommand {
         environment: Map,
 
         /// Predictive local echo mode for reduced perceived latency.
-        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never),
+        /// "fast" (always, skip epoch confirmation), "fast-adaptive" (adaptive + skip epoch).
         #[clap(long, default_value = "adaptive", value_enum)]
         predict: PredictMode,
 
@@ -599,7 +600,8 @@ pub enum ClientSubcommand {
         environment: Map,
 
         /// Predictive local echo mode for PTY sessions.
-        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never),
+        /// "fast" (always, skip epoch confirmation), "fast-adaptive" (adaptive + skip epoch).
         #[clap(long, default_value = "adaptive", value_enum)]
         predict: PredictMode,
 
@@ -696,7 +698,8 @@ pub enum ClientSubcommand {
         environment: Map,
 
         /// Predictive local echo mode for reduced perceived latency.
-        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never).
+        /// Modes: "adaptive" (auto based on RTT), "on" (always), "off" (never),
+        /// "fast" (always, skip epoch confirmation), "fast-adaptive" (adaptive + skip epoch).
         #[clap(long, default_value = "adaptive", value_enum)]
         predict: PredictMode,
 
