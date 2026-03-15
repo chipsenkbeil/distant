@@ -1,9 +1,29 @@
 use std::net::IpAddr;
+use std::time::Duration;
 use std::{fmt, io};
 
 use tokio::net::{TcpStream, ToSocketAddrs};
 
 use super::{Interest, Ready, Reconnectable, Transport};
+
+/// Idle time before the first keepalive probe is sent.
+const TCP_KEEPALIVE_TIME: Duration = Duration::from_secs(15);
+
+/// Interval between successive keepalive probes after the initial probe.
+const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Configures TCP keepalive on the given stream for dead connection detection.
+///
+/// Sets `SO_KEEPALIVE` with a 15-second idle time and 5-second probe interval.
+/// Uses [`socket2::SockRef`] which works on both Unix (`AsRawFd`) and Windows
+/// (`AsRawSocket`) via tokio's [`TcpStream`].
+pub(crate) fn configure_tcp_keepalive(stream: &TcpStream) -> io::Result<()> {
+    let sock_ref = socket2::SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(TCP_KEEPALIVE_TIME)
+        .with_interval(TCP_KEEPALIVE_INTERVAL);
+    sock_ref.set_tcp_keepalive(&keepalive)
+}
 
 /// Represents a [`Transport`] that leverages a TCP stream
 pub struct TcpTransport {
@@ -17,6 +37,9 @@ impl TcpTransport {
     /// IP address and port
     pub async fn connect(addrs: impl ToSocketAddrs) -> io::Result<Self> {
         let stream = TcpStream::connect(addrs).await?;
+        if let Err(e) = configure_tcp_keepalive(&stream) {
+            log::warn!("Failed to configure TCP keepalive: {e}");
+        }
         let addr = stream.peer_addr()?;
         Ok(Self {
             addr: addr.ip(),
@@ -50,7 +73,11 @@ impl Reconnectable for TcpTransport {
         &'a mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            self.inner = TcpStream::connect((self.addr, self.port)).await?;
+            let stream = TcpStream::connect((self.addr, self.port)).await?;
+            if let Err(e) = configure_tcp_keepalive(&stream) {
+                log::warn!("Failed to configure TCP keepalive: {e}");
+            }
+            self.inner = stream;
             Ok(())
         })
     }
@@ -225,6 +252,115 @@ mod tests {
         conn.write_all(b"hello server")
             .await
             .expect("Conn failed to write");
+
+        // Verify that the task has completed by waiting on it
+        let _ = task.await.expect("Server task failed unexpectedly");
+    }
+
+    #[test(tokio::test)]
+    async fn configure_tcp_keepalive_should_enable_keepalive_on_stream() {
+        let listener = TcpListener::bind((IpAddr::V6(Ipv6Addr::LOCALHOST), 0u16))
+            .await
+            .expect("Failed to bind listener");
+        let addr = listener.local_addr().expect("Failed to get local addr");
+
+        let (client, _server) = tokio::join!(TcpStream::connect(addr), listener.accept());
+        let client = client.expect("Failed to connect");
+
+        configure_tcp_keepalive(&client).expect("configure_tcp_keepalive failed");
+
+        // Verify SO_KEEPALIVE is actually enabled on the underlying socket
+        let sock_ref = socket2::SockRef::from(&client);
+        assert!(
+            sock_ref.keepalive().expect("Failed to query keepalive"),
+            "SO_KEEPALIVE should be enabled after configure_tcp_keepalive"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn connect_should_produce_transport_with_keepalive_enabled() {
+        let listener = TcpListener::bind((IpAddr::V6(Ipv6Addr::LOCALHOST), 0u16))
+            .await
+            .expect("Failed to bind listener");
+        let addr = listener.local_addr().expect("Failed to get local addr");
+
+        // Accept in a background task so connect() can complete
+        let accept_task: JoinHandle<io::Result<tokio::net::TcpStream>> = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            Ok(stream)
+        });
+
+        let transport = TcpTransport::connect(addr)
+            .await
+            .expect("Failed to connect");
+
+        // Verify keepalive is enabled on the transport's inner stream
+        let sock_ref = socket2::SockRef::from(&transport.inner);
+        assert!(
+            sock_ref.keepalive().expect("Failed to query keepalive"),
+            "SO_KEEPALIVE should be enabled on TcpTransport after connect()"
+        );
+
+        // Clean up the accept task
+        let _ = accept_task.await;
+    }
+
+    #[test(tokio::test)]
+    async fn reconnect_should_produce_transport_with_keepalive_enabled() {
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn a task that will wait for a connection, send data,
+        // and receive data that it will return in the task
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(start_and_run_server(tx));
+
+        // Wait for the server to be ready
+        let addr = rx.await.expect("Failed to get server address");
+
+        // Connect to the server
+        let mut conn = TcpTransport::connect(&addr)
+            .await
+            .expect("Conn failed to connect");
+
+        // Kill the server to make the connection fail
+        task.abort();
+
+        // Verify the connection fails by trying to read from it (should get connection reset)
+        conn.readable()
+            .await
+            .expect("Failed to wait for conn to be readable");
+        let res = conn.read_exact(&mut [0; 10]).await;
+        assert!(
+            matches!(res, Ok(0) | Err(_)),
+            "Unexpected read result: {res:?}"
+        );
+
+        // Restart the server on the same address
+        let task: JoinHandle<io::Result<()>> = tokio::spawn(run_server(
+            TcpListener::bind(addr)
+                .await
+                .expect("Failed to rebind server"),
+        ));
+
+        // Reconnect to the server
+        conn.reconnect().await.expect("Conn failed to reconnect");
+
+        // Verify keepalive is enabled on the reconnected transport's inner stream
+        let sock_ref = socket2::SockRef::from(&conn.inner);
+        assert!(
+            sock_ref.keepalive().expect("Failed to query keepalive"),
+            "SO_KEEPALIVE should be enabled on TcpTransport after reconnect()"
+        );
+
+        // Complete the server protocol so the task finishes cleanly
+        let mut buf: [u8; 10] = [0; 10];
+        conn.read_exact(&mut buf)
+            .await
+            .expect("Conn failed to read after reconnect");
+        assert_eq!(&buf, b"hello conn");
+
+        conn.write_all(b"hello server")
+            .await
+            .expect("Conn failed to write after reconnect");
 
         // Verify that the task has completed by waiting on it
         let _ = task.await.expect("Server task failed unexpectedly");

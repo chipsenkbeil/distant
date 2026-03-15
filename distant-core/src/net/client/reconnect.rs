@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use log::*;
+use serde::{Deserialize, Serialize};
 use strum::Display;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -47,8 +48,9 @@ impl ConnectionWatcher {
 }
 
 /// Represents the state of a connection.
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ConnectionState {
     /// Connection is not active, but currently going through reconnection process.
     Reconnecting,
@@ -254,8 +256,8 @@ impl ReconnectStrategy {
         }
     }
 
-    /// Returns the initial duration to sleep.
-    fn initial_sleep_duration(&self) -> Duration {
+    /// Returns the initial duration to sleep based on the strategy variant.
+    pub fn initial_sleep_duration(&self) -> Duration {
         match self {
             ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { base, .. } => *base,
@@ -264,8 +266,8 @@ impl ReconnectStrategy {
         }
     }
 
-    /// Adjusts next sleep duration based on the strategy.
-    fn adjust_sleep(&self, prev: Option<Duration>, curr: Duration) -> Duration {
+    /// Adjusts next sleep duration based on the strategy variant.
+    pub fn adjust_sleep(&self, prev: Option<Duration>, curr: Duration) -> Duration {
         match self {
             ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { factor, .. } => {
@@ -767,5 +769,304 @@ mod tests {
 
         let result = strategy.reconnect(&mut mock).await;
         assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // ConnectionState serde round-trip tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn connection_state_reconnecting_serde_round_trip() {
+        let state = ConnectionState::Reconnecting;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"reconnecting\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Reconnecting);
+    }
+
+    #[test]
+    fn connection_state_connected_serde_round_trip() {
+        let state = ConnectionState::Connected;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"connected\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Connected);
+    }
+
+    #[test]
+    fn connection_state_disconnected_serde_round_trip() {
+        let state = ConnectionState::Disconnected;
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, "\"disconnected\"");
+        let restored: ConnectionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn connection_state_should_reject_unknown_variant() {
+        let result = serde_json::from_str::<ConnectionState>("\"invalid\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_should_reject_capitalized_variant() {
+        // Ensures snake_case renaming is enforced
+        let result = serde_json::from_str::<ConnectionState>("\"Reconnecting\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_should_reject_non_string_json_types() {
+        // Number
+        let result = serde_json::from_str::<ConnectionState>("42");
+        assert!(result.is_err());
+
+        // Null
+        let result = serde_json::from_str::<ConnectionState>("null");
+        assert!(result.is_err());
+
+        // Object
+        let result = serde_json::from_str::<ConnectionState>(r#"{"variant":"connected"}"#);
+        assert!(result.is_err());
+
+        // Array
+        let result = serde_json::from_str::<ConnectionState>(r#"["connected"]"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn connection_state_serde_display_and_serde_names_are_consistent() {
+        // Verify that Display (strum) and serde both use snake_case and agree
+        for state in [
+            ConnectionState::Reconnecting,
+            ConnectionState::Connected,
+            ConnectionState::Disconnected,
+        ] {
+            let display_name = state.to_string();
+            let serde_json_str = serde_json::to_string(&state).unwrap();
+            // serde_json wraps in quotes: "reconnecting"
+            let serde_name = serde_json_str.trim_matches('"');
+            assert_eq!(
+                display_name, serde_name,
+                "Display and serde names should match for {state:?}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // ReconnectStrategy::initial_sleep_duration() tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn initial_sleep_duration_should_return_zero_for_fail() {
+        let strategy = ReconnectStrategy::Fail;
+        assert_eq!(strategy.initial_sleep_duration(), Duration::new(0, 0));
+    }
+
+    #[test]
+    fn initial_sleep_duration_should_return_base_for_exponential_backoff() {
+        let base = Duration::from_millis(250);
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base,
+            factor: 2.0,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        assert_eq!(strategy.initial_sleep_duration(), base);
+    }
+
+    #[test]
+    fn initial_sleep_duration_should_return_base_for_fibonacci_backoff() {
+        let base = Duration::from_secs(1);
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        assert_eq!(strategy.initial_sleep_duration(), base);
+    }
+
+    #[test]
+    fn initial_sleep_duration_should_return_interval_for_fixed_interval() {
+        let interval = Duration::from_millis(500);
+        let strategy = ReconnectStrategy::FixedInterval {
+            interval,
+            max_retries: None,
+            timeout: None,
+        };
+        assert_eq!(strategy.initial_sleep_duration(), interval);
+    }
+
+    // ---------------------------------------------------------------
+    // ReconnectStrategy::adjust_sleep() tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn adjust_sleep_should_return_zero_for_fail() {
+        let strategy = ReconnectStrategy::Fail;
+        let result = strategy.adjust_sleep(None, Duration::from_millis(100));
+        assert_eq!(result, Duration::new(0, 0));
+    }
+
+    #[test]
+    fn adjust_sleep_should_return_zero_for_fail_with_previous() {
+        let strategy = ReconnectStrategy::Fail;
+        let result =
+            strategy.adjust_sleep(Some(Duration::from_millis(50)), Duration::from_millis(100));
+        assert_eq!(result, Duration::new(0, 0));
+    }
+
+    #[test]
+    fn adjust_sleep_should_multiply_by_factor_for_exponential_backoff() {
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // 100ms * 2.0 = 200ms
+        let result = strategy.adjust_sleep(None, Duration::from_millis(100));
+        assert_eq!(result, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn adjust_sleep_should_handle_fractional_factor_for_exponential_backoff() {
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(100),
+            factor: 1.5,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // 200ms * 1.5 = 300ms
+        let result = strategy.adjust_sleep(None, Duration::from_millis(200));
+        assert_eq!(result, Duration::from_millis(300));
+    }
+
+    #[test]
+    fn adjust_sleep_should_handle_large_values_for_exponential_backoff() {
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // Very large current sleep should not panic; should cap at u64::MAX ms
+        let result = strategy.adjust_sleep(None, Duration::from_millis(u64::MAX));
+        assert_eq!(result, Duration::from_millis(u64::MAX));
+    }
+
+    #[test]
+    fn adjust_sleep_should_add_previous_and_current_for_fibonacci_backoff() {
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(100),
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // prev=100ms, curr=200ms => next=300ms
+        let result =
+            strategy.adjust_sleep(Some(Duration::from_millis(100)), Duration::from_millis(200));
+        assert_eq!(result, Duration::from_millis(300));
+    }
+
+    #[test]
+    fn adjust_sleep_should_use_zero_when_previous_is_none_for_fibonacci_backoff() {
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(100),
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // prev=None (treated as 0), curr=100ms => next=100ms
+        let result = strategy.adjust_sleep(None, Duration::from_millis(100));
+        assert_eq!(result, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn adjust_sleep_should_handle_overflow_for_fibonacci_backoff() {
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(100),
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // Adding two max durations should saturate to Duration::MAX
+        let result = strategy.adjust_sleep(Some(Duration::MAX), Duration::MAX);
+        assert_eq!(result, Duration::MAX);
+    }
+
+    #[test]
+    fn adjust_sleep_should_return_current_unchanged_for_fixed_interval() {
+        let strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(500),
+            max_retries: None,
+            timeout: None,
+        };
+        let current = Duration::from_millis(500);
+        let result = strategy.adjust_sleep(None, current);
+        assert_eq!(result, current);
+    }
+
+    #[test]
+    fn adjust_sleep_should_ignore_previous_for_fixed_interval() {
+        let strategy = ReconnectStrategy::FixedInterval {
+            interval: Duration::from_millis(500),
+            max_retries: None,
+            timeout: None,
+        };
+        let current = Duration::from_millis(500);
+        let result = strategy.adjust_sleep(Some(Duration::from_millis(100)), current);
+        assert_eq!(result, current);
+    }
+
+    #[test]
+    fn adjust_sleep_should_grow_exponential_backoff_sequence_correctly() {
+        let strategy = ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // Simulate a full backoff sequence: 100 -> 200 -> 400 -> 800
+        let step1 = strategy.adjust_sleep(None, Duration::from_millis(100));
+        assert_eq!(step1, Duration::from_millis(200));
+
+        let step2 = strategy.adjust_sleep(Some(Duration::from_millis(100)), step1);
+        assert_eq!(step2, Duration::from_millis(400));
+
+        let step3 = strategy.adjust_sleep(Some(step1), step2);
+        assert_eq!(step3, Duration::from_millis(800));
+    }
+
+    #[test]
+    fn adjust_sleep_should_grow_fibonacci_backoff_sequence_correctly() {
+        let strategy = ReconnectStrategy::FibonacciBackoff {
+            base: Duration::from_millis(100),
+            max_duration: None,
+            max_retries: None,
+            timeout: None,
+        };
+        // Fibonacci sequence starting from base=100ms:
+        // initial = 100, then: 0+100=100, 100+100=200, 100+200=300, 200+300=500
+        let step1 = strategy.adjust_sleep(None, Duration::from_millis(100));
+        assert_eq!(step1, Duration::from_millis(100));
+
+        let step2 =
+            strategy.adjust_sleep(Some(Duration::from_millis(100)), Duration::from_millis(100));
+        assert_eq!(step2, Duration::from_millis(200));
+
+        let step3 =
+            strategy.adjust_sleep(Some(Duration::from_millis(100)), Duration::from_millis(200));
+        assert_eq!(step3, Duration::from_millis(300));
+
+        let step4 =
+            strategy.adjust_sleep(Some(Duration::from_millis(200)), Duration::from_millis(300));
+        assert_eq!(step4, Duration::from_millis(500));
     }
 }

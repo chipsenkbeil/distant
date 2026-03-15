@@ -52,6 +52,14 @@ impl SshApi {
         }
     }
 
+    /// Returns `true` if the underlying SSH session has been closed.
+    ///
+    /// This checks whether the russh connection task has terminated, which happens
+    /// when the SSH connection drops or the remote end disconnects.
+    pub fn is_session_closed(&self) -> bool {
+        self.pool.is_closed()
+    }
+
     /// Get or create the cached SFTP session via the channel pool.
     async fn get_sftp(&self) -> io::Result<PooledSftp> {
         self.pool.sftp().await

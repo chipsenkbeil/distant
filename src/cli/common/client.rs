@@ -7,7 +7,7 @@ use anyhow::Context;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
-use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
+use distant_core::net::manager::{ManagerClient, ManagerResponse, PROTOCOL_VERSION};
 use log::*;
 
 use crate::cli::common::ui::{Spinner, Ui};
@@ -483,6 +483,51 @@ pub async fn try_connect(
                 .using_json_auth_handler()
                 .connect()
                 .await
+        }
+    }
+}
+
+/// Subscribe to connection state change events and spawn a background task
+/// that displays them to the user.
+///
+/// Subscribes to the manager's connection event stream. Events are printed
+/// to stderr in shell format or to stdout as JSON, matching the project's
+/// output conventions (`ui.rs:10`). The background task runs until the
+/// mailbox closes (i.e., the manager connection drops).
+///
+/// Subscription failures are logged but do not fail the caller, since event
+/// display is best-effort and should not block the primary command.
+pub async fn subscribe_and_display_connection_events(client: &mut ManagerClient, format: Format) {
+    match client.subscribe_connection_events().await {
+        Ok(mut mailbox) => {
+            tokio::spawn(async move {
+                while let Some(res) = mailbox.next().await {
+                    match res.payload {
+                        ManagerResponse::ConnectionStateChanged { id, state } => match format {
+                            Format::Shell => {
+                                eprintln!("[distant] Connection {id}: {state}");
+                            }
+                            Format::Json => {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "type": "connection_state",
+                                        "id": id,
+                                        "state": state.to_string()
+                                    })
+                                );
+                            }
+                        },
+                        _ => {
+                            trace!("Ignoring non-state-change event on subscription mailbox");
+                        }
+                    }
+                }
+                trace!("Connection event subscription mailbox closed");
+            });
+        }
+        Err(err) => {
+            debug!("Failed to subscribe to connection events: {err}");
         }
     }
 }

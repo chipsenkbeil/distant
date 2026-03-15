@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_CONNECTION_SLEEP: Duration = Duration::from_millis(1);
 const DEFAULT_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
+const DEFAULT_MAX_HEARTBEAT_FAILURES: u32 = 3;
+
+fn default_max_heartbeat_failures() -> u32 {
+    DEFAULT_MAX_HEARTBEAT_FAILURES
+}
 
 /// Represents a general-purpose set of properties tied with a server instance
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +24,11 @@ pub struct ServerConfig {
 
     /// Rules for how a server will shutdown automatically
     pub shutdown: Shutdown,
+
+    /// Maximum consecutive heartbeat write failures before the connection is terminated.
+    /// A value of 0 means heartbeat failures are never escalated.
+    #[serde(default = "default_max_heartbeat_failures")]
+    pub max_heartbeat_failures: u32,
 }
 
 impl Default for ServerConfig {
@@ -27,6 +37,7 @@ impl Default for ServerConfig {
             connection_sleep: DEFAULT_CONNECTION_SLEEP,
             connection_heartbeat: DEFAULT_HEARTBEAT_DURATION,
             shutdown: Default::default(),
+            max_heartbeat_failures: DEFAULT_MAX_HEARTBEAT_FAILURES,
         }
     }
 }
@@ -158,6 +169,12 @@ mod tests {
         assert_eq!(config.shutdown, Shutdown::Never);
     }
 
+    #[test]
+    fn server_config_default_has_expected_max_heartbeat_failures() {
+        let config = ServerConfig::default();
+        assert_eq!(config.max_heartbeat_failures, 3);
+    }
+
     // ---- ServerConfig serde round-trip ----
 
     #[test]
@@ -174,6 +191,7 @@ mod tests {
             connection_sleep: Duration::from_millis(50),
             connection_heartbeat: Duration::from_secs(10),
             shutdown: Shutdown::After(Duration::from_secs(30)),
+            ..Default::default()
         };
         let serialized = serde_json::to_string(&config).unwrap();
         let deserialized: ServerConfig = serde_json::from_str(&serialized).unwrap();
@@ -186,10 +204,47 @@ mod tests {
             connection_sleep: Duration::from_millis(10),
             connection_heartbeat: Duration::from_secs(3),
             shutdown: Shutdown::Lonely(Duration::from_secs(60)),
+            ..Default::default()
         };
         let serialized = serde_json::to_string(&config).unwrap();
         let deserialized: ServerConfig = serde_json::from_str(&serialized).unwrap();
         assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn server_config_should_serialize_and_deserialize_with_custom_max_heartbeat_failures() {
+        let config = ServerConfig {
+            max_heartbeat_failures: 10,
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config, deserialized);
+        assert_eq!(deserialized.max_heartbeat_failures, 10);
+    }
+
+    #[test]
+    fn server_config_should_deserialize_missing_max_heartbeat_failures_as_default() {
+        // Simulate a JSON payload from an older version that lacks the field
+        let json = r#"{
+            "connection_sleep":{"secs":0,"nanos":1000000},
+            "connection_heartbeat":{"secs":5,"nanos":0},
+            "shutdown":"never"
+        }"#;
+        let config: ServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_heartbeat_failures, 3);
+    }
+
+    #[test]
+    fn server_config_should_serialize_and_deserialize_with_max_heartbeat_failures_zero() {
+        let config = ServerConfig {
+            max_heartbeat_failures: 0,
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config, deserialized);
+        assert_eq!(deserialized.max_heartbeat_failures, 0);
     }
 
     // ---- Shutdown Display ----

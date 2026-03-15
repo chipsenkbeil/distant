@@ -240,6 +240,9 @@ impl Options {
                     ClientSubcommand::Select { network, .. } => {
                         network.merge(config.client.network);
                     }
+                    ClientSubcommand::Reconnect { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                 }
             }
             DistantSubcommand::Generate(_) => {
@@ -421,6 +424,10 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
+        /// Disable automatic reconnection on connection loss
+        #[clap(long)]
+        no_reconnect: bool,
+
         /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
         destination: String,
     },
@@ -515,6 +522,10 @@ pub enum ClientSubcommand {
 
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
+
+        /// Disable automatic reconnection on connection loss
+        #[clap(long)]
+        no_reconnect: bool,
 
         /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
         destination: String,
@@ -707,6 +718,10 @@ pub enum ClientSubcommand {
         #[clap(long)]
         new: bool,
 
+        /// Disable automatic reconnection on connection loss
+        #[clap(long)]
+        no_reconnect: bool,
+
         /// Destination URI (e.g. `ssh://user@host:22`, `docker://ubuntu:22.04`)
         destination: String,
 
@@ -780,6 +795,27 @@ pub enum ClientSubcommand {
         )]
         cache: PathBuf,
     },
+
+    /// Manually trigger reconnection for a connection
+    Reconnect {
+        /// Connection ID to reconnect
+        id: ConnectionId,
+
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+    },
 }
 
 impl ClientSubcommand {
@@ -799,6 +835,7 @@ impl ClientSubcommand {
             Self::Version { cache, .. } => cache.as_path(),
             Self::Kill { cache, .. } => cache.as_path(),
             Self::Select { cache, .. } => cache.as_path(),
+            Self::Reconnect { cache, .. } => cache.as_path(),
         }
     }
 
@@ -818,6 +855,7 @@ impl ClientSubcommand {
             Self::Version { network, .. } => network,
             Self::Kill { network, .. } => network,
             Self::Select { network, .. } => network,
+            Self::Reconnect { network, .. } => network,
         }
     }
 
@@ -839,6 +877,7 @@ impl ClientSubcommand {
             Self::Version { format, .. } => *format,
             Self::Kill { format, .. } => *format,
             Self::Select { format, .. } => *format,
+            Self::Reconnect { format, .. } => *format,
         }
     }
 }
@@ -1442,6 +1481,15 @@ pub enum ServerSubcommand {
         #[clap(long)]
         daemon: bool,
 
+        /// Heartbeat interval in seconds (default: 5)
+        #[clap(long, default_value = "5")]
+        heartbeat_interval: u64,
+
+        /// Maximum consecutive heartbeat failures before the connection is terminated (default: 3).
+        /// A value of 0 means heartbeat failures are never escalated.
+        #[clap(long, default_value = "3")]
+        max_heartbeat_failures: u32,
+
         #[clap(flatten)]
         watch: ServerListenWatchOptions,
 
@@ -1789,6 +1837,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
+                no_reconnect: false,
                 destination: "test://destination".to_string(),
             }),
         };
@@ -1829,6 +1878,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
+                    no_reconnect: false,
                     destination: "test://destination".to_string(),
                 }),
             }
@@ -1853,6 +1903,7 @@ mod tests {
                 },
                 format: Format::Json,
                 new: false,
+                no_reconnect: false,
                 destination: "test://destination".to_string(),
             }),
         };
@@ -1893,6 +1944,7 @@ mod tests {
                     },
                     format: Format::Json,
                     new: false,
+                    no_reconnect: false,
                     destination: "test://destination".to_string(),
                 }),
             }
@@ -1919,6 +1971,7 @@ mod tests {
                     windows_pipe: None,
                 },
                 format: Format::Json,
+                no_reconnect: false,
                 destination: "test://destination".to_string(),
             }),
         };
@@ -1970,6 +2023,7 @@ mod tests {
                         windows_pipe: Some(String::from("config-windows-pipe")),
                     },
                     format: Format::Json,
+                    no_reconnect: false,
                     destination: "test://destination".to_string(),
                 }),
             }
@@ -1996,6 +2050,7 @@ mod tests {
                     windows_pipe: Some(String::from("cli-windows-pipe")),
                 },
                 format: Format::Json,
+                no_reconnect: false,
                 destination: "test://destination".to_string(),
             }),
         };
@@ -2047,6 +2102,7 @@ mod tests {
                         windows_pipe: Some(String::from("cli-windows-pipe")),
                     },
                     format: Format::Json,
+                    no_reconnect: false,
                     destination: "test://destination".to_string(),
                 }),
             }
@@ -4256,6 +4312,120 @@ mod tests {
     }
 
     #[test]
+    fn distant_reconnect_should_support_merging_with_config() {
+        let mut options = Options {
+            quiet: false,
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: None,
+                log_level: None,
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Reconnect {
+                id: 1,
+                format: Format::Shell,
+                cache: PathBuf::new(),
+                network: NetworkSettings {
+                    unix_socket: None,
+                    windows_pipe: None,
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                quiet: false,
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Reconnect {
+                    id: 1,
+                    format: Format::Shell,
+                    cache: PathBuf::new(),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("config-unix-socket")),
+                        windows_pipe: Some(String::from("config-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn distant_reconnect_should_prioritize_explicit_cli_options_when_merging() {
+        let mut options = Options {
+            quiet: false,
+            config_path: None,
+            logging: LoggingSettings {
+                log_file: Some(PathBuf::from("cli-log-file")),
+                log_level: Some(LogLevel::Info),
+            },
+            command: DistantSubcommand::Client(ClientSubcommand::Reconnect {
+                id: 42,
+                format: Format::Json,
+                cache: PathBuf::new(),
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                    windows_pipe: Some(String::from("cli-windows-pipe")),
+                },
+            }),
+        };
+
+        options.merge(Config {
+            client: ClientConfig {
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("config-log-file")),
+                    log_level: Some(LogLevel::Trace),
+                },
+                network: NetworkSettings {
+                    unix_socket: Some(PathBuf::from("config-unix-socket")),
+                    windows_pipe: Some(String::from("config-windows-pipe")),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(
+            options,
+            Options {
+                quiet: false,
+                config_path: None,
+                logging: LoggingSettings {
+                    log_file: Some(PathBuf::from("cli-log-file")),
+                    log_level: Some(LogLevel::Info),
+                },
+                command: DistantSubcommand::Client(ClientSubcommand::Reconnect {
+                    id: 42,
+                    format: Format::Json,
+                    cache: PathBuf::new(),
+                    network: NetworkSettings {
+                        unix_socket: Some(PathBuf::from("cli-unix-socket")),
+                        windows_pipe: Some(String::from("cli-windows-pipe")),
+                    },
+                }),
+            }
+        );
+    }
+
+    #[test]
     fn distant_manager_listen_should_support_merging_with_config() {
         let mut options = Options {
             quiet: false,
@@ -4495,6 +4665,8 @@ mod tests {
                     watch_debounce_tick_rate: None,
                 },
                 daemon: false,
+                heartbeat_interval: 5,
+                max_heartbeat_failures: 3,
                 key_from_stdin: false,
                 output_to_local_pipe: None,
             }),
@@ -4547,6 +4719,8 @@ mod tests {
                         watch_debounce_tick_rate: Some(Seconds::from(300u32)),
                     },
                     daemon: false,
+                    heartbeat_interval: 5,
+                    max_heartbeat_failures: 3,
                     key_from_stdin: false,
                     output_to_local_pipe: None,
                 }),
@@ -4578,6 +4752,8 @@ mod tests {
                     watch_debounce_tick_rate: Some(Seconds::from(30u32)),
                 },
                 daemon: false,
+                heartbeat_interval: 5,
+                max_heartbeat_failures: 3,
                 key_from_stdin: false,
                 output_to_local_pipe: None,
             }),
@@ -4630,6 +4806,8 @@ mod tests {
                         watch_debounce_tick_rate: Some(Seconds::from(30u32)),
                     },
                     daemon: false,
+                    heartbeat_interval: 5,
+                    max_heartbeat_failures: 3,
                     key_from_stdin: false,
                     output_to_local_pipe: None,
                 }),
@@ -4719,6 +4897,120 @@ mod tests {
     }
 
     #[test]
+    fn distant_reconnect_should_parse_with_id() {
+        let options = Options::try_parse_from(["distant", "reconnect", "42"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect { id, .. }) => {
+                assert_eq!(id, 42);
+            }
+            other => panic!("Expected Reconnect with id=42, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_require_id() {
+        assert!(Options::try_parse_from(["distant", "reconnect"]).is_err());
+    }
+
+    #[test]
+    fn distant_reconnect_should_parse_with_format_json() {
+        let options =
+            Options::try_parse_from(["distant", "reconnect", "--format", "json", "10"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect { id, format, .. }) => {
+                assert_eq!(id, 10);
+                assert_eq!(format, Format::Json);
+            }
+            other => panic!("Expected Reconnect with json format, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_reject_non_numeric_id() {
+        assert!(Options::try_parse_from(["distant", "reconnect", "abc"]).is_err());
+    }
+
+    #[test]
+    fn distant_reconnect_should_default_to_shell_format() {
+        let options = Options::try_parse_from(["distant", "reconnect", "7"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect { id, format, .. }) => {
+                assert_eq!(id, 7);
+                assert_eq!(format, Format::Shell);
+            }
+            other => panic!("Expected Reconnect with default shell format, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_parse_with_unix_socket() {
+        let options = Options::try_parse_from([
+            "distant",
+            "reconnect",
+            "--unix-socket",
+            "/tmp/test.sock",
+            "3",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect { id, network, .. }) => {
+                assert_eq!(id, 3);
+                assert_eq!(network.unix_socket, Some(PathBuf::from("/tmp/test.sock")));
+            }
+            other => panic!("Expected Reconnect with unix socket, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_parse_with_custom_cache_path() {
+        let options =
+            Options::try_parse_from(["distant", "reconnect", "--cache", "/custom/cache", "5"])
+                .unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect { id, cache, .. }) => {
+                assert_eq!(id, 5);
+                assert_eq!(cache, PathBuf::from("/custom/cache"));
+            }
+            other => panic!("Expected Reconnect with custom cache, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_parse_with_all_options() {
+        let options = Options::try_parse_from([
+            "distant",
+            "reconnect",
+            "--format",
+            "json",
+            "--unix-socket",
+            "/tmp/mgr.sock",
+            "--cache",
+            "/my/cache",
+            "99",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Reconnect {
+                id,
+                format,
+                network,
+                cache,
+            }) => {
+                assert_eq!(id, 99);
+                assert_eq!(format, Format::Json);
+                assert_eq!(network.unix_socket, Some(PathBuf::from("/tmp/mgr.sock")));
+                assert_eq!(cache, PathBuf::from("/my/cache"));
+            }
+            other => panic!("Expected Reconnect with all options, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_reconnect_should_reject_negative_id() {
+        assert!(Options::try_parse_from(["distant", "reconnect", "-1"]).is_err());
+    }
+
+    #[test]
     fn distant_manager_list_should_not_parse() {
         assert!(Options::try_parse_from(["distant", "manager", "list"]).is_err());
     }
@@ -4795,6 +5087,7 @@ mod tests {
             environment: Default::default(),
             predict: PredictMode::Adaptive,
             new: false,
+            no_reconnect: false,
             destination: "test://host".to_string(),
             cmd: None,
         };
@@ -4819,6 +5112,7 @@ mod tests {
             network: NetworkSettings::default(),
             format: Format::Json,
             new: false,
+            no_reconnect: false,
             destination: "test://host".to_string(),
         };
         assert!(cmd.format().is_json());
@@ -4834,6 +5128,7 @@ mod tests {
             options: Default::default(),
             network: NetworkSettings::default(),
             format: Format::Shell,
+            no_reconnect: false,
             destination: "test://host".to_string(),
         };
         assert_eq!(cmd.format(), Format::Shell);
@@ -4884,6 +5179,17 @@ mod tests {
     }
 
     #[test]
+    fn format_reconnect_returns_specified_format() {
+        let cmd = ClientSubcommand::Reconnect {
+            id: 1,
+            format: Format::Json,
+            network: NetworkSettings::default(),
+            cache: PathBuf::new(),
+        };
+        assert!(cmd.format().is_json());
+    }
+
+    #[test]
     fn format_filesystem_returns_shell() {
         let cmd = ClientSubcommand::FileSystem(ClientFileSystemSubcommand::Copy {
             cache: PathBuf::new(),
@@ -4917,6 +5223,8 @@ mod tests {
                 shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
                 current_dir: None,
                 daemon: false,
+                heartbeat_interval: 5,
+                max_heartbeat_failures: 3,
                 watch: ServerListenWatchOptions {
                     watch_polling: false,
                     watch_poll_interval: None,
@@ -4975,6 +5283,7 @@ mod tests {
                 network: net.clone(),
                 format: Format::Shell,
                 new: false,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
             },
             ClientSubcommand::Launch {
@@ -4985,6 +5294,7 @@ mod tests {
                 options: Default::default(),
                 network: net.clone(),
                 format: Format::Shell,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
             },
             ClientSubcommand::Shell {
@@ -5029,6 +5339,7 @@ mod tests {
                 environment: Default::default(),
                 predict: PredictMode::Adaptive,
                 new: false,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
                 cmd: None,
             },
@@ -5047,6 +5358,12 @@ mod tests {
             ClientSubcommand::Select {
                 format: Format::Shell,
                 connection: None,
+                network: net.clone(),
+                cache: cache.clone(),
+            },
+            ClientSubcommand::Reconnect {
+                id: 1,
+                format: Format::Shell,
                 network: net.clone(),
                 cache: cache.clone(),
             },
@@ -5205,6 +5522,7 @@ mod tests {
                 environment: Default::default(),
                 predict: PredictMode::Adaptive,
                 new: false,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
                 cmd: None,
             };
@@ -5230,6 +5548,14 @@ mod tests {
         let cmd = ClientSubcommand::Select {
             format: Format::Shell,
             connection: None,
+            network: net.clone(),
+            cache: PathBuf::new(),
+        };
+        assert_eq!(cmd.network_settings(), &net);
+
+        let cmd = ClientSubcommand::Reconnect {
+            id: 1,
+            format: Format::Shell,
             network: net.clone(),
             cache: PathBuf::new(),
         };
@@ -5466,6 +5792,8 @@ mod tests {
             shutdown: Value::Default(distant_core::net::server::Shutdown::Never),
             current_dir: None,
             daemon: false,
+            heartbeat_interval: 5,
+            max_heartbeat_failures: 3,
             watch: ServerListenWatchOptions {
                 watch_polling: false,
                 watch_poll_interval: None,
@@ -5503,6 +5831,7 @@ mod tests {
                 environment: Default::default(),
                 predict: PredictMode::Adaptive,
                 new: false,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
                 cmd: None,
             }),
@@ -5546,6 +5875,7 @@ mod tests {
                     environment: Default::default(),
                     predict: PredictMode::Adaptive,
                     new: false,
+                    no_reconnect: false,
                     destination: "test://host".to_string(),
                     cmd: None,
                 }),
@@ -5574,6 +5904,7 @@ mod tests {
                 environment: Default::default(),
                 predict: PredictMode::Adaptive,
                 new: false,
+                no_reconnect: false,
                 destination: "test://host".to_string(),
                 cmd: None,
             }),
@@ -5617,6 +5948,7 @@ mod tests {
                     environment: Default::default(),
                     predict: PredictMode::Adaptive,
                     new: false,
+                    no_reconnect: false,
                     destination: "test://host".to_string(),
                     cmd: None,
                 }),
@@ -5878,5 +6210,256 @@ mod tests {
         assert!(!client.is_server());
         assert!(!client.is_manager());
         assert!(!client.is_generate());
+    }
+
+    // -------------------------------------------------------
+    // --no-reconnect flag CLI parsing tests
+    // -------------------------------------------------------
+
+    #[test]
+    fn distant_connect_should_default_no_reconnect_to_false() {
+        let options =
+            Options::try_parse_from(["distant", "connect", "test://destination"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Connect { no_reconnect, .. }) => {
+                assert!(!no_reconnect);
+            }
+            other => panic!("Expected Connect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_connect_should_parse_no_reconnect_flag() {
+        let options =
+            Options::try_parse_from(["distant", "connect", "--no-reconnect", "test://destination"])
+                .unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Connect { no_reconnect, .. }) => {
+                assert!(no_reconnect);
+            }
+            other => panic!("Expected Connect with --no-reconnect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_launch_should_default_no_reconnect_to_false() {
+        let options = Options::try_parse_from(["distant", "launch", "test://destination"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Launch { no_reconnect, .. }) => {
+                assert!(!no_reconnect);
+            }
+            other => panic!("Expected Launch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distant_launch_should_parse_no_reconnect_flag() {
+        let options =
+            Options::try_parse_from(["distant", "launch", "--no-reconnect", "test://destination"])
+                .unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Launch { no_reconnect, .. }) => {
+                assert!(no_reconnect);
+            }
+            other => panic!("Expected Launch with --no-reconnect, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "ssh")]
+    #[test]
+    fn distant_ssh_should_default_no_reconnect_to_false() {
+        let options = Options::try_parse_from(["distant", "ssh", "user@host"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Ssh { no_reconnect, .. }) => {
+                assert!(!no_reconnect);
+            }
+            other => panic!("Expected Ssh, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "ssh")]
+    #[test]
+    fn distant_ssh_should_parse_no_reconnect_flag() {
+        let options =
+            Options::try_parse_from(["distant", "ssh", "--no-reconnect", "user@host"]).unwrap();
+        match options.command {
+            DistantSubcommand::Client(ClientSubcommand::Ssh { no_reconnect, .. }) => {
+                assert!(no_reconnect);
+            }
+            other => panic!("Expected Ssh with --no-reconnect, got {other:?}"),
+        }
+    }
+
+    // -------------------------------------------------------
+    // --heartbeat-interval and --max-heartbeat-failures CLI parsing tests
+    // -------------------------------------------------------
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_default_heartbeat_interval_to_5() {
+        let options = Options::try_parse_from(["distant", "server", "listen"]).unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                heartbeat_interval, ..
+            }) => {
+                assert_eq!(heartbeat_interval, 5);
+            }
+            other => panic!("Expected Server Listen, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_parse_custom_heartbeat_interval() {
+        let options =
+            Options::try_parse_from(["distant", "server", "listen", "--heartbeat-interval", "10"])
+                .unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                heartbeat_interval, ..
+            }) => {
+                assert_eq!(heartbeat_interval, 10);
+            }
+            other => panic!("Expected Server Listen with heartbeat_interval=10, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_default_max_heartbeat_failures_to_3() {
+        let options = Options::try_parse_from(["distant", "server", "listen"]).unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                max_heartbeat_failures,
+                ..
+            }) => {
+                assert_eq!(max_heartbeat_failures, 3);
+            }
+            other => panic!("Expected Server Listen, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_parse_custom_max_heartbeat_failures() {
+        let options = Options::try_parse_from([
+            "distant",
+            "server",
+            "listen",
+            "--max-heartbeat-failures",
+            "10",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                max_heartbeat_failures,
+                ..
+            }) => {
+                assert_eq!(max_heartbeat_failures, 10);
+            }
+            other => {
+                panic!("Expected Server Listen with max_heartbeat_failures=10, got {other:?}")
+            }
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_accept_zero_max_heartbeat_failures() {
+        let options = Options::try_parse_from([
+            "distant",
+            "server",
+            "listen",
+            "--max-heartbeat-failures",
+            "0",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                max_heartbeat_failures,
+                ..
+            }) => {
+                assert_eq!(max_heartbeat_failures, 0);
+            }
+            other => {
+                panic!("Expected Server Listen with max_heartbeat_failures=0, got {other:?}")
+            }
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_parse_heartbeat_and_max_failures_together() {
+        let options = Options::try_parse_from([
+            "distant",
+            "server",
+            "listen",
+            "--heartbeat-interval",
+            "15",
+            "--max-heartbeat-failures",
+            "7",
+        ])
+        .unwrap();
+        match options.command {
+            DistantSubcommand::Server(ServerSubcommand::Listen {
+                heartbeat_interval,
+                max_heartbeat_failures,
+                ..
+            }) => {
+                assert_eq!(heartbeat_interval, 15);
+                assert_eq!(max_heartbeat_failures, 7);
+            }
+            other => panic!(
+                "Expected Server Listen with heartbeat_interval=15 and max_heartbeat_failures=7, got {other:?}"
+            ),
+        }
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_reject_non_numeric_heartbeat_interval() {
+        assert!(
+            Options::try_parse_from(["distant", "server", "listen", "--heartbeat-interval", "abc"])
+                .is_err()
+        );
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_reject_negative_heartbeat_interval() {
+        assert!(
+            Options::try_parse_from(["distant", "server", "listen", "--heartbeat-interval", "-1"])
+                .is_err()
+        );
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_reject_non_numeric_max_heartbeat_failures() {
+        assert!(
+            Options::try_parse_from([
+                "distant",
+                "server",
+                "listen",
+                "--max-heartbeat-failures",
+                "abc"
+            ])
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn distant_server_listen_should_reject_negative_max_heartbeat_failures() {
+        assert!(
+            Options::try_parse_from([
+                "distant",
+                "server",
+                "listen",
+                "--max-heartbeat-failures",
+                "-1"
+            ])
+            .is_err()
+        );
     }
 }

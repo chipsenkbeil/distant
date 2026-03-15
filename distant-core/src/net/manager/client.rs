@@ -4,8 +4,8 @@ use crate::auth::AuthHandler;
 use crate::auth::msg::{Authentication, AuthenticationResponse};
 use log::*;
 
-use crate::net::client::Client;
-use crate::net::common::{ConnectionId, Destination, Map, Request};
+use crate::net::client::{Client, Mailbox};
+use crate::net::common::{ConnectionId, Destination, Map, Request, Response};
 use crate::net::manager::data::{
     ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse, SemVer,
 };
@@ -293,6 +293,54 @@ impl ManagerClient {
                 format!("Got unexpected response: {x:?}"),
             )),
         }
+    }
+
+    /// Subscribe to connection state change events.
+    ///
+    /// Returns a mailbox that will receive `ConnectionStateChanged` responses
+    /// whenever a managed connection changes state.
+    pub async fn subscribe_connection_events(
+        &mut self,
+    ) -> io::Result<Mailbox<Response<ManagerResponse>>> {
+        trace!("subscribe_connection_events()");
+        let mut mailbox = self.mail(ManagerRequest::SubscribeConnectionEvents).await?;
+
+        // Wait for the subscription confirmation
+        while let Some(res) = mailbox.next().await {
+            match res.payload {
+                ManagerResponse::SubscribedConnectionEvents => return Ok(mailbox),
+                ManagerResponse::Error { description } => {
+                    return Err(io::Error::other(description));
+                }
+                _ => continue,
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Connection closed before subscription confirmed",
+        ))
+    }
+
+    /// Request reconnection of a specific connection.
+    pub async fn reconnect(&mut self, id: ConnectionId) -> io::Result<()> {
+        trace!("reconnect({})", id);
+        let mut mailbox = self.mail(ManagerRequest::Reconnect { id }).await?;
+
+        while let Some(res) = mailbox.next().await {
+            match res.payload {
+                ManagerResponse::ReconnectInitiated { .. } => return Ok(()),
+                ManagerResponse::Error { description } => {
+                    return Err(io::Error::other(description));
+                }
+                _ => continue,
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Connection closed before reconnect confirmed",
+        ))
     }
 }
 

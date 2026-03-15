@@ -27,7 +27,8 @@ use dialoguer::theme::ColorfulTheme;
 
 use crate::cli::common::{
     Cache, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui, connect_to_manager,
-    format_connection, try_connect as try_connect_no_autostart,
+    format_connection, subscribe_and_display_connection_events,
+    try_connect as try_connect_no_autostart,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
@@ -67,9 +68,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             destination,
             format,
             network,
-            options,
+            mut options,
             new,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -200,7 +205,11 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             format,
             network,
             mut options,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -339,6 +348,8 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                      Is it running? Start it with: distant manager listen --daemon",
                 )?;
 
+            subscribe_and_display_connection_events(&mut client, Format::Json).await;
+
             let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
@@ -467,6 +478,8 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 
+            subscribe_and_display_connection_events(&mut client, Format::Shell).await;
+
             let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
@@ -510,6 +523,8 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            subscribe_and_display_connection_events(&mut client, Format::Shell).await;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -1140,16 +1155,22 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         ClientSubcommand::Ssh {
             cache,
             destination,
-            options,
+            mut options,
             network,
             current_dir,
             environment,
             predict,
             new,
+            no_reconnect,
             cmd,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager (auto-start enabled)");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            subscribe_and_display_connection_events(&mut client, Format::Shell).await;
 
             // Ensure destination has ssh:// scheme
             let destination = ensure_scheme(&destination, "ssh");
@@ -1555,6 +1576,28 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                             debug!("No change in selection of default connection id");
                         }
                     }
+                }
+            }
+        }
+        ClientSubcommand::Reconnect {
+            id,
+            format,
+            network,
+            ..
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network, &ui).await?;
+
+            debug!("Requesting reconnection for connection {}", id);
+            client
+                .reconnect(id)
+                .await
+                .with_context(|| format!("Failed to initiate reconnection for connection {id}"))?;
+
+            match format {
+                Format::Json => println!("{}", json!({"type": "reconnect_initiated", "id": id})),
+                Format::Shell => {
+                    ui.success(&format!("Reconnection initiated for connection {id}"));
                 }
             }
         }
