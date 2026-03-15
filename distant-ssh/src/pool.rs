@@ -11,11 +11,9 @@ use tokio::sync::Mutex;
 use crate::ClientHandler;
 use crate::utils::SSH_TIMEOUT_SECS;
 
-/// Maximum number of eviction-retry attempts when `channel_open_session` fails.
-const MAX_EVICT_RETRIES: usize = 5;
-
-/// Base backoff delay between eviction retries (multiplied by attempt number).
-const EVICT_BACKOFF_MS: u64 = 50;
+/// Delay before retrying after SFTP eviction, giving the server time to
+/// process the channel close.
+const EVICT_RETRY_DELAY_MS: u64 = 50;
 
 /// Inner pool state protected by a mutex.
 struct PoolInner {
@@ -23,6 +21,8 @@ struct PoolInner {
     sftp: Option<Arc<SftpSession>>,
     /// Total open channels (SFTP + transient exec).
     open_count: usize,
+    /// Server channel limit, discovered on first `channel_open_session` failure.
+    channel_limit: Option<usize>,
 }
 
 /// A channel pool that manages SSH channel allocation with reactive eviction.
@@ -42,6 +42,7 @@ impl ChannelPool {
             inner: Mutex::new(PoolInner {
                 sftp: None,
                 open_count: 0,
+                channel_limit: None,
             }),
         })
     }
@@ -92,9 +93,6 @@ impl ChannelPool {
 
     /// Open `N` exec channels sequentially, returning a fixed-size array.
     ///
-    /// On partial failure, all successfully-opened channels are dropped
-    /// (RAII cleanup via `PooledExec::drop`), and the error is returned.
-    ///
     /// # Errors
     ///
     /// Returns an error if any channel fails to open. On partial failure,
@@ -116,38 +114,48 @@ impl ChannelPool {
     }
 
     /// Open a channel with reactive eviction on failure.
+    ///
+    /// On failure, evicts the cached SFTP session and retries once after a brief
+    /// delay. If the retry also fails, `evict_sftp()` returns false (already
+    /// evicted) and an error is returned immediately.
     async fn open_channel(&self) -> io::Result<Channel<Msg>> {
-        for attempt in 0..=MAX_EVICT_RETRIES {
-            match self.handle.channel_open_session().await {
-                Ok(channel) => {
+        match self.handle.channel_open_session().await {
+            Ok(channel) => {
+                let mut inner = self.inner.lock().await;
+                inner.open_count += 1;
+                if let Some(limit) = inner.channel_limit
+                    && inner.open_count >= limit
+                {
+                    warn!("Channel limit reached ({}/{})", inner.open_count, limit);
+                }
+                Ok(channel)
+            }
+            Err(e) => {
+                // Discover channel limit on first failure
+                {
                     let mut inner = self.inner.lock().await;
-                    inner.open_count += 1;
-                    return Ok(channel);
-                }
-                Err(e) => {
-                    if attempt == MAX_EVICT_RETRIES {
-                        return Err(io::Error::other(format!(
-                            "Failed to open channel after {MAX_EVICT_RETRIES} eviction attempts: {e}",
-                        )));
+                    if inner.channel_limit.is_none() {
+                        let limit = inner.open_count;
+                        inner.channel_limit = Some(limit);
+                        info!("Server channel limit discovered: {limit}");
                     }
-
-                    let evicted = self.evict_sftp().await;
-                    if !evicted {
-                        return Err(io::Error::other(format!(
-                            "Failed to open channel (no evictable entries): {e}"
-                        )));
-                    }
-
-                    let delay = EVICT_BACKOFF_MS * (attempt as u64 + 1);
-                    debug!(
-                        "Channel open failed, evicted SFTP session. Retrying in {delay}ms (attempt {})",
-                        attempt + 1
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 }
+
+                // Evict the SFTP session to free a slot; fail if nothing to evict.
+                if !self.evict_sftp().await {
+                    return Err(io::Error::other(format!(
+                        "Failed to open channel (no evictable entries): {e}"
+                    )));
+                }
+
+                debug!("Channel open failed, evicted SFTP session. Retrying after brief delay");
+                tokio::time::sleep(std::time::Duration::from_millis(EVICT_RETRY_DELAY_MS)).await;
+
+                // Single retry — if this also fails, evict_sftp() returns false
+                // on the next call since the session was already evicted.
+                Box::pin(self.open_channel()).await
             }
         }
-        unreachable!()
     }
 
     /// Evict the cached SFTP session to free a channel slot.
@@ -173,6 +181,14 @@ impl ChannelPool {
     async fn release_slot(&self) {
         let mut inner = self.inner.lock().await;
         inner.open_count = inner.open_count.saturating_sub(1);
+    }
+
+    /// Returns the server's channel limit, if it has been discovered.
+    ///
+    /// The limit is discovered when the first `channel_open_session` call fails,
+    /// at which point the current open count is recorded as the limit.
+    pub async fn channel_limit(&self) -> Option<usize> {
+        self.inner.lock().await.channel_limit
     }
 }
 
