@@ -280,14 +280,11 @@ async fn exec_detect_windows(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> 
     let ps_cmd = "powershell.exe -NonInteractive -Command \
                   \"& {[Environment]::GetEnvironmentVariable('OS')}\"";
 
-    // Open first exec channel
-    let (channel1, _permit1) = pool.open_exec().await?.take();
-
-    // Try to open a second channel for parallel probing
-    match pool.open_exec().await {
-        Ok(pooled2) => {
+    match pool.open_execs::<2>().await {
+        Ok([exec1, exec2]) => {
             // Parallel path: two channels available
-            let (channel2, _permit2) = pooled2.take();
+            let (channel1, _permit1) = exec1.take();
+            let (channel2, _permit2) = exec2.take();
             let mut echo_fut =
                 std::pin::pin!(execute_output_on_channel(channel1, "echo %OS%", timeout));
             let mut ps_fut = std::pin::pin!(execute_output_on_channel(channel2, ps_cmd, timeout));
@@ -326,9 +323,9 @@ async fn exec_detect_windows(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> 
             // Sequential fallback: MaxSessions=1, only one channel at a time
             log::debug!("Second exec channel unavailable, falling back to sequential probes");
 
+            let (channel1, _permit1) = pool.open_exec().await?.take();
             let echo_result = execute_output_on_channel(channel1, "echo %OS%", timeout).await;
 
-            // _permit1 is dropped here, freeing the slot
             drop(_permit1);
 
             if let Ok(ref output) = echo_result
@@ -338,7 +335,6 @@ async fn exec_detect_windows(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> 
                 return Ok(true);
             }
 
-            // Open a fresh channel for the PowerShell probe
             let (channel2, _permit2) = pool.open_exec().await?.take();
             let ps_result = execute_output_on_channel(channel2, ps_cmd, timeout).await;
 

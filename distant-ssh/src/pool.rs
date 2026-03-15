@@ -90,6 +90,31 @@ impl ChannelPool {
         })
     }
 
+    /// Open `N` exec channels sequentially, returning a fixed-size array.
+    ///
+    /// On partial failure, all successfully-opened channels are dropped
+    /// (RAII cleanup via `PooledExec::drop`), and the error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any channel fails to open. On partial failure,
+    /// all successfully-opened channels are cleaned up before the error
+    /// is returned.
+    pub async fn open_execs<const N: usize>(self: &Arc<Self>) -> io::Result<[PooledExec; N]> {
+        let mut opened: Vec<PooledExec> = Vec::with_capacity(N);
+        for _ in 0..N {
+            match self.open_exec().await {
+                Ok(exec) => opened.push(exec),
+                Err(e) => {
+                    drop(opened);
+                    return Err(e);
+                }
+            }
+        }
+        // The loop above pushes exactly N elements, so Vec length == N is guaranteed.
+        Ok(opened.try_into().unwrap_or_else(|_| unreachable!()))
+    }
+
     /// Open a channel with reactive eviction on failure.
     async fn open_channel(&self) -> io::Result<Channel<Msg>> {
         for attempt in 0..=MAX_EVICT_RETRIES {
