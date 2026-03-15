@@ -112,7 +112,7 @@ impl ChannelPool {
             }
         }
         // The loop above pushes exactly N elements, so Vec length == N is guaranteed.
-        Ok(opened.try_into().unwrap_or_else(|_| unreachable!()))
+        Ok(opened.try_into().ok().unwrap())
     }
 
     /// Open a channel with reactive eviction on failure.
