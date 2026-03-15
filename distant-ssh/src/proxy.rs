@@ -239,14 +239,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_stream_spawn_should_succeed_for_valid_shell_command() {
-        // spawn() uses `sh -c <cmd>`, so the shell itself always spawns
-        // successfully even if the inner command doesn't exist. Verify
-        // that a valid command produces a functional stream.
-        let stream = ProxyStream::spawn("echo hello");
+    async fn proxy_stream_should_read_stdout() {
+        use tokio::io::AsyncReadExt;
+
+        let mut stream = ProxyStream::spawn("echo hello").unwrap();
+        let mut buf = vec![0u8; 64];
+        let n = stream.read(&mut buf).await.unwrap();
+        let output = String::from_utf8_lossy(&buf[..n]);
         assert!(
-            stream.is_ok(),
-            "Spawning a valid shell command should succeed"
+            output.contains("hello"),
+            "Expected 'hello', got: {output:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn proxy_stream_should_echo_stdin_to_stdout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // `head -c 4` reads exactly 4 bytes then exits, avoiding the need
+        // to close stdin (AsyncWrite::shutdown on ChildStdin is a no-op).
+        let mut stream = ProxyStream::spawn("head -c 4").unwrap();
+        stream.write_all(b"ping").await.unwrap();
+
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, b"ping");
     }
 }
