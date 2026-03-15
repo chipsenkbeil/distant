@@ -817,6 +817,7 @@ port 22
             params.proxy_command.is_none(),
             "proxycommand 'NONE' (uppercase) should not be stored"
         );
+        assert_eq!(params.host_name.as_deref(), Some("host.example.com"));
     }
 
     #[test]
