@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use assert_fs::prelude::*;
 use distant_core::ChannelExt;
-use distant_ssh::{LaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshFamily, SshOpts};
+use distant_ssh::{
+    AuthResult, LaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshFamily, SshOpts, SshSession,
+};
 use distant_test_harness::manager::bin_path;
 use rstest::*;
 use test_log::test;
@@ -40,13 +42,6 @@ async fn detect_family_should_return_same_result_on_repeated_calls(#[future] ssh
 
 #[rstest]
 #[test(tokio::test)]
-async fn is_authenticated_should_be_true_after_connect(#[future] ssh: Ctx<Ssh>) {
-    let ssh = ssh.await;
-    assert!(ssh.is_authenticated());
-}
-
-#[rstest]
-#[test(tokio::test)]
 async fn into_distant_pair_should_return_client_and_server(sshd: Sshd) {
     let ssh = load_ssh_client(&sshd).await;
     let (mut client, _server_ref) = ssh.into_distant_pair().await.unwrap();
@@ -61,7 +56,7 @@ async fn connect_should_fail_on_refused_port() {
         port: Some(1),
         ..Default::default()
     };
-    let result = Ssh::connect("127.0.0.1", opts).await;
+    let result = SshSession::connect("127.0.0.1", opts).await;
     assert!(result.is_err());
 }
 
@@ -77,9 +72,13 @@ async fn connect_with_verbose_should_succeed(sshd: Sshd) {
         verbose: true,
         ..Default::default()
     };
-    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
-    ssh.authenticate(MockSshAuthHandler).await.unwrap();
-    assert!(ssh.is_authenticated());
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
+    let ssh = match ssh.authenticate(MockSshAuthHandler).await {
+        AuthResult::Authenticated(ssh) => ssh,
+        AuthResult::Failed { error, .. } => panic!("Authentication failed: {error}"),
+    };
+    // Type-state ensures we are authenticated — verify we can use the client
+    let _family = ssh.detect_family().await.unwrap();
 }
 
 #[rstest]
@@ -94,16 +93,6 @@ async fn ssh_host_and_port_accessors(#[future] ssh: Ctx<Ssh>) {
         host
     );
     assert_eq!(ssh.port(), ssh.sshd.port);
-}
-
-#[rstest]
-#[test(tokio::test)]
-async fn authenticate_twice_should_succeed(sshd: Sshd) {
-    let mut ssh = load_ssh_client(&sshd).await;
-    // Already authenticated by load_ssh_client, call again should be a no-op
-    assert!(ssh.is_authenticated());
-    ssh.authenticate(MockSshAuthHandler).await.unwrap();
-    assert!(ssh.is_authenticated());
 }
 
 #[rstest]
@@ -157,7 +146,7 @@ async fn connect_failure_error_should_be_connection_refused() {
         port: Some(1),
         ..Default::default()
     };
-    let result = Ssh::connect("127.0.0.1", opts).await;
+    let result = SshSession::connect("127.0.0.1", opts).await;
     match result {
         Err(err) => {
             // Should be a connection error
@@ -225,15 +214,16 @@ async fn encrypted_key_should_authenticate_with_passphrase(sshd: Sshd) {
         ..Default::default()
     };
 
-    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
     let handler = PassphraseSshAuthHandler {
         passphrase: passphrase.to_string(),
     };
-    ssh.authenticate(handler).await.unwrap();
-    assert!(
-        ssh.is_authenticated(),
-        "Should be authenticated with encrypted key + passphrase"
-    );
+    match ssh.authenticate(handler).await {
+        AuthResult::Authenticated(_) => {}
+        AuthResult::Failed { error, .. } => {
+            panic!("Should be authenticated with encrypted key + passphrase: {error}")
+        }
+    }
 }
 
 #[rstest]
@@ -251,12 +241,13 @@ async fn identities_only_should_skip_agent_and_use_file(sshd: Sshd) {
         ..Default::default()
     };
 
-    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
-    ssh.authenticate(MockSshAuthHandler).await.unwrap();
-    assert!(
-        ssh.is_authenticated(),
-        "Should authenticate via file-based key with identities_only=true"
-    );
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
+    match ssh.authenticate(MockSshAuthHandler).await {
+        AuthResult::Authenticated(_) => {}
+        AuthResult::Failed { error, .. } => {
+            panic!("Should authenticate via file-based key with identities_only=true: {error}")
+        }
+    }
 }
 
 #[rstest]
@@ -279,22 +270,24 @@ async fn authenticate_with_wrong_key_should_fail(sshd: Sshd) {
         ..Default::default()
     };
 
-    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
-    let result = ssh.authenticate(MockSshAuthHandler).await;
-    assert!(result.is_err(), "Authentication with wrong key should fail");
-    let err = result.unwrap_err();
-    assert_eq!(
-        err.kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "Error should be PermissionDenied, got: {:?} - {}",
-        err.kind(),
-        err
-    );
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Permission denied"),
-        "Error message should contain 'Permission denied', got: '{msg}'"
-    );
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
+    match ssh.authenticate(MockSshAuthHandler).await {
+        AuthResult::Authenticated(_) => panic!("Authentication with wrong key should fail"),
+        AuthResult::Failed { error, .. } => {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "Error should be PermissionDenied, got: {:?} - {}",
+                error.kind(),
+                error
+            );
+            let msg = error.to_string();
+            assert!(
+                msg.contains("Permission denied"),
+                "Error message should contain 'Permission denied', got: '{msg}'"
+            );
+        }
+    }
 }
 
 #[rstest]
@@ -329,27 +322,80 @@ async fn encrypted_key_with_wrong_passphrase_should_fail(sshd: Sshd) {
         ..Default::default()
     };
 
-    let mut ssh = Ssh::connect("127.0.0.1", opts).await.unwrap();
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
     let handler = PassphraseSshAuthHandler {
         passphrase: "wrong_passphrase".to_string(),
     };
-    let result = ssh.authenticate(handler).await;
+
     // With wrong passphrase, the key decryption fails and auth falls through to error
-    assert!(
-        result.is_err(),
-        "Authentication with wrong passphrase should fail"
-    );
-    let err = result.unwrap_err();
-    assert_eq!(
-        err.kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "Error should be PermissionDenied, got: {:?} - {}",
-        err.kind(),
-        err
-    );
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Permission denied"),
-        "Error message should contain 'Permission denied', got: '{msg}'"
-    );
+    match ssh.authenticate(handler).await {
+        AuthResult::Authenticated(_) => {
+            panic!("Authentication with wrong passphrase should fail")
+        }
+        AuthResult::Failed { error, .. } => {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "Error should be PermissionDenied, got: {:?} - {}",
+                error.kind(),
+                error
+            );
+            let msg = error.to_string();
+            assert!(
+                msg.contains("Permission denied"),
+                "Error message should contain 'Permission denied', got: '{msg}'"
+            );
+        }
+    }
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proxy_command_should_connect_via_tcp_to_stdio(sshd: Sshd) {
+    let tcp_to_stdio = distant_test_harness::exe::build_tcp_to_stdio()
+        .await
+        .expect("failed to build tcp-to-stdio binary");
+
+    let proxy_cmd = format!("{} 127.0.0.1:{}", tcp_to_stdio.display(), sshd.port);
+
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        proxy_command: Some(proxy_cmd),
+        ..Default::default()
+    };
+
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
+    match ssh.authenticate(MockSshAuthHandler).await {
+        AuthResult::Authenticated(_) => {}
+        AuthResult::Failed { error, .. } => {
+            panic!("Should authenticate through ProxyCommand: {error}")
+        }
+    }
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn proxy_command_none_should_bypass_proxy(sshd: Sshd) {
+    // "none" should disable ProxyCommand and connect directly
+    let opts = SshOpts {
+        port: Some(sshd.port),
+        identity_files: vec![sshd.tmp.child("id_ed25519").path().to_path_buf()],
+        identities_only: Some(true),
+        user: Some(USERNAME.to_string()),
+        user_known_hosts_files: vec![sshd.tmp.child("known_hosts").path().to_path_buf()],
+        proxy_command: Some("none".to_string()),
+        ..Default::default()
+    };
+
+    let ssh = SshSession::connect("127.0.0.1", opts).await.unwrap();
+    match ssh.authenticate(MockSshAuthHandler).await {
+        AuthResult::Authenticated(_) => {}
+        AuthResult::Failed { error, .. } => {
+            panic!("proxy_command='none' should fall back to direct connection: {error}")
+        }
+    }
 }

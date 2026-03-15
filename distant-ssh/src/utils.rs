@@ -1,11 +1,15 @@
 use std::fmt;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
-use russh::client::Handle;
+use russh::Channel;
+use russh::client::{Handle, Msg};
+use russh_sftp::client::SftpSession;
 
 use crate::ClientHandler;
 use crate::SshFamily;
+use crate::pool;
 
 /// Timeout in seconds for SSH operations (exec channels and SFTP sessions).
 ///
@@ -17,6 +21,9 @@ pub(crate) const SSH_TIMEOUT_SECS: u64 = 60;
 
 /// Timeout for exec-channel operations (typed wrapper for `execute_output()`).
 const SSH_EXEC_TIMEOUT: Option<Duration> = Some(Duration::from_secs(SSH_TIMEOUT_SECS));
+
+/// Timeout for individual OS-detection probes (`echo %OS%`, PowerShell).
+const DETECT_TIMEOUT: Option<Duration> = Some(Duration::from_secs(10));
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExecOutput {
@@ -58,18 +65,35 @@ pub async fn execute_output(
     cmd: &str,
     timeout: impl Into<Option<Duration>>,
 ) -> io::Result<ExecOutput> {
-    use russh::ChannelMsg;
-
     let timeout_duration = timeout.into();
 
-    // Open a channel
-    let mut channel = handle
+    let channel = handle
         .channel_open_session()
         .await
         .map_err(io::Error::other)?;
 
-    // Execute command
     channel.exec(true, cmd).await.map_err(io::Error::other)?;
+
+    execute_output_read_loop(channel, cmd, timeout_duration).await
+}
+
+/// Run a command on a pre-opened channel and collect its output.
+pub async fn execute_output_on_channel(
+    channel: Channel<Msg>,
+    cmd: &str,
+    timeout: impl Into<Option<Duration>>,
+) -> io::Result<ExecOutput> {
+    let timeout_duration = timeout.into();
+    channel.exec(true, cmd).await.map_err(io::Error::other)?;
+    execute_output_read_loop(channel, cmd, timeout_duration).await
+}
+
+async fn execute_output_read_loop(
+    mut channel: Channel<Msg>,
+    cmd: &str,
+    timeout_duration: Option<Duration>,
+) -> io::Result<ExecOutput> {
+    use russh::ChannelMsg;
 
     let read_future = async {
         // Read output via channel messages.
@@ -171,50 +195,6 @@ pub async fn execute_output(
     }
 }
 
-/// Query remote system for name of current user
-pub async fn query_username(
-    handle: &Handle<ClientHandler>,
-    is_windows: bool,
-) -> io::Result<String> {
-    if is_windows {
-        // Will get DOMAIN\USERNAME as output -- needed because USERNAME isn't set on
-        // Github's Windows CI (it sets USER instead)
-        let output = powershell_output(
-            handle,
-            "[System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
-            SSH_EXEC_TIMEOUT,
-        )
-        .await?;
-
-        let output = String::from_utf8_lossy(&output.stdout);
-        let output = match output.split_once('\\') {
-            Some((_, username)) => username,
-            None => output.as_ref(),
-        };
-
-        Ok(output.trim().to_string())
-    } else {
-        let output = execute_output(handle, "/bin/sh -c whoami", SSH_EXEC_TIMEOUT).await?;
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-}
-
-/// Query remote system for the default shell of current user
-pub async fn query_shell(handle: &Handle<ClientHandler>, is_windows: bool) -> io::Result<String> {
-    let output = if is_windows {
-        powershell_output(
-            handle,
-            "[Environment]::GetEnvironmentVariable('ComSpec')",
-            SSH_EXEC_TIMEOUT,
-        )
-        .await?
-    } else {
-        execute_output(handle, "/bin/sh -c 'echo $SHELL'", SSH_EXEC_TIMEOUT).await?
-    };
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 /// Returns `true` if `slice` contains `subslice` as a contiguous subsequence.
 fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
     if subslice.is_empty() {
@@ -245,7 +225,7 @@ fn has_windows_drive_prefix(path: &str) -> bool {
 ///    Reliable fallback that avoids shell execution entirely.
 /// 3. **Exec fallback** — `echo %OS%` (cmd.exe) then PowerShell as a safety net.
 pub async fn is_windows(
-    handle: &Handle<ClientHandler>,
+    pool: &Arc<pool::ChannelPool>,
     remote_sshid: Option<&str>,
 ) -> io::Result<bool> {
     // Layer 1: SSH identification string (zero cost, already captured).
@@ -255,30 +235,11 @@ pub async fn is_windows(
             log::debug!("Windows detected via SSH ID: {sshid}");
             return Ok(true);
         }
-        // SSH ID is present but doesn't contain "windows" — could be standard
-        // OpenSSH on Unix, or a Windows server with a custom/stripped banner.
-        // Fall through to SFTP.
     }
 
-    // Layer 2: SFTP-based detection (no exec, no shell dependency).
+    // Layer 2: SFTP-based detection using pool (named session, evictable).
     let sftp_result: Result<bool, io::Error> = async {
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
-
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(io::Error::other)?;
-
-        let sftp = russh_sftp::client::SftpSession::new_opts(
-            channel.into_stream(),
-            Some(SSH_TIMEOUT_SECS),
-        )
-        .await
-        .map_err(io::Error::other)?;
-
+        let sftp = pool.sftp().await?;
         let home = sftp.canonicalize(".").await.map_err(io::Error::other)?;
         log::debug!("SFTP canonicalize(\".\") returned: {home}");
         Ok(has_windows_drive_prefix(&home))
@@ -295,66 +256,159 @@ pub async fn is_windows(
         }
     }
 
-    // Layer 3: parallel exec fallback (safety net).
-    // Run cmd.exe and PowerShell probes concurrently — return as soon as
-    // either confirms Windows.
-    exec_detect_windows(handle).await
+    // Layer 3: exec fallback using pool channels.
+    exec_detect_windows(pool).await
 }
 
-/// Run `echo %OS%` and PowerShell OS detection in parallel.
+/// Run `echo %OS%` and PowerShell OS detection using pooled channels.
+///
+/// Attempts to open two exec channels for parallel probing. If the second
+/// channel fails (e.g. `MaxSessions=1`), falls back to running probes
+/// sequentially on one channel at a time.
 ///
 /// Returns `Ok(true)` as soon as either probe outputs `Windows_NT`.
 /// If both complete without a match, returns `Ok(false)`.
 /// Only returns `Err` if *both* probes fail.
-async fn exec_detect_windows(handle: &Handle<ClientHandler>) -> io::Result<bool> {
-    let timeout = Some(Duration::from_secs(10));
+async fn exec_detect_windows(pool: &Arc<pool::ChannelPool>) -> io::Result<bool> {
+    let timeout = DETECT_TIMEOUT;
 
     let is_win = |out: &ExecOutput| {
         contains_subslice(&out.stdout, b"Windows_NT")
             || contains_subslice(&out.stderr, b"Windows_NT")
     };
 
-    let mut echo_fut = std::pin::pin!(execute_output(handle, "echo %OS%", timeout));
-    let mut ps_fut = std::pin::pin!(powershell_output(
-        handle,
-        "[Environment]::GetEnvironmentVariable('OS')",
-        timeout,
-    ));
+    let ps_cmd = "powershell.exe -NonInteractive -Command \
+                  \"& {[Environment]::GetEnvironmentVariable('OS')}\"";
 
-    // Wait for whichever finishes first. Both arms return the same type
-    // (Result + bool flag) so the match is well-typed.
-    let (first_result, echo_finished) = tokio::select! {
-        result = &mut echo_fut => (result, true),
-        result = &mut ps_fut => (result, false),
-    };
+    match pool.open_execs::<2>().await {
+        Ok([exec1, exec2]) => {
+            // Parallel path: two channels available
+            let (channel1, _permit1) = exec1.take();
+            let (channel2, _permit2) = exec2.take();
+            let mut echo_fut =
+                std::pin::pin!(execute_output_on_channel(channel1, "echo %OS%", timeout));
+            let mut ps_fut = std::pin::pin!(execute_output_on_channel(channel2, ps_cmd, timeout));
 
-    // If the first result matched Windows, return immediately.
-    if let Ok(ref output) = first_result
-        && is_win(output)
-    {
-        log::debug!("Windows detected via exec (first probe)");
-        return Ok(true);
+            let (first_result, echo_finished) = tokio::select! {
+                result = &mut echo_fut => (result, true),
+                result = &mut ps_fut => (result, false),
+            };
+
+            if let Ok(ref output) = first_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (first probe)");
+                return Ok(true);
+            }
+
+            let second_result = if echo_finished {
+                ps_fut.await
+            } else {
+                echo_fut.await
+            };
+
+            if let Ok(ref output) = second_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (second probe)");
+                return Ok(true);
+            }
+
+            match (first_result, second_result) {
+                (Err(e1), Err(_)) => Err(e1),
+                _ => Ok(false),
+            }
+        }
+        Err(_) => {
+            // Sequential fallback: MaxSessions=1, only one channel at a time
+            log::debug!("Second exec channel unavailable, falling back to sequential probes");
+
+            let (channel1, _permit1) = pool.open_exec().await?.take();
+            let echo_result = execute_output_on_channel(channel1, "echo %OS%", timeout).await;
+
+            drop(_permit1);
+
+            if let Ok(ref output) = echo_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (sequential echo)");
+                return Ok(true);
+            }
+
+            let (channel2, _permit2) = pool.open_exec().await?.take();
+            let ps_result = execute_output_on_channel(channel2, ps_cmd, timeout).await;
+
+            if let Ok(ref output) = ps_result
+                && is_win(output)
+            {
+                log::debug!("Windows detected via exec (sequential powershell)");
+                return Ok(true);
+            }
+
+            match (echo_result, ps_result) {
+                (Err(e1), Err(_)) => Err(e1),
+                _ => Ok(false),
+            }
+        }
     }
+}
 
-    // First didn't match or errored — await the second.
-    let second_result = if echo_finished {
-        ps_fut.await
+/// Query the remote system's username via `whoami`.
+pub async fn query_username(pool: &Arc<pool::ChannelPool>) -> io::Result<String> {
+    let (channel, _permit) = pool.open_exec().await?.take();
+    let output = execute_output_on_channel(channel, "whoami", SSH_EXEC_TIMEOUT).await?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Detect the default shell on the remote system.
+///
+/// On Windows, queries `ComSpec` via PowerShell. On Unix, reads `/etc/passwd`
+/// via SFTP and falls back to `/bin/sh`.
+pub async fn query_shell(
+    pool: &Arc<pool::ChannelPool>,
+    is_windows: bool,
+    username: &str,
+) -> io::Result<String> {
+    if is_windows {
+        let (channel, _permit) = pool.open_exec().await?.take();
+        let output = execute_output_on_channel(
+            channel,
+            "powershell.exe -NonInteractive -Command \"& {[Environment]::GetEnvironmentVariable('ComSpec')}\"",
+            SSH_EXEC_TIMEOUT,
+        )
+        .await?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
-        echo_fut.await
-    };
+        let sftp = pool.sftp().await?;
+        match shell_from_passwd(&sftp, username).await {
+            Some(shell) => Ok(shell),
+            None => Ok("/bin/sh".to_string()),
+        }
+    }
+}
 
-    if let Ok(ref output) = second_result
-        && is_win(output)
-    {
-        log::debug!("Windows detected via exec (second probe)");
-        return Ok(true);
+/// Read `/etc/passwd` via SFTP and extract the shell for the given username.
+async fn shell_from_passwd(sftp: &SftpSession, username: &str) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = sftp.open("/etc/passwd").await.ok()?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await.ok()?;
+
+    let prefix = format!("{username}:");
+    for line in contents.lines() {
+        if line.starts_with(&prefix) {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() >= 7 {
+                let shell = fields[6].trim();
+                if !shell.is_empty() {
+                    return Some(shell.to_string());
+                }
+            }
+        }
     }
 
-    // Neither matched Windows_NT. If both errored, propagate.
-    match (first_result, second_result) {
-        (Err(e1), Err(_)) => Err(e1),
-        _ => Ok(false),
-    }
+    None
 }
 
 /// An owned path in SFTP wire format, aware of the remote platform.

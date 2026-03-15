@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use distant_core::net::server::Reply;
 use distant_core::protocol::{Environment, ProcessId, PtySize, RemotePath, Response};
-use russh::client::Handle;
-use russh::{ChannelMsg, Sig};
+use russh::{Channel, ChannelMsg, Sig};
 use tokio::sync::mpsc;
 
-use crate::ClientHandler;
+use crate::pool::PoolPermit;
 
 /// Safety fallback timeout when ExitStatus arrives without Eof.
 /// Only used for misbehaving servers that never send SSH_MSG_CHANNEL_EOF.
@@ -30,9 +29,13 @@ pub struct SpawnResult {
     pub resizer: mpsc::Sender<PtySize>,
 }
 
-/// Spawns a simple (non-PTY) process
+/// Spawns a simple (non-PTY) process.
+///
+/// Takes ownership of an already-opened channel and a pool permit.
+/// The permit is moved into the background task and freed when the process exits.
 pub async fn spawn_simple<F, Fut>(
-    handle: &Handle<ClientHandler>,
+    channel: Channel<russh::client::Msg>,
+    permit: PoolPermit,
     cmd: &str,
     environment: Environment,
     current_dir: Option<RemotePath>,
@@ -49,12 +52,6 @@ where
             "current_dir is not supported for SSH process spawning",
         ));
     }
-
-    // Open a channel for command execution
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(io::Error::other)?;
 
     // Set environment variables before executing the command
     for (key, value) in environment.iter() {
@@ -78,13 +75,16 @@ where
     let was_killed = Arc::new(tokio::sync::Mutex::new(false));
     let was_killed_clone = was_killed.clone();
 
-    // Spawn task to handle stdout and stderr via ChannelMsg
+    // Spawn task to handle stdout and stderr via ChannelMsg.
+    // The permit is moved in so the pool slot is freed when the process exits.
     let stdout_reply = reply.clone_reply();
     let stderr_reply = reply.clone_reply();
     let exit_reply = reply.clone_reply();
     let msg_id = id;
     let cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
+        let _permit = permit; // moved in — dropped on task exit
+
         let mut exit_status: Option<u32> = None;
         let mut got_eof = false;
 
@@ -224,9 +224,14 @@ where
     })
 }
 
-/// Spawns a PTY process
+/// Spawns a PTY process.
+///
+/// Takes ownership of an already-opened channel and a pool permit.
+/// The permit is moved into the background task and freed when the process exits.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_pty<F, Fut>(
-    handle: &Handle<ClientHandler>,
+    channel: Channel<russh::client::Msg>,
+    permit: PoolPermit,
     cmd: &str,
     environment: Environment,
     current_dir: Option<RemotePath>,
@@ -244,12 +249,6 @@ where
             "current_dir is not supported for SSH process spawning",
         ));
     }
-
-    // Open a channel for PTY
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(io::Error::other)?;
 
     // Set environment variables before requesting PTY
     // Extract TERM for PTY request, but still pass all env vars via set_env
@@ -300,12 +299,15 @@ where
     let was_killed = Arc::new(tokio::sync::Mutex::new(false));
     let was_killed_clone = was_killed.clone();
 
-    // Spawn task to handle PTY output (stdout/stderr combined) via ChannelMsg
+    // Spawn task to handle PTY output (stdout/stderr combined) via ChannelMsg.
+    // The permit is moved in so the pool slot is freed when the process exits.
     let stdout_reply = reply.clone_reply();
     let exit_reply = reply.clone_reply();
     let msg_id = id;
     let pty_cmd_for_log = cmd.to_string();
     tokio::spawn(async move {
+        let _permit = permit; // moved in — dropped on task exit
+
         let mut exit_status: Option<u32> = None;
         let mut got_eof = false;
 

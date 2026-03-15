@@ -9,9 +9,8 @@ pub struct ReadmeDoctests;
 
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
-use std::fs::File;
 use std::future::Future;
-use std::io::{self, BufReader, Write};
+use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,20 +24,25 @@ use distant_core::protocol::PROTOCOL_VERSION;
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
-use ssh2_config::{HostParams, ParseRule, SshConfig};
 use tokio::sync::Mutex;
 
 mod api;
 mod auth;
+mod config;
 mod plugin;
+mod pool;
 mod process;
 mod utils;
 
 pub use plugin::SshPlugin;
 pub use utils::SftpPathBuf;
 
+mod proxy;
+
 use api::SshApi;
 use auth::{expand_tilde, format_methods};
+use config::ResolvedConfig;
+use pool::ChannelPool;
 
 /// Represents the family of the remote machine connected over SSH
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -270,6 +274,23 @@ impl SshAuthHandler for LocalSshAuthHandler {
     }
 }
 
+/// Returns the platform-specific system SSH configuration directory.
+///
+/// - Unix: `/etc/ssh`
+/// - Windows: `%ProgramData%\ssh`
+fn system_ssh_dir() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(PathBuf::from("/etc/ssh"))
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("ProgramData")
+            .ok()
+            .map(|d| PathBuf::from(d).join("ssh"))
+    }
+}
+
 /// Verify a server's host key against known_hosts files using the specified policy.
 ///
 /// Returns `Ok(true)` if the key is accepted, or an error if rejected.
@@ -436,19 +457,75 @@ impl client::Handler for ClientHandler {
     }
 }
 
-/// Represents an ssh2 client
-pub struct Ssh {
+/// An SSH connection that has not yet been authenticated.
+///
+/// Created by [`SshSession::connect`]. Call [`SshSession::authenticate`] to
+/// proceed to an authenticated [`Ssh`] client.
+pub struct SshSession {
     handle: Handle<ClientHandler>,
     host: String,
     port: u16,
     user: String,
     opts: SshOpts,
-    authenticated: bool,
-    cached_family: Mutex<Option<SshFamily>>,
     /// The server's SSH identification string, captured during key exchange.
     remote_sshid: Arc<Mutex<Option<String>>>,
     /// Identity files from SSH config, used as fallback if opts.identity_files is empty.
     ssh_config_identity_files: Option<Vec<PathBuf>>,
+    /// Custom SSH agent socket path from `IdentityAgent` config directive.
+    identity_agent: Option<String>,
+}
+
+/// An authenticated SSH client ready for remote operations.
+///
+/// Obtained from [`AuthResult::Authenticated`] after a successful call to
+/// [`SshSession::authenticate`].
+pub struct Ssh {
+    pool: Arc<ChannelPool>,
+    host: String,
+    port: u16,
+    user: String,
+    opts: SshOpts,
+    cached_family: Mutex<Option<SshFamily>>,
+    /// The server's SSH identification string, captured during key exchange.
+    remote_sshid: Arc<Mutex<Option<String>>>,
+}
+
+/// Result of an SSH authentication attempt.
+///
+/// On success, the handle is consumed and replaced with a channel pool.
+/// On failure, the original session is returned so the caller can retry.
+pub enum AuthResult {
+    /// Authentication succeeded; the client is ready for operations.
+    Authenticated(Ssh),
+    /// Authentication failed; the original session is returned for retry.
+    Failed {
+        session: SshSession,
+        error: io::Error,
+    },
+}
+
+impl SshSession {
+    /// Host this session is connected to
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Port this session is connected to on remote host
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+impl Ssh {
+    /// Host this client is connected to
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Port this client is connected to on remote host
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
 
 /// Build the command-line arguments for launching a distant server remotely.
@@ -468,11 +545,10 @@ fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::R
     Ok(format!("{} {}", binary, args.join(" ")))
 }
 
-impl Ssh {
+impl SshSession {
     /// Connect to a remote TCP server using SSH
     pub async fn connect(host: impl AsRef<str>, opts: SshOpts) -> io::Result<Self> {
-        // Parse SSH config first
-        let ssh_config = Self::parse_ssh_config(host.as_ref())?;
+        let ssh_config = ResolvedConfig::for_host(host.as_ref()).await?;
 
         // Resolve the actual hostname to connect to (SSH config HostName directive)
         let connect_host = ssh_config.host_name.as_deref().unwrap_or(host.as_ref());
@@ -485,6 +561,18 @@ impl Ssh {
             .or(ssh_config.user.clone())
             .unwrap_or_else(|| whoami::username().unwrap_or_default());
 
+        // Resolve identities_only: prefer explicit opts, then SSH config
+        let mut opts = opts;
+        if opts.identities_only.is_none() {
+            opts.identities_only = ssh_config.identities_only.as_deref().and_then(|s| {
+                match s.to_lowercase().as_str() {
+                    "yes" => Some(true),
+                    "no" => Some(false),
+                    _ => None,
+                }
+            });
+        }
+
         info!(
             "SSH connection attempt: {}:{} as user '{}'",
             connect_host, port, user
@@ -496,7 +584,7 @@ impl Ssh {
         );
 
         // Build russh configuration
-        let config = Self::build_russh_config(&opts, &ssh_config)?;
+        let russh_cfg = ssh_config.to_russh_config()?;
 
         // Verbose diagnostics
         if opts.verbose {
@@ -514,34 +602,43 @@ impl Ssh {
             debug!("Identities only: {:?}", opts.identities_only);
             debug!("Proxy command: {:?}", opts.proxy_command);
             debug!("Known hosts files: {:?}", opts.user_known_hosts_files);
-            debug!("Russh keepalive: {:?}", config.keepalive_interval);
+            debug!("Russh keepalive: {:?}", russh_cfg.keepalive_interval);
         }
 
-        debug!(
-            "Initiating russh::client::connect to {}:{}...",
-            connect_host, port
-        );
+        debug!("Initiating SSH connection to {}:{}...", connect_host, port);
 
         // Resolve known_hosts files: prefer explicit opts, then SSH config, then defaults
-        let known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
+        let mut known_hosts_files = if !opts.user_known_hosts_files.is_empty() {
             opts.user_known_hosts_files
                 .iter()
                 .map(|p| expand_tilde(p))
                 .collect()
-        } else if let Some(config_values) = ssh_config.unsupported_fields.get("userknownhostsfile")
-        {
-            let files: Vec<PathBuf> = config_values
+        } else if !ssh_config.user_known_hosts_files.is_empty() {
+            ssh_config
+                .user_known_hosts_files
                 .iter()
                 .map(|s| expand_tilde(Path::new(s.trim())))
-                .collect();
-            if files.is_empty() {
-                Self::default_known_hosts_files()
-            } else {
-                files
-            }
+                .collect()
         } else {
             Self::default_known_hosts_files()
         };
+
+        // Append global known_hosts from SSH config or system defaults
+        if !ssh_config.global_known_hosts_files.is_empty() {
+            for path_str in &ssh_config.global_known_hosts_files {
+                let path = expand_tilde(Path::new(path_str.trim()));
+                if !known_hosts_files.contains(&path) {
+                    known_hosts_files.push(path);
+                }
+            }
+        } else if let Some(ssh_dir) = system_ssh_dir() {
+            for name in ["ssh_known_hosts", "ssh_known_hosts2"] {
+                let path = ssh_dir.join(name);
+                if !known_hosts_files.contains(&path) {
+                    known_hosts_files.push(path);
+                }
+            }
+        }
 
         // Resolve host key policy: prefer explicit opts, then SSH config, then default (TOFU)
         let policy = opts
@@ -551,10 +648,9 @@ impl Ssh {
             .map(|v| HostKeyPolicy::from_config(v))
             .or_else(|| {
                 ssh_config
-                    .unsupported_fields
-                    .get("stricthostkeychecking")
-                    .and_then(|v| v.first())
-                    .map(|v| HostKeyPolicy::from_config(v))
+                    .strict_host_key_checking
+                    .as_deref()
+                    .map(HostKeyPolicy::from_config)
             })
             .unwrap_or_default();
 
@@ -562,6 +658,26 @@ impl Ssh {
             "Host key verification: policy={:?}, files={:?}",
             policy, known_hosts_files
         );
+
+        // Resolve proxy command: prefer explicit opts, then SSH config.
+        // "none" disables an inherited proxy (same as OpenSSH).
+        let proxy_command = opts
+            .proxy_command
+            .clone()
+            .or_else(|| ssh_config.proxy_command.clone())
+            .or_else(|| {
+                // Convert ProxyJump to equivalent ProxyCommand
+                ssh_config.proxy_jump.as_ref().map(|hops| {
+                    if hops.len() == 1 {
+                        format!("ssh -W %h:%p {}", hops[0])
+                    } else {
+                        let jump_chain = hops[..hops.len() - 1].join(",");
+                        let final_hop = &hops[hops.len() - 1];
+                        format!("ssh -W %h:%p -J {jump_chain} {final_hop}")
+                    }
+                })
+            })
+            .filter(|cmd| !cmd.eq_ignore_ascii_case("none"));
 
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let handler = ClientHandler {
@@ -571,8 +687,16 @@ impl Ssh {
             known_hosts_files,
             policy,
         };
-        let connect_result =
-            russh::client::connect(Arc::new(config), (connect_host, port), handler).await;
+
+        let russh_cfg = Arc::new(russh_cfg);
+        let connect_result = if let Some(ref cmd) = proxy_command {
+            let substituted = proxy::substitute_proxy_command(cmd, connect_host, port, &user);
+            info!("Using ProxyCommand: {}", substituted);
+            let stream = proxy::ProxyStream::spawn(&substituted)?;
+            russh::client::connect_stream(russh_cfg, stream, handler).await
+        } else {
+            russh::client::connect(russh_cfg, (connect_host, port), handler).await
+        };
 
         let handle = match connect_result {
             Ok(h) => {
@@ -617,211 +741,63 @@ impl Ssh {
             port,
             user,
             opts,
-            authenticated: false,
-            cached_family: Mutex::new(None),
             remote_sshid,
-            ssh_config_identity_files: ssh_config.identity_file.clone(),
+            ssh_config_identity_files: if ssh_config.identity_files.is_empty() {
+                None
+            } else {
+                Some(ssh_config.identity_files)
+            },
+            identity_agent: ssh_config.identity_agent,
         })
     }
 
-    /// Returns the default known_hosts file paths (`~/.ssh/known_hosts` and `~/.ssh/known_hosts2`).
+    /// Returns the default known_hosts file paths.
+    ///
+    /// Includes user paths (`~/.ssh/known_hosts`, `~/.ssh/known_hosts2`) and
+    /// system paths (`/etc/ssh/ssh_known_hosts`, `/etc/ssh/ssh_known_hosts2`
+    /// on Unix; `%ProgramData%\ssh\...` on Windows).
     fn default_known_hosts_files() -> Vec<PathBuf> {
-        dirs::home_dir()
+        let mut files = dirs::home_dir()
             .map(|h| {
                 vec![
                     h.join(".ssh").join("known_hosts"),
                     h.join(".ssh").join("known_hosts2"),
                 ]
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(ssh_dir) = system_ssh_dir() {
+            files.push(ssh_dir.join("ssh_known_hosts"));
+            files.push(ssh_dir.join("ssh_known_hosts2"));
+        }
+        files
     }
 
-    fn parse_ssh_config(host: &str) -> io::Result<HostParams> {
-        let config_path = dirs::home_dir()
-            .map(|h| h.join(".ssh").join("config"))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No home directory found"))?;
-
-        if !config_path.exists() {
-            use ssh2_config::DefaultAlgorithms;
-            return Ok(HostParams::new(&DefaultAlgorithms::default()));
+    /// Consume the pre-auth client and attempt authentication.
+    ///
+    /// On success, returns [`AuthResult::Authenticated`] with a pool-backed
+    /// client. On failure, returns [`AuthResult::Failed`] with the original
+    /// handle so the caller can retry.
+    pub async fn authenticate(mut self, handler: impl SshAuthHandler) -> AuthResult {
+        match self.try_authenticate(&handler).await {
+            Ok(()) => AuthResult::Authenticated(self.into_authenticated()),
+            Err(error) => AuthResult::Failed {
+                session: self,
+                error,
+            },
         }
-
-        let mut reader = BufReader::new(File::open(&config_path)?);
-        let config = SshConfig::default()
-            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Failed to parse SSH config: {}", e),
-                )
-            })?;
-
-        Ok(config.query(host))
     }
 
-    fn build_russh_config(
-        _opts: &SshOpts,
-        params: &HostParams,
-    ) -> io::Result<russh::client::Config> {
-        let mut config = russh::client::Config::default();
-
-        config.preferred = Self::build_preferred_algorithms(params);
-
-        // Map keepalive: prefer server_alive_interval, fall back to tcp_keep_alive
-        if let Some(interval) = params.server_alive_interval {
-            config.keepalive_interval = Some(interval);
-        } else if params.tcp_keep_alive == Some(true) {
-            // TCP keepalive requested but no interval specified; use a sensible default
-            config.keepalive_interval = Some(Duration::from_secs(15));
-        }
-
-        // Map connection timeout
-        if let Some(timeout) = params.connect_timeout {
-            config.inactivity_timeout = Some(timeout);
-        }
-
-        Ok(config)
-    }
-
-    /// Builds preferred algorithm lists from SSH config, filtering to only algorithms
-    /// that russh actually supports. Unsupported algorithm names are logged and skipped.
-    fn build_preferred_algorithms(params: &HostParams) -> russh::Preferred {
-        let mut preferred = russh::Preferred::default();
-
-        // Map KexAlgorithms
-        if !params.kex_algorithms.is_default() {
-            let kex: Vec<russh::kex::Name> = params
-                .kex_algorithms
-                .algorithms()
-                .iter()
-                .filter_map(|s| match russh::kex::Name::try_from(s.as_str()) {
-                    Ok(name) => Some(name),
-                    Err(_) => {
-                        debug!("Skipping unsupported KEX algorithm from SSH config: {}", s);
-                        None
-                    }
-                })
-                .collect();
-            if !kex.is_empty() {
-                // Append extension negotiation names that russh needs internally
-                let mut full_kex = kex;
-                for ext in [
-                    russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
-                    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
-                ] {
-                    if !full_kex.contains(&ext) {
-                        full_kex.push(ext);
-                    }
-                }
-                preferred.kex = full_kex.into();
-            }
-        }
-
-        // Map HostKeyAlgorithms
-        if !params.host_key_algorithms.is_default() {
-            let keys: Vec<russh::keys::Algorithm> = params
-                .host_key_algorithms
-                .algorithms()
-                .iter()
-                .filter_map(|s| match s.parse::<russh::keys::Algorithm>() {
-                    Ok(algo) => Some(algo),
-                    Err(_) => {
-                        debug!(
-                            "Skipping unsupported host key algorithm from SSH config: {}",
-                            s
-                        );
-                        None
-                    }
-                })
-                .collect();
-            if !keys.is_empty() {
-                preferred.key = keys.into();
-            }
-        }
-
-        // Map Ciphers
-        if !params.ciphers.is_default() {
-            let ciphers: Vec<russh::cipher::Name> = params
-                .ciphers
-                .algorithms()
-                .iter()
-                .filter_map(|s| match russh::cipher::Name::try_from(s.as_str()) {
-                    Ok(name) => Some(name),
-                    Err(_) => {
-                        debug!("Skipping unsupported cipher from SSH config: {}", s);
-                        None
-                    }
-                })
-                .collect();
-            if !ciphers.is_empty() {
-                preferred.cipher = ciphers.into();
-            }
-        }
-
-        // Map MACs
-        if !params.mac.is_default() {
-            let macs: Vec<russh::mac::Name> = params
-                .mac
-                .algorithms()
-                .iter()
-                .filter_map(|s| match russh::mac::Name::try_from(s.as_str()) {
-                    Ok(name) => Some(name),
-                    Err(_) => {
-                        debug!("Skipping unsupported MAC from SSH config: {}", s);
-                        None
-                    }
-                })
-                .collect();
-            if !macs.is_empty() {
-                preferred.mac = macs.into();
-            }
-        }
-
-        // Map Compression
-        if let Some(true) = params.compression {
-            let compressed: Vec<russh::compression::Name> = ["zlib@openssh.com", "zlib", "none"]
-                .iter()
-                .filter_map(|s| russh::compression::Name::try_from(*s).ok())
-                .collect();
-            if !compressed.is_empty() {
-                preferred.compression = compressed.into();
-            }
-        }
-
-        preferred
-    }
-
-    /// Host this client is connected to
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    /// Port this client is connected to on remote host
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    #[inline]
-    pub fn is_authenticated(&self) -> bool {
-        self.authenticated
-    }
-
-    /// Authenticates the [`Ssh`] if not already authenticated
-    pub async fn authenticate(&mut self, handler: impl SshAuthHandler) -> io::Result<()> {
-        use russh::MethodKind;
-
-        if self.authenticated {
-            return Ok(());
-        }
+    /// Internal authentication logic that borrows `self` mutably.
+    async fn try_authenticate(&mut self, handler: &impl SshAuthHandler) -> io::Result<()> {
+        use russh::{MethodKind, MethodSet};
 
         let mut methods_tried: Vec<String> = Vec::new();
-        let mut server_methods: Option<russh::MethodSet> = None;
+        let mut server_methods: Option<MethodSet> = None;
 
         // Probe with "none" auth to discover which methods the server supports
         match self.handle.authenticate_none(&self.user).await {
             Ok(res) => {
                 if res.success() {
-                    self.authenticated = true;
                     return Ok(());
                 }
                 if let russh::client::AuthResult::Failure {
@@ -840,18 +816,31 @@ impl Ssh {
             }
         }
 
-        let server_accepts_pubkey = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::PublicKey));
-        let server_accepts_password = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::Password));
-        let server_accepts_kbdint = server_methods
-            .as_ref()
-            .is_none_or(|m| m.contains(&MethodKind::KeyboardInteractive));
+        let server_accepts = |methods: &Option<MethodSet>, kind: &MethodKind| -> bool {
+            methods.as_ref().is_none_or(|m| m.contains(kind))
+        };
 
-        // Try SSH agent first — it avoids touching key files and works with hardware tokens
-        if server_accepts_pubkey
+        // Try certificate + agent auth first (matches OpenSSH order when certs are available)
+        if server_accepts(&server_methods, &MethodKind::PublicKey) {
+            let key_files =
+                auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
+            let agent_socket = self.identity_agent.as_deref();
+            if auth::try_cert_agent_auth(
+                &mut self.handle,
+                &self.user,
+                &key_files,
+                agent_socket,
+                &mut methods_tried,
+                &mut server_methods,
+            )
+            .await?
+            {
+                return Ok(());
+            }
+        }
+
+        // Try SSH agent — it avoids touching key files and works with hardware tokens
+        if server_accepts(&server_methods, &MethodKind::PublicKey)
             && !self.opts.identities_only.unwrap_or(false)
             && auth::try_agent_auth(
                 &mut self.handle,
@@ -861,12 +850,11 @@ impl Ssh {
             )
             .await?
         {
-            self.authenticated = true;
             return Ok(());
         }
 
         // Try key files from explicit opts, SSH config, or ~/.ssh defaults
-        if server_accepts_pubkey {
+        if server_accepts(&server_methods, &MethodKind::PublicKey) {
             let key_files =
                 auth::collect_key_files(&self.opts.identity_files, &self.ssh_config_identity_files);
             if !key_files.is_empty() {
@@ -877,12 +865,11 @@ impl Ssh {
                     &mut self.handle,
                     &self.user,
                     key_file,
-                    &handler,
+                    handler,
                     &mut server_methods,
                 )
                 .await?
                 {
-                    self.authenticated = true;
                     return Ok(());
                 }
             }
@@ -891,45 +878,60 @@ impl Ssh {
         // Keyboard-interactive — track whether we prompted the user to avoid
         // double-prompting if we fall through to password auth
         let mut user_was_prompted = false;
-        if server_accepts_kbdint {
+        if server_accepts(&server_methods, &MethodKind::KeyboardInteractive) {
             let (authenticated, prompted) = auth::try_keyboard_interactive(
                 &mut self.handle,
                 &self.user,
-                &handler,
+                handler,
                 &mut methods_tried,
                 &mut server_methods,
             )
             .await?;
             user_was_prompted = prompted;
             if authenticated {
-                self.authenticated = true;
                 return Ok(());
             }
         }
 
         // Password auth — skip if keyboard-interactive already prompted the user
-        if server_accepts_password
+        if server_accepts(&server_methods, &MethodKind::Password)
             && !user_was_prompted
             && auth::try_password_auth(
                 &mut self.handle,
                 &self.user,
-                &handler,
+                handler,
                 &mut methods_tried,
                 &mut server_methods,
             )
             .await?
         {
-            self.authenticated = true;
             return Ok(());
         }
 
         Err(auth::build_auth_error(&methods_tried, &server_methods))
     }
 
+    /// Transform a pre-auth session into an authenticated client with a channel pool.
+    fn into_authenticated(self) -> Ssh {
+        let pool = ChannelPool::new(self.handle);
+        Ssh {
+            pool,
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            opts: self.opts,
+            cached_family: Mutex::new(None),
+            remote_sshid: self.remote_sshid,
+        }
+    }
+}
+
+impl Ssh {
     /// Detects whether the family is Unix or Windows.
     ///
     /// Uses a layered detection strategy: SSH identification string, then SFTP
-    /// `canonicalize(".")`, then exec fallback. The result is cached for subsequent calls.
+    /// `canonicalize(".")`, then exec fallback. The result is cached for
+    /// subsequent calls.
     pub async fn detect_family(&self) -> io::Result<SshFamily> {
         {
             let guard = self.cached_family.lock().await;
@@ -939,7 +941,7 @@ impl Ssh {
         }
 
         let sshid = self.remote_sshid.lock().await.clone();
-        let is_windows = utils::is_windows(&self.handle, sshid.as_deref()).await?;
+        let is_windows = utils::is_windows(&self.pool, sshid.as_deref()).await?;
         let family = if is_windows {
             SshFamily::Windows
         } else {
@@ -959,7 +961,7 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let api = SshApi::new(self.pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -985,7 +987,7 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.handle, family);
+        let api = SshApi::new(self.pool, family, self.user.clone());
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -1026,13 +1028,9 @@ impl Ssh {
         let cmd = build_launch_args(family, &opts.binary, &opts.args)?;
         debug!("Executing launch command: {}", cmd);
 
-        // Use channel exec instead of PTY + shell to avoid interference
-        // from shell startup scripts (.bashrc, .zshrc, etc.)
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(io::Error::other)?;
+        // Open channel via pool (eviction handles MaxSessions=1 automatically)
+        let pooled = self.pool.open_exec().await?;
+        let (channel, _pool_permit) = pooled.take();
 
         channel
             .exec(true, cmd.as_bytes())
@@ -1187,7 +1185,7 @@ impl Ssh {
 mod tests {
     use std::io::Write;
 
-    use rstest::rstest;
+    use ssh2_config::{ParseRule, SshConfig};
 
     use super::*;
 
@@ -1210,6 +1208,7 @@ mod tests {
         let handler = LocalSshAuthHandler;
         handler.on_banner("test banner").await;
         handler.on_error("test error").await;
+
         // These just log — verifying they don't panic is sufficient
     }
 
@@ -1481,121 +1480,6 @@ mod tests {
         let result = Ssh::clean_launch_output(&long_stdout, &long_stderr);
         assert!(result.starts_with("stdout: '"));
         assert!(result.contains("stderr: '"));
-    }
-
-    #[test]
-    fn build_russh_config_should_use_defaults_when_no_overrides() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let params = HostParams::new(&DefaultAlgorithms::default());
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-
-        assert!(config.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_russh_config_should_set_keepalive_from_server_alive_interval() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.server_alive_interval = Some(Duration::from_secs(60));
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(60)));
-    }
-
-    #[test]
-    fn build_russh_config_should_set_short_keepalive() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.server_alive_interval = Some(Duration::from_secs(5));
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(5)));
-    }
-
-    #[test]
-    fn build_russh_config_should_leave_keepalive_none_when_unset() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.server_alive_interval = None;
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert!(config.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_russh_config_should_succeed_with_verbose_opts() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let mut opts = SshOpts::default();
-        opts.verbose = true;
-        let params = HostParams::new(&DefaultAlgorithms::default());
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert!(config.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_russh_config_should_succeed_with_populated_opts() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let mut opts = SshOpts::default();
-        opts.port = Some(2222);
-        opts.user = Some("testuser".to_string());
-        opts.identity_files.push(PathBuf::from("/tmp/id_rsa"));
-
-        let params = HostParams::new(&DefaultAlgorithms::default());
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert!(config.keepalive_interval.is_none());
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_return_defaults_with_empty_params() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let params = HostParams::new(&DefaultAlgorithms::default());
-        let preferred = Ssh::build_preferred_algorithms(&params);
-
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(preferred.kex, default_preferred.kex);
-        assert_eq!(preferred.cipher, default_preferred.cipher);
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_use_defaults_despite_custom_params() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.port = Some(9999);
-        params.user = Some("custom-user".to_string());
-
-        let preferred = Ssh::build_preferred_algorithms(&params);
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(preferred.kex, default_preferred.kex);
-    }
-
-    #[rstest]
-    #[case::nonexistent("nonexistent-host.example.com")]
-    #[case::localhost("localhost")]
-    #[case::wildcard("*")]
-    #[case::empty("")]
-    #[case::ipv4("192.168.1.1")]
-    #[case::ipv6("::1")]
-    #[case::fqdn("server.example.co.uk")]
-    #[case::hyphenated("my-server-01.internal")]
-    #[case::underscore("my_server_01")]
-    fn parse_ssh_config_should_not_error_for_any_hostname(#[case] host: &str) {
-        // parse_ssh_config reads the real ~/.ssh/config (or returns defaults).
-        // We can't assert specific field values since the user's config may have
-        // wildcard matches. The unwrap proves it never errors for valid input.
-        let _params = Ssh::parse_ssh_config(host).unwrap();
     }
 
     struct MockSshAuthHandler {
@@ -2042,43 +1926,6 @@ mod tests {
         assert_eq!(first_key, "Key000");
     }
 
-    #[test]
-    fn build_russh_config_should_allow_zero_keepalive() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.server_alive_interval = Some(Duration::from_secs(0));
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(0)));
-    }
-
-    #[test]
-    fn build_russh_config_should_allow_large_keepalive() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.server_alive_interval = Some(Duration::from_secs(3600));
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(3600)));
-    }
-
-    #[test]
-    fn build_russh_config_should_include_preferred_algorithms() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let params = HostParams::new(&DefaultAlgorithms::default());
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-
-        let default_preferred = russh::Preferred::default();
-        assert_eq!(config.preferred.kex, default_preferred.kex);
-        assert_eq!(config.preferred.cipher, default_preferred.cipher);
-    }
-
     #[test_log::test(tokio::test)]
     async fn mock_ssh_auth_handler_should_accept_ip_address_host() {
         let handler = MockSshAuthHandler {
@@ -2320,97 +2167,6 @@ mod tests {
         assert!(params.host_name.is_none());
     }
 
-    #[test]
-    fn build_russh_config_should_set_default_keepalive_from_tcp_keep_alive() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.tcp_keep_alive = Some(true);
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
-    }
-
-    #[test]
-    fn build_russh_config_should_prefer_server_alive_interval_over_tcp_keep_alive() {
-        use ssh2_config::DefaultAlgorithms;
-
-        let opts = SshOpts::default();
-        let mut params = HostParams::new(&DefaultAlgorithms::default());
-        params.tcp_keep_alive = Some(true);
-        params.server_alive_interval = Some(Duration::from_secs(30));
-
-        let config = Ssh::build_russh_config(&opts, &params).unwrap();
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(30)));
-    }
-
-    /// Helper: parse a temp SSH config and return HostParams with algorithm overrides applied.
-    fn parse_config_str(config_text: &str) -> HostParams {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config");
-        let mut f = std::fs::File::create(&path).unwrap();
-        write!(f, "{}", config_text).unwrap();
-
-        let mut reader = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
-        let config = SshConfig::default()
-            .parse(&mut reader, ParseRule::ALLOW_UNSUPPORTED_FIELDS)
-            .unwrap();
-        config.query("testhost")
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_ciphers() {
-        let params = parse_config_str(
-            "Host testhost\n  Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com\n",
-        );
-
-        let preferred = Ssh::build_preferred_algorithms(&params);
-        assert!(preferred.cipher.len() <= 2);
-        assert!(
-            preferred
-                .cipher
-                .iter()
-                .any(|c| c.as_ref() == "chacha20-poly1305@openssh.com")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_skip_unsupported_cipher() {
-        let params = parse_config_str(
-            "Host testhost\n  Ciphers aes256-gcm@openssh.com,nonexistent-cipher\n",
-        );
-
-        let preferred = Ssh::build_preferred_algorithms(&params);
-        assert!(
-            preferred
-                .cipher
-                .iter()
-                .all(|c| c.as_ref() != "nonexistent-cipher")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_kex() {
-        let params = parse_config_str("Host testhost\n  KexAlgorithms curve25519-sha256\n");
-
-        let preferred = Ssh::build_preferred_algorithms(&params);
-        assert!(
-            preferred
-                .kex
-                .iter()
-                .any(|k| k.as_ref() == "curve25519-sha256")
-        );
-    }
-
-    #[test]
-    fn build_preferred_algorithms_should_map_custom_mac() {
-        let params = parse_config_str("Host testhost\n  MACs hmac-sha2-256\n");
-
-        let preferred = Ssh::build_preferred_algorithms(&params);
-        assert!(preferred.mac.iter().any(|m| m.as_ref() == "hmac-sha2-256"));
-    }
-
     /// Generate an Ed25519 public key for host-key tests.
     fn generate_keypair() -> russh::keys::PublicKey {
         let key = russh::keys::PrivateKey::random(
@@ -2631,5 +2387,79 @@ mod tests {
             &HostKeyPolicy::Yes,
         );
         assert!(result.unwrap(), "Learned key should be found on re-check");
+    }
+
+    #[test]
+    fn system_ssh_dir_should_return_some() {
+        // On any supported platform, system_ssh_dir() should return a path
+        let dir = system_ssh_dir();
+        assert!(
+            dir.is_some(),
+            "system_ssh_dir() should return Some on Unix or Windows"
+        );
+
+        #[cfg(unix)]
+        assert_eq!(dir.unwrap(), PathBuf::from("/etc/ssh"));
+
+        #[cfg(windows)]
+        {
+            let expected = PathBuf::from(std::env::var("ProgramData").unwrap()).join("ssh");
+            assert_eq!(dir.unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn default_known_hosts_files_should_include_system_paths() {
+        let files = SshSession::default_known_hosts_files();
+
+        // Should contain at least the system paths
+        #[cfg(unix)]
+        {
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p == Path::new("/etc/ssh/ssh_known_hosts")),
+                "Should include /etc/ssh/ssh_known_hosts, got: {:?}",
+                files
+            );
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p == Path::new("/etc/ssh/ssh_known_hosts2")),
+                "Should include /etc/ssh/ssh_known_hosts2, got: {:?}",
+                files
+            );
+        }
+        #[cfg(windows)]
+        {
+            let sys_dir = PathBuf::from(std::env::var("ProgramData").unwrap()).join("ssh");
+            assert!(
+                files.iter().any(|p| p == &sys_dir.join("ssh_known_hosts")),
+                "Should include system ssh_known_hosts, got: {:?}",
+                files
+            );
+            assert!(
+                files.iter().any(|p| p == &sys_dir.join("ssh_known_hosts2")),
+                "Should include system ssh_known_hosts2, got: {:?}",
+                files
+            );
+        }
+
+        // User paths should come before system paths
+        if let Some(home) = dirs::home_dir() {
+            let user_kh = home.join(".ssh").join("known_hosts");
+            let system_kh = system_ssh_dir()
+                .expect("system_ssh_dir must exist for ordering check")
+                .join("ssh_known_hosts");
+            if let (Some(user_pos), Some(sys_pos)) = (
+                files.iter().position(|p| p == &user_kh),
+                files.iter().position(|p| p == &system_kh),
+            ) {
+                assert!(
+                    user_pos < sys_pos,
+                    "User known_hosts should come before system known_hosts"
+                );
+            }
+        }
     }
 }

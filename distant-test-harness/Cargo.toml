@@ -32,5 +32,9 @@ rand = "0.8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[[bin]]
+name = "tcp-to-stdio"
+path = "src/bin/tcp_to_stdio.rs"
+
 [lints]
 workspace = true

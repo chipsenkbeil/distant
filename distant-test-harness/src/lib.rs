@@ -1,3 +1,4 @@
+pub mod exe;
 pub mod host;
 pub mod manager;
 pub mod process;

@@ -132,3 +132,7 @@ nix = { path = "patches/nix-0.29.0" }
 # dev-only RELOAD_SSH_ALGO workflow). Eliminates unnecessary C build deps.
 # Remove when upstream makes git2 optional behind a feature flag.
 ssh2-config = { path = "patches/ssh2-config-0.7.0" }
+# Patched russh 0.57.1: adds certificate-based authentication with SSH agent
+# (authenticate_certificate_with, sign_request_cert, AgentIdentity).
+# Backport of Eugeny/russh#632. Remove when PR merges and a new russh release ships.
+russh = { path = "patches/russh-0.57.1" }

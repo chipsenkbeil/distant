@@ -17,7 +17,7 @@ use distant_core::net::common::{Destination, Map};
 use log::*;
 use tokio::sync::Mutex;
 
-use crate::{LaunchOpts, Ssh, SshAuthEvent, SshAuthHandler, SshOpts};
+use crate::{AuthResult, LaunchOpts, SshAuthEvent, SshAuthHandler, SshOpts, SshSession};
 
 /// Plugin for launching and connecting via SSH.
 ///
@@ -39,10 +39,14 @@ impl Plugin for SshPlugin {
         Box::pin(async move {
             let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling connect of {destination} with options '{options}'");
-            let mut ssh = load_ssh(&destination, options).await?;
+            let ssh = load_ssh(&destination, options).await?;
             let handler = AuthClientSshAuthHandler::new(authenticator);
-            ssh.authenticate(handler).await?;
-            Ok(ssh.into_distant_client().await?.into_untyped_client())
+            match ssh.authenticate(handler).await {
+                AuthResult::Authenticated(ssh) => {
+                    Ok(ssh.into_distant_client().await?.into_untyped_client())
+                }
+                AuthResult::Failed { error, .. } => Err(error),
+            }
         })
     }
 
@@ -56,9 +60,12 @@ impl Plugin for SshPlugin {
             let destination = distant_core::parse_destination(raw_destination)?;
             debug!("Handling launch of {destination} with options '{options}'");
 
-            let mut ssh = load_ssh(&destination, options).await?;
+            let ssh = load_ssh(&destination, options).await?;
             let handler = AuthClientSshAuthHandler::new(authenticator);
-            ssh.authenticate(handler).await?;
+            let ssh = match ssh.authenticate(handler).await {
+                AuthResult::Authenticated(ssh) => ssh,
+                AuthResult::Failed { error, .. } => return Err(error),
+            };
 
             let defaults = LaunchOpts::default();
             let opts = LaunchOpts {
@@ -223,14 +230,14 @@ fn parse_ssh_opts(destination: &Destination, options: &Map) -> io::Result<SshOpt
 }
 
 /// Load an SSH connection from a destination and options.
-async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<Ssh> {
+async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<SshSession> {
     trace!("load_ssh({destination}, {options})");
 
     let host = destination.host.to_string();
     let opts = parse_ssh_opts(destination, options)?;
 
     debug!("Connecting to {host} via ssh with {opts:?}");
-    Ssh::connect(host, opts).await
+    SshSession::connect(host, opts).await
 }
 
 #[inline]
