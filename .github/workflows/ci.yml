@@ -5,12 +5,14 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - '.gitignore'
     branches:
       - master
   pull_request:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - '.gitignore'
     branches:
       - master
 
