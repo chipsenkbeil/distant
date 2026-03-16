@@ -195,6 +195,14 @@ impl Options {
                     ) => {
                         network.merge(config.client.network);
                     }
+                    ClientSubcommand::Tunnel(
+                        ClientTunnelSubcommand::Open { network, .. }
+                        | ClientTunnelSubcommand::Listen { network, .. }
+                        | ClientTunnelSubcommand::Close { network, .. }
+                        | ClientTunnelSubcommand::List { network, .. },
+                    ) => {
+                        network.merge(config.client.network);
+                    }
                     ClientSubcommand::Launch {
                         distant_args,
                         distant_bin,
@@ -431,8 +439,11 @@ pub enum ClientSubcommand {
     /// Exactly one of src or dst must be remote.
     ///
     /// Examples:
+    ///
     ///   distant copy ./local.txt :/remote/file.txt   # upload
+    ///
     ///   distant copy :/remote/file.txt ./local.txt    # download
+    ///
     ///   distant copy -r ./dir :/remote/dir            # upload dir
     #[clap(name = "copy")]
     Copy {
@@ -466,6 +477,17 @@ pub enum ClientSubcommand {
     /// Subcommands for file system operations
     #[clap(subcommand, name = "fs")]
     FileSystem(ClientFileSystemSubcommand),
+
+    /// Manage TCP tunnels between local and remote machines.
+    ///
+    /// Forward tunnels (`open`) bind a local port and forward connections to a
+    /// host reachable from the remote server. Reverse tunnels (`listen`) bind a
+    /// port on the remote server and forward connections back to a host
+    /// reachable from the local machine.
+    ///
+    /// Use `tunnel list` to see active tunnels and `tunnel close` to stop them.
+    #[clap(subcommand, name = "tunnel")]
+    Tunnel(ClientTunnelSubcommand),
 
     /// Launches the server-portion of the binary on a remote machine
     Launch {
@@ -666,7 +688,9 @@ pub enum ClientSubcommand {
     /// a shell or runs the specified command.
     ///
     /// Examples:
+    ///
     ///   distant ssh user@host              # open an interactive shell
+    ///
     ///   distant ssh user@host -- ls -la    # run a single command
     #[cfg(feature = "ssh")]
     #[clap(name = "ssh")]
@@ -788,6 +812,7 @@ impl ClientSubcommand {
             Self::Connect { cache, .. } => cache.as_path(),
             Self::Copy { cache, .. } => cache.as_path(),
             Self::FileSystem(fs) => fs.cache_path(),
+            Self::Tunnel(sub) => sub.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
@@ -807,6 +832,7 @@ impl ClientSubcommand {
             Self::Connect { network, .. } => network,
             Self::Copy { network, .. } => network,
             Self::FileSystem(fs) => fs.network_settings(),
+            Self::Tunnel(sub) => sub.network_settings(),
             Self::Launch { network, .. } => network,
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
@@ -829,6 +855,7 @@ impl ClientSubcommand {
             Self::Connect { format, .. } => *format,
             Self::Copy { .. } => Format::Shell,
             Self::FileSystem(fs) => fs.format(),
+            Self::Tunnel(sub) => sub.format(),
             Self::Launch { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
@@ -1236,6 +1263,161 @@ impl ClientFileSystemSubcommand {
             Self::SetPermissions { network, .. } => network,
             Self::Watch { network, .. } => network,
             Self::Write { network, .. } => network,
+        }
+    }
+
+    /// Format used by the subcommand.
+    #[inline]
+    pub fn format(&self) -> Format {
+        Format::Shell
+    }
+}
+
+/// Subcommands for `distant tunnel`.
+#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
+pub enum ClientTunnelSubcommand {
+    /// Open a forward tunnel (local port -> remote host:port).
+    ///
+    /// Binds a port on your local machine and forwards connections through
+    /// the remote server to a target host and port. The remote server makes
+    /// the TCP connection, so the target host only needs to be reachable
+    /// from the remote network — not from your local machine.
+    ///
+    /// Examples:
+    ///
+    ///   distant tunnel open 8080:3000                    # remote localhost:3000
+    ///
+    ///   distant tunnel open 5432:internal-db.corp:5432   # third-party host via remote
+    Open {
+        /// Tunnel spec: LOCAL_PORT[:REMOTE_HOST]:REMOTE_PORT
+        ///
+        /// REMOTE_HOST defaults to 127.0.0.1 when omitted (e.g. 8080:3000).
+        #[clap(value_name = "SPEC")]
+        spec: String,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// Open a reverse tunnel (remote port -> local host:port).
+    ///
+    /// Binds a port on the remote server and forwards connections back
+    /// through the manager to a target host and port on your local network.
+    /// The local machine makes the TCP connection, so the target host only
+    /// needs to be reachable from your local network.
+    ///
+    /// Examples:
+    ///
+    ///   distant tunnel listen 9090:3000                  # local localhost:3000
+    ///
+    ///   distant tunnel listen 9090:dev-server:3000       # third-party host via local machine
+    Listen {
+        /// Tunnel spec: REMOTE_PORT[:LOCAL_HOST]:LOCAL_PORT
+        ///
+        /// LOCAL_HOST defaults to 127.0.0.1 when omitted (e.g. 9090:3000).
+        #[clap(value_name = "SPEC")]
+        spec: String,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// Close an active tunnel by ID
+    Close {
+        /// ID of the tunnel to close
+        id: u32,
+
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+
+    /// List active tunnels
+    List {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+    },
+}
+
+impl ClientTunnelSubcommand {
+    /// Returns the cache file path for this subcommand.
+    pub fn cache_path(&self) -> &Path {
+        match self {
+            Self::Open { cache, .. }
+            | Self::Listen { cache, .. }
+            | Self::Close { cache, .. }
+            | Self::List { cache, .. } => cache.as_path(),
+        }
+    }
+
+    /// Returns the network settings for this subcommand.
+    pub fn network_settings(&self) -> &NetworkSettings {
+        match self {
+            Self::Open { network, .. }
+            | Self::Listen { network, .. }
+            | Self::Close { network, .. }
+            | Self::List { network, .. } => network,
+        }
+    }
+
+    /// Returns the optional connection ID for this subcommand.
+    pub fn connection_id(&self) -> Option<ConnectionId> {
+        match self {
+            Self::Open { connection, .. }
+            | Self::Listen { connection, .. }
+            | Self::Close { connection, .. }
+            | Self::List { connection, .. } => *connection,
         }
     }
 

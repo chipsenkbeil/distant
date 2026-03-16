@@ -117,6 +117,7 @@ async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
         binary: String::from("nonexistent_distant_binary_xyz_12345"),
         args: String::new(),
         timeout: Duration::from_secs(3),
+        ..Default::default()
     };
     let result = ssh.launch(opts).await;
     assert!(
@@ -133,6 +134,7 @@ async fn launch_and_connect_should_return_working_client(sshd: Sshd) {
         binary: bin_path().to_string_lossy().to_string(),
         args: String::new(),
         timeout: Duration::from_secs(15),
+        ..Default::default()
     };
     let mut client = ssh.launch_and_connect(opts).await.unwrap();
     let info = client.system_info().await.unwrap();

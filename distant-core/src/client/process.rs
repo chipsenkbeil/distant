@@ -6,7 +6,7 @@ use log::*;
 use tokio::io;
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::{RwLock, mpsc};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::client::Channel;
 use crate::constants::CLIENT_PIPE_CAPACITY;
@@ -135,30 +135,17 @@ impl RemoteCommand {
 
         // Now we spawn a task to handle future responses that are async
         // such as ProcStdout, ProcStderr, and ProcDone
-        let (abort_res_task_tx, mut abort_res_task_rx) = mpsc::channel::<()>(1);
-        let res_task = tokio::spawn(async move {
-            tokio::select! {
-                _ = abort_res_task_rx.recv() => {
-                    panic!("killed");
-                }
-                res = process_incoming_responses(id, mailbox, stdout_tx, stderr_tx, kill_tx_2) => {
-                    res
-                }
-            }
-        });
+        let res_task = tokio::spawn(process_incoming_responses(
+            id, mailbox, stdout_tx, stderr_tx, kill_tx_2,
+        ));
 
         // Spawn a task that takes stdin from our channel and forwards it to the remote process
-        let (abort_req_task_tx, mut abort_req_task_rx) = mpsc::channel::<()>(1);
-        let req_task = tokio::spawn(async move {
-            tokio::select! {
-                _ = abort_req_task_rx.recv() => {
-                    panic!("killed");
-                }
-                res = process_outgoing_requests( id, channel, stdin_rx, resize_rx, kill_rx) => {
-                    res
-                }
-            }
-        });
+        let req_task = tokio::spawn(process_outgoing_requests(
+            id, channel, stdin_rx, resize_rx, kill_rx,
+        ));
+
+        let res_task_abort = res_task.abort_handle();
+        let req_task_abort = req_task.abort_handle();
 
         let status = Arc::new(RwLock::new(None));
         let status_2 = Arc::clone(&status);
@@ -173,8 +160,8 @@ impl RemoteCommand {
         Ok(RemoteProcess {
             id,
             origin_id,
-            abort_req_task_tx,
-            abort_res_task_tx,
+            req_task_abort,
+            res_task_abort,
             stdin: Some(RemoteStdin(stdin_tx)),
             stdout: Some(RemoteStdout(stdout_rx)),
             stderr: Some(RemoteStderr(stderr_rx)),
@@ -195,11 +182,11 @@ pub struct RemoteProcess {
     /// Id used to map back to mailbox
     origin_id: String,
 
-    // Sender to abort req task
-    abort_req_task_tx: mpsc::Sender<()>,
+    /// Handle to abort the outgoing request task.
+    req_task_abort: AbortHandle,
 
-    // Sender to abort res task
-    abort_res_task_tx: mpsc::Sender<()>,
+    /// Handle to abort the incoming response task.
+    res_task_abort: AbortHandle,
 
     /// Sender for stdin
     pub stdin: Option<RemoteStdin>,
@@ -315,8 +302,8 @@ impl RemoteProcess {
     /// to `wait` will return an error. Note that this does **not** send a kill request, so if
     /// you want to be nice you should send the request before aborting.
     pub fn abort(&self) {
-        let _ = self.abort_req_task_tx.try_send(());
-        let _ = self.abort_res_task_tx.try_send(());
+        self.req_task_abort.abort();
+        self.res_task_abort.abort();
     }
 }
 

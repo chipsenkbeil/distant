@@ -31,13 +31,15 @@ use crate::cli::common::{
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
-    ClientFileSystemSubcommand, ClientSubcommand, Format, ParseShellError, Shell as ShellOption,
+    ClientFileSystemSubcommand, ClientSubcommand, ClientTunnelSubcommand, Format, ParseShellError,
+    Shell as ShellOption,
 };
 use crate::{CliError, CliResult};
 
 mod copy;
 mod lsp;
 mod shell;
+mod tunnel;
 
 use lsp::Lsp;
 use shell::Shell;
@@ -1555,6 +1557,31 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                             debug!("No change in selection of default connection id");
                         }
                     }
+                }
+            }
+        }
+        ClientSubcommand::Tunnel(sub) => {
+            debug!("Connecting to manager");
+            let mut client =
+                connect_to_manager(Format::Shell, sub.network_settings().clone(), &ui).await?;
+
+            let mut cache = read_cache(sub.cache_path()).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, sub.connection_id(), &mut client).await?;
+            cache.write_to_disk().await?;
+
+            match sub {
+                ClientTunnelSubcommand::Open { spec, .. } => {
+                    tunnel::handle_open(&mut client, connection_id, &spec).await?;
+                }
+                ClientTunnelSubcommand::Listen { spec, .. } => {
+                    tunnel::handle_listen(&mut client, connection_id, &spec).await?;
+                }
+                ClientTunnelSubcommand::Close { id, .. } => {
+                    tunnel::handle_close(&mut client, id).await?;
+                }
+                ClientTunnelSubcommand::List { .. } => {
+                    tunnel::handle_list(&mut client).await?;
                 }
             }
         }

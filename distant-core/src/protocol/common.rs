@@ -7,7 +7,9 @@ mod permissions;
 mod pty;
 mod remote_path;
 mod search;
+mod status;
 mod system;
+mod tunnel;
 mod version;
 
 pub use change::*;
@@ -19,7 +21,9 @@ pub use permissions::*;
 pub use pty::*;
 pub use remote_path::*;
 pub use search::*;
+pub use status::*;
 pub use system::*;
+pub use tunnel::*;
 pub use version::*;
 
 /// Id for a remote process

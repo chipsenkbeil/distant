@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::common::{
     ChangeKind, Cmd, Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery,
-    SetPermissionsOptions,
+    SetPermissionsOptions, TunnelId,
 };
 use crate::protocol::utils;
 
@@ -258,6 +258,40 @@ pub enum Request {
 
     /// Retrieve information about the server and the system it is on
     SystemInfo {},
+
+    /// Opens a forward tunnel to the specified host and port
+    TunnelOpen {
+        /// The host to connect to
+        host: String,
+        /// The port to connect to
+        port: u16,
+    },
+
+    /// Listens on the specified host and port for incoming connections (reverse tunnel)
+    TunnelListen {
+        /// The host to bind on
+        host: String,
+        /// The port to listen on (0 for OS-assigned ephemeral port)
+        port: u16,
+    },
+
+    /// Writes data to an active tunnel
+    TunnelWrite {
+        /// Id of the tunnel
+        id: TunnelId,
+        /// Data to send through the tunnel
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+
+    /// Closes an active tunnel or listener
+    TunnelClose {
+        /// Id of the tunnel or listener to close
+        id: TunnelId,
+    },
+
+    /// Requests aggregated status information from the server
+    Status {},
 
     /// Retrieve information about the server's protocol version
     Version {},
@@ -2972,6 +3006,336 @@ mod tests {
 
             let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(payload, Request::Version {});
+        }
+    }
+
+    mod tunnel_open {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::TunnelOpen {
+                host: String::from("db-host"),
+                port: 5432,
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_open",
+                    "host": "db-host",
+                    "port": 5432,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_open",
+                "host": "db-host",
+                "port": 5432,
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelOpen {
+                    host: String::from("db-host"),
+                    port: 5432,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::TunnelOpen {
+                host: String::from("db-host"),
+                port: 5432,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::TunnelOpen {
+                host: String::from("db-host"),
+                port: 5432,
+            })
+            .unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelOpen {
+                    host: String::from("db-host"),
+                    port: 5432,
+                }
+            );
+        }
+    }
+
+    mod tunnel_listen {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::TunnelListen {
+                host: String::from("0.0.0.0"),
+                port: 9090,
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_listen",
+                    "host": "0.0.0.0",
+                    "port": 9090,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_listen",
+                "host": "0.0.0.0",
+                "port": 9090,
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelListen {
+                    host: String::from("0.0.0.0"),
+                    port: 9090,
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::TunnelListen {
+                host: String::from("0.0.0.0"),
+                port: 9090,
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::TunnelListen {
+                host: String::from("0.0.0.0"),
+                port: 9090,
+            })
+            .unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelListen {
+                    host: String::from("0.0.0.0"),
+                    port: 9090,
+                }
+            );
+        }
+    }
+
+    mod tunnel_write {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::TunnelWrite {
+                id: 7,
+                data: vec![104, 101, 108, 108, 111],
+            };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_write",
+                    "id": 7,
+                    "data": [104, 101, 108, 108, 111],
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_write",
+                "id": 7,
+                "data": [104, 101, 108, 108, 111],
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelWrite {
+                    id: 7,
+                    data: vec![104, 101, 108, 108, 111],
+                }
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::TunnelWrite {
+                id: 7,
+                data: vec![104, 101, 108, 108, 111],
+            };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::TunnelWrite {
+                id: 7,
+                data: vec![104, 101, 108, 108, 111],
+            })
+            .unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(
+                payload,
+                Request::TunnelWrite {
+                    id: 7,
+                    data: vec![104, 101, 108, 108, 111],
+                }
+            );
+        }
+    }
+
+    mod tunnel_close {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::TunnelClose { id: 7 };
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "tunnel_close",
+                    "id": 7,
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "tunnel_close",
+                "id": 7,
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Request::TunnelClose { id: 7 });
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::TunnelClose { id: 7 };
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::TunnelClose { id: 7 }).unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Request::TunnelClose { id: 7 });
+        }
+    }
+
+    mod status {
+        use super::*;
+
+        #[test]
+        fn should_be_able_to_serialize_to_json() {
+            let payload = Request::Status {};
+
+            let value = serde_json::to_value(payload).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "type": "status",
+                })
+            );
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_json() {
+            let value = serde_json::json!({
+                "type": "status",
+            });
+
+            let payload: Request = serde_json::from_value(value).unwrap();
+            assert_eq!(payload, Request::Status {});
+        }
+
+        #[test]
+        fn should_be_able_to_serialize_to_msgpack() {
+            let payload = Request::Status {};
+
+            // NOTE: We don't actually check the output here because it's an implementation detail
+            // and could change as we change how serialization is done. This is merely to verify
+            // that we can serialize since there are times when serde fails to serialize at
+            // runtime.
+            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
+        }
+
+        #[test]
+        fn should_be_able_to_deserialize_from_msgpack() {
+            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
+            // verify that we are not corrupting or causing issues when serializing on a
+            // client/server and then trying to deserialize on the other side. This has happened
+            // enough times with minor changes that we need tests to verify.
+            let buf = rmp_serde::encode::to_vec_named(&Request::Status {}).unwrap();
+
+            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
+            assert_eq!(payload, Request::Status {});
         }
     }
 }

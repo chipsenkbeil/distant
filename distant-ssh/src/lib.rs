@@ -14,17 +14,21 @@ use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use distant_core::constants::{
+    TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE, TUNNEL_TRANSPORT_CAPACITY,
+};
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
 use distant_core::net::server::{Server, ServerRef};
-use distant_core::protocol::PROTOCOL_VERSION;
+use distant_core::protocol::{PROTOCOL_VERSION, Response, TunnelDirection, TunnelInfo};
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
 use russh::client::{self, Handle};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 mod api;
 mod auth;
@@ -39,7 +43,7 @@ pub use utils::SftpPathBuf;
 
 mod proxy;
 
-use api::SshApi;
+use api::{SshApi, SshTunnelSharedState};
 use auth::{expand_tilde, format_methods};
 use config::ResolvedConfig;
 use pool::ChannelPool;
@@ -145,6 +149,11 @@ pub struct LaunchOpts {
 
     /// Timeout to use when connecting to the distant server
     pub timeout: Duration,
+
+    /// If true, the client will connect to the distant server through the SSH
+    /// channel (direct-tcpip) instead of directly via TCP. This eliminates the
+    /// need for the server port to be accessible from the client.
+    pub tunneled: bool,
 }
 
 impl Default for LaunchOpts {
@@ -153,6 +162,7 @@ impl Default for LaunchOpts {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(15),
+            tunneled: false,
         }
     }
 }
@@ -425,6 +435,9 @@ struct ClientHandler {
 
     /// Host key verification policy.
     policy: HostKeyPolicy,
+
+    /// Shared state for reverse tunnel listener routing.
+    tunnel_state: Arc<SshTunnelSharedState>,
 }
 
 impl client::Handler for ClientHandler {
@@ -455,6 +468,91 @@ impl client::Handler for ClientHandler {
             Ok(())
         }
     }
+
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut russh::client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let connected_address = connected_address.to_string();
+        let originator_address = originator_address.to_string();
+        let tunnel_state = Arc::clone(&self.tunnel_state);
+
+        async move {
+            let listeners = tunnel_state.listeners.read().await;
+            let listener = match listeners.get(&(connected_address.clone(), connected_port)) {
+                Some(l) => l,
+                None => {
+                    debug!(
+                        "No listener for forwarded connection to {}:{}",
+                        connected_address, connected_port
+                    );
+                    return Ok(());
+                }
+            };
+
+            let tunnel_id = api::NEXT_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+            let listener_id = listener.id;
+
+            // Notify the client about the new incoming connection
+            let _ = listener.reply.send(Response::TunnelIncoming {
+                listener_id,
+                tunnel_id,
+                peer_addr: Some(format!("{}:{}", originator_address, originator_port)),
+            });
+
+            // Set up bidirectional relay for the forwarded channel
+            let reply = listener.reply.clone_reply();
+            drop(listeners); // release read lock before acquiring write lock below
+
+            let stream = channel.into_stream();
+            let (read_half, write_half) = tokio::io::split(stream);
+
+            let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
+
+            // Register the sub-tunnel BEFORE spawning the relay task to prevent
+            // a race where the task finishes and removes a not-yet-inserted entry,
+            // leaving an orphan after the subsequent insert.
+            tunnel_state.tunnels.write().await.insert(
+                tunnel_id,
+                api::SshTunnel {
+                    info: TunnelInfo {
+                        id: tunnel_id,
+                        direction: TunnelDirection::Forward,
+                        host: connected_address,
+                        port: connected_port as u16,
+                    },
+                    write_tx,
+                    task: tokio::spawn(async {}), // placeholder
+                },
+            );
+
+            let tunnels_for_cleanup = Arc::clone(&tunnel_state.tunnels);
+
+            let task = tokio::spawn(api::tunnel_relay_task(
+                tunnel_id,
+                read_half,
+                write_half,
+                write_rx,
+                reply,
+                tunnels_for_cleanup,
+            ));
+
+            // Update the placeholder task with the real handle
+            if let Some(tunnel) = tunnel_state.tunnels.write().await.get_mut(&tunnel_id) {
+                tunnel.task = task;
+            } else {
+                // Entry was removed between insert and here (e.g., tunnel_close)
+                task.abort();
+            }
+
+            Ok(())
+        }
+    }
 }
 
 /// An SSH connection that has not yet been authenticated.
@@ -473,6 +571,8 @@ pub struct SshSession {
     ssh_config_identity_files: Option<Vec<PathBuf>>,
     /// Custom SSH agent socket path from `IdentityAgent` config directive.
     identity_agent: Option<String>,
+    /// Shared state for reverse tunnel listeners (passed to SshApi on conversion).
+    tunnel_state: Arc<SshTunnelSharedState>,
 }
 
 /// An authenticated SSH client ready for remote operations.
@@ -488,6 +588,8 @@ pub struct Ssh {
     cached_family: Mutex<Option<SshFamily>>,
     /// The server's SSH identification string, captured during key exchange.
     remote_sshid: Arc<Mutex<Option<String>>>,
+    /// Shared state for reverse tunnel listeners (passed to SshApi on conversion).
+    tunnel_state: Arc<SshTunnelSharedState>,
 }
 
 /// Result of an SSH authentication attempt.
@@ -528,14 +630,36 @@ impl Ssh {
     }
 }
 
+/// Controls which address the remote distant server binds to.
+enum HostBind {
+    /// Bind to the SSH host address (normal flow).
+    Ssh,
+    /// Bind to localhost only (tunneled flow, no exposed port).
+    Localhost,
+}
+
+impl HostBind {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Ssh => "ssh",
+            Self::Localhost => "127.0.0.1",
+        }
+    }
+}
+
 /// Build the command-line arguments for launching a distant server remotely.
-fn build_launch_args(family: SshFamily, binary: &str, extra_args: &str) -> io::Result<String> {
+fn build_launch_args(
+    family: SshFamily,
+    binary: &str,
+    extra_args: &str,
+    host_bind: HostBind,
+) -> io::Result<String> {
     let mut args = vec![
         String::from("server"),
         String::from("listen"),
         String::from("--daemon"),
         String::from("--host"),
-        String::from("ssh"),
+        String::from(host_bind.as_str()),
     ];
     args.extend(match family {
         SshFamily::Windows => winsplit::split(extra_args),
@@ -680,12 +804,14 @@ impl SshSession {
             .filter(|cmd| !cmd.eq_ignore_ascii_case("none"));
 
         let remote_sshid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let tunnel_state = Arc::new(SshTunnelSharedState::new());
         let handler = ClientHandler {
             remote_sshid: Arc::clone(&remote_sshid),
             host: host.as_ref().to_string(),
             port,
             known_hosts_files,
             policy,
+            tunnel_state: Arc::clone(&tunnel_state),
         };
 
         let russh_cfg = Arc::new(russh_cfg);
@@ -748,6 +874,7 @@ impl SshSession {
                 Some(ssh_config.identity_files)
             },
             identity_agent: ssh_config.identity_agent,
+            tunnel_state,
         })
     }
 
@@ -922,6 +1049,7 @@ impl SshSession {
             opts: self.opts,
             cached_family: Mutex::new(None),
             remote_sshid: self.remote_sshid,
+            tunnel_state: self.tunnel_state,
         }
     }
 }
@@ -961,7 +1089,7 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.pool, family, self.user.clone());
+        let api = SshApi::new(self.pool, family, self.user.clone(), self.tunnel_state);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -987,7 +1115,7 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.pool, family, self.user.clone());
+        let api = SshApi::new(self.pool, family, self.user.clone(), self.tunnel_state);
 
         let (t1, t2) = InmemoryTransport::pair(100);
 
@@ -1010,9 +1138,11 @@ impl Ssh {
         Ok((client, server_ref))
     }
 
-    /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
-    /// for connecting to the launched server.
-    pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
+    /// Launch a distant server on the remote machine without consuming the [`Ssh`] handle,
+    /// returning credentials for connecting to the launched server.
+    ///
+    /// `host_bind` controls the `--host` argument to the distant server.
+    async fn launch_impl(&self, opts: &LaunchOpts, host_bind: HostBind) -> io::Result<Credentials> {
         debug!("Launching distant server: {} {}", opts.binary, opts.args);
 
         let family = self.detect_family().await?;
@@ -1025,7 +1155,7 @@ impl Ssh {
             .parse::<Host>()
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidInput, x))?;
 
-        let cmd = build_launch_args(family, &opts.binary, &opts.args)?;
+        let cmd = build_launch_args(family, &opts.binary, &opts.args, host_bind)?;
         debug!("Executing launch command: {}", cmd);
 
         // Open channel via pool (eviction handles MaxSessions=1 automatically)
@@ -1105,6 +1235,12 @@ impl Ssh {
         }
     }
 
+    /// Consume [`Ssh`] and launch a distant server on the remote machine, returning credentials
+    /// for connecting to the launched server.
+    pub async fn launch(self, opts: LaunchOpts) -> io::Result<Credentials> {
+        self.launch_impl(&opts, HostBind::Ssh).await
+    }
+
     /// Clean and format the output from a failed launch attempt for error messages.
     fn clean_launch_output(stdout: &[u8], stderr: &[u8]) -> String {
         fn clean_bytes(bytes: &[u8]) -> String {
@@ -1127,7 +1263,15 @@ impl Ssh {
     }
 
     /// Consume [`Ssh`] and launch a distant server, then connect to it as a client.
+    ///
+    /// When [`LaunchOpts::tunneled`] is true, connects through an SSH tunnel (direct-tcpip channel)
+    /// instead of directly via TCP. This eliminates the need for the server port to be accessible
+    /// from the client.
     pub async fn launch_and_connect(self, opts: LaunchOpts) -> io::Result<Client> {
+        if opts.tunneled {
+            return self.launch_and_connect_tunneled(opts).await;
+        }
+
         trace!("ssh::launch_and_connect({:?})", opts);
 
         let timeout = opts.timeout;
@@ -1153,7 +1297,7 @@ impl Ssh {
             ));
         }
 
-        let credentials = self.launch(opts).await?;
+        let credentials = self.launch_impl(&opts, HostBind::Ssh).await?;
         let key = credentials.key;
 
         // Try each IP address with the same port to see if one works
@@ -1177,7 +1321,110 @@ impl Ssh {
             }
         }
 
-        Err(err.expect("Err set above"))
+        // Safety: candidate_ips is non-empty so at least one iteration ran
+        Err(err.expect("at least one connection attempt was made"))
+    }
+
+    /// Launch a distant server and connect to it through an SSH tunnel.
+    ///
+    /// The server is launched with `--host 127.0.0.1` so it only listens on localhost.
+    /// A `direct-tcpip` SSH channel is then opened to `127.0.0.1:<server_port>` and
+    /// bridged to an [`InmemoryTransport`], which is used as the client's transport.
+    ///
+    /// The SSH connection and relay task are kept alive for the lifetime of the client
+    /// by moving ownership into a background task.
+    async fn launch_and_connect_tunneled(self, opts: LaunchOpts) -> io::Result<Client> {
+        trace!("ssh::launch_and_connect_tunneled({:?})", opts);
+
+        // Launch with localhost-only binding
+        let credentials = self.launch_impl(&opts, HostBind::Localhost).await?;
+        debug!(
+            "Server launched on 127.0.0.1:{}, opening SSH tunnel",
+            credentials.port
+        );
+
+        // Open direct-tcpip channel to the server through SSH.
+        // Originator port 0: OS-assigned ephemeral port, only used for logging.
+        let channel = self
+            .pool
+            .handle()
+            .await
+            .channel_open_direct_tcpip("127.0.0.1", credentials.port as u32, "127.0.0.1", 0)
+            .await
+            .map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to open SSH tunnel to 127.0.0.1:{}: {e}",
+                    credentials.port
+                ))
+            })?;
+
+        let stream = channel.into_stream();
+
+        // Bridge the SSH ChannelStream to an InmemoryTransport using a relay task.
+        //
+        // `incoming_tx` sends data INTO the transport (SSH -> client).
+        // `outgoing_rx` receives data FROM the transport (client -> SSH).
+        let (incoming_tx, mut outgoing_rx, transport) =
+            InmemoryTransport::make(TUNNEL_TRANSPORT_CAPACITY);
+
+        // Spawn a relay task that shuttles bytes between the SSH channel and the
+        // InmemoryTransport channels. This task also holds ownership of `self` (the
+        // Ssh handle), keeping the SSH connection alive for the client's lifetime.
+        tokio::spawn(async move {
+            // Keep the Ssh handle alive by moving it into this task's scope.
+            let _ssh = self;
+
+            let (mut read_half, mut write_half) = tokio::io::split(stream);
+
+            // SSH channel -> InmemoryTransport (so the client can read it)
+            let tx_task = tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; TUNNEL_RELAY_BUFFER_SIZE];
+                loop {
+                    match read_half.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if incoming_tx.send(buf[..n].to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            debug!("SSH tunnel read error: {e}");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // InmemoryTransport -> SSH channel (what the client writes)
+            let rx_task = tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                while let Some(data) = outgoing_rx.recv().await {
+                    if write_half.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let _ = tokio::join!(tx_task, rx_task);
+            debug!("SSH tunnel relay task exiting");
+        });
+
+        // Connect the client through the tunneled transport
+        let client = NetClient::build()
+            .auth_handler(AuthHandlerMap::new().with_static_key(credentials.key))
+            .connector(transport)
+            .connect_timeout(opts.timeout)
+            .version(Version::new(
+                PROTOCOL_VERSION.major,
+                PROTOCOL_VERSION.minor,
+                PROTOCOL_VERSION.patch,
+            ))
+            .connect()
+            .await
+            .map_err(io::Error::other)?;
+
+        Ok(client)
     }
 }
 
@@ -1201,6 +1448,7 @@ mod tests {
         assert_eq!(opts.binary, "distant");
         assert!(opts.args.is_empty());
         assert_eq!(opts.timeout, Duration::from_secs(15));
+        assert!(!opts.tunneled);
     }
 
     #[tokio::test]
@@ -1355,6 +1603,7 @@ mod tests {
             binary: String::from("/usr/local/bin/distant"),
             args: String::from("--port 8080"),
             timeout: Duration::from_secs(30),
+            ..Default::default()
         };
         assert_eq!(opts.binary, "/usr/local/bin/distant");
         assert_eq!(opts.args, "--port 8080");
@@ -1722,6 +1971,7 @@ mod tests {
             port: 22,
             known_hosts_files: vec![kh],
             policy: HostKeyPolicy::AcceptNew,
+            tunnel_state: Arc::new(SshTunnelSharedState::new()),
         };
 
         let private_key = russh::keys::PrivateKey::random(
@@ -1857,6 +2107,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(0),
+            ..Default::default()
         };
         assert_eq!(opts.timeout, Duration::ZERO);
     }
@@ -1867,6 +2118,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::new(),
             timeout: Duration::from_secs(3600),
+            ..Default::default()
         };
         assert_eq!(opts.timeout.as_secs(), 3600);
     }
@@ -1877,6 +2129,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::from("--port 8080 --host 0.0.0.0 --log-level trace"),
             timeout: Duration::from_secs(15),
+            ..Default::default()
         };
         assert!(opts.args.contains("--port"));
         assert!(opts.args.contains("--host"));
@@ -1889,6 +2142,7 @@ mod tests {
             binary: String::from("distant"),
             args: String::from("--config '/path/to/config file.toml'"),
             timeout: Duration::from_secs(15),
+            ..Default::default()
         };
         assert!(opts.args.contains("config file.toml"));
     }
@@ -1963,6 +2217,7 @@ mod tests {
             port: 22,
             known_hosts_files: vec![],
             policy: HostKeyPolicy::No,
+            tunnel_state: Arc::new(SshTunnelSharedState::new()),
         };
 
         let private_key = russh::keys::PrivateKey::random(
@@ -1976,36 +2231,43 @@ mod tests {
         assert!(result.unwrap());
     }
 
-    use super::build_launch_args;
+    use super::{HostBind, build_launch_args};
 
     #[test]
     fn build_launch_args_should_produce_base_unix_command() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn build_launch_args_should_produce_base_windows_command() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Windows, "distant", "", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh");
     }
 
     #[test]
     fn build_launch_args_should_append_port_on_unix() {
-        let cmd = build_launch_args(SshFamily::Unix, "distant", "--port 8080").unwrap();
+        let cmd =
+            build_launch_args(SshFamily::Unix, "distant", "--port 8080", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
     #[test]
     fn build_launch_args_should_append_port_on_windows() {
-        let cmd = build_launch_args(SshFamily::Windows, "distant", "--port 8080").unwrap();
+        let cmd =
+            build_launch_args(SshFamily::Windows, "distant", "--port 8080", HostBind::Ssh).unwrap();
         assert_eq!(cmd, "distant server listen --daemon --host ssh --port 8080");
     }
 
     #[test]
     fn build_launch_args_should_append_multiple_flags() {
-        let cmd =
-            build_launch_args(SshFamily::Unix, "distant", "--port 8080 --log-level trace").unwrap();
+        let cmd = build_launch_args(
+            SshFamily::Unix,
+            "distant",
+            "--port 8080 --log-level trace",
+            HostBind::Ssh,
+        )
+        .unwrap();
         assert!(cmd.contains("--port 8080"));
         assert!(cmd.contains("--log-level trace"));
     }
@@ -2016,6 +2278,7 @@ mod tests {
             SshFamily::Unix,
             "distant",
             "--config '/path/to/config file.toml'",
+            HostBind::Ssh,
         )
         .unwrap();
         assert!(cmd.contains("/path/to/config file.toml"));
@@ -2023,7 +2286,8 @@ mod tests {
 
     #[test]
     fn build_launch_args_should_error_on_invalid_quoting() {
-        let result = build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed");
+        let result =
+            build_launch_args(SshFamily::Unix, "distant", "--arg 'unclosed", HostBind::Ssh);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
@@ -2035,6 +2299,7 @@ mod tests {
             SshFamily::Windows,
             "distant.exe",
             "--config \"C:\\path\\to\\config file.toml\"",
+            HostBind::Ssh,
         )
         .unwrap();
         assert!(cmd.contains("distant.exe"));
@@ -2043,16 +2308,28 @@ mod tests {
 
     #[test]
     fn build_launch_args_should_use_custom_binary_path() {
-        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "").unwrap();
+        let cmd = build_launch_args(SshFamily::Unix, "/usr/local/bin/distant", "", HostBind::Ssh)
+            .unwrap();
         assert!(cmd.starts_with("/usr/local/bin/distant"));
         assert!(cmd.contains("server listen"));
     }
 
     #[test]
     fn build_launch_args_should_handle_double_quotes() {
-        let cmd =
-            build_launch_args(SshFamily::Unix, "distant", "--key \"value with spaces\"").unwrap();
+        let cmd = build_launch_args(
+            SshFamily::Unix,
+            "distant",
+            "--key \"value with spaces\"",
+            HostBind::Ssh,
+        )
+        .unwrap();
         assert!(cmd.contains("value with spaces"));
+    }
+
+    #[test]
+    fn launch_args_tunneled_host_bind() {
+        let cmd = build_launch_args(SshFamily::Unix, "distant", "", HostBind::Localhost).unwrap();
+        assert_eq!(cmd, "distant server listen --daemon --host 127.0.0.1");
     }
 
     #[test]
