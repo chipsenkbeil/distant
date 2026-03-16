@@ -17,9 +17,10 @@
 7. [Plugin System](#7-plugin-system)
 8. [The Api Trait & Backend Implementations](#8-the-api-trait--backend-implementations)
 9. [Manager Architecture](#9-manager-architecture)
-10. [CLI Command Tree](#10-cli-command-tree)
-11. [Test Harness](#11-test-harness-distant-test-harness)
-12. [Key Type Reference](#12-key-type-reference)
+10. [TCP Tunneling](#10-tcp-tunneling)
+11. [CLI Command Tree](#11-cli-command-tree)
+12. [Test Harness](#12-test-harness-distant-test-harness)
+13. [Key Type Reference](#13-key-type-reference)
 
 ---
 
@@ -443,7 +444,7 @@ pub enum Msg<T> {
 Wraps either a single request/response or a batch. Serialized with
 `#[serde(untagged)]`.
 
-### Request Enum (24 variants)
+### Request Enum (29 variants)
 
 | Domain | Variants |
 |--------|----------|
@@ -453,9 +454,11 @@ Wraps either a single request/response or a batch. Serialized with
 | **Watch** | `Watch` (recursive, only, except filters), `Unwatch` |
 | **Search** | `Search` (query), `CancelSearch` |
 | **Process** | `ProcSpawn` (cmd, env, cwd, pty), `ProcKill`, `ProcStdin`, `ProcResizePty` |
+| **Tunnel** | `TunnelOpen`, `TunnelListen`, `TunnelWrite`, `TunnelClose` |
+| **Status** | `Status` |
 | **System** | `SystemInfo`, `Version` |
 
-### Response Enum (17 variants)
+### Response Enum (23 variants)
 
 | Category | Variants |
 |----------|----------|
@@ -463,10 +466,13 @@ Wraps either a single request/response or a batch. Serialized with
 | **Filesystem** | `DirEntries`, `Changed(Change)`, `Exists { value }`, `Metadata`, `SystemInfo`, `Version` |
 | **Search** | `SearchStarted { id }`, `SearchResults { id, matches }`, `SearchDone { id }` |
 | **Process** | `ProcSpawned { id }`, `ProcStdout { id, data }`, `ProcStderr { id, data }`, `ProcDone { id, success, code }` |
+| **Tunnel** | `TunnelOpened { id }`, `TunnelListening { id, port }`, `TunnelData { id, data }`, `TunnelIncoming { listener_id, tunnel_id, peer_addr }`, `TunnelClosed { id }` |
+| **Status** | `StatusInfo(StatusInfo)` |
 
-Process and search responses are **streaming** — the server sends multiple
-`ProcStdout`/`ProcStderr`/`SearchResults` responses for a single request,
-terminated by `ProcDone`/`SearchDone`.
+Process, search, and tunnel responses are **streaming** — the server sends
+multiple `ProcStdout`/`ProcStderr`/`SearchResults`/`TunnelData`/`TunnelIncoming`
+responses for a single request, terminated by
+`ProcDone`/`SearchDone`/`TunnelClosed`.
 
 ### Request/Response Wrappers
 
@@ -491,7 +497,7 @@ without full deserialization of the payload.
 
 A separate request/response layer for managing connections:
 
-**ManagerRequest** (10 variants):
+**ManagerRequest** (14 variants):
 
 | Variant | Purpose |
 |---------|---------|
@@ -505,8 +511,12 @@ A separate request/response layer for managing connections:
 | `Info { id }` | Connection info |
 | `Kill { id }` | Kill a connection |
 | `List` | List all connections |
+| `ForwardTunnel { connection_id, bind_port, remote_host, remote_port }` | Start a manager-hosted forward tunnel |
+| `ReverseTunnel { connection_id, remote_port, local_host, local_port }` | Start a manager-hosted reverse tunnel |
+| `CloseManagedTunnel { id }` | Close a managed tunnel |
+| `ListManagedTunnels` | List all managed tunnels |
 
-**ManagerResponse** (11 variants):
+**ManagerResponse** (14 variants):
 
 | Variant | Purpose |
 |---------|---------|
@@ -521,6 +531,9 @@ A separate request/response layer for managing connections:
 | `List(ConnectionList)` | All connections |
 | `Killed` | Connection terminated |
 | `Error { description }` | Error |
+| `ManagedTunnelStarted { id, port }` | Managed tunnel created, returns id and bound port |
+| `ManagedTunnelClosed` | Managed tunnel closed |
+| `ManagedTunnels { tunnels }` | List of `ManagedTunnelInfo` entries |
 
 ### Protocol Versioning
 
@@ -633,8 +646,9 @@ their own parsing.
 
 ### Api Trait
 
-The `Api` trait is the server-side contract. All 22+ methods default to
-returning "unsupported", so backends only implement what they support.
+The `Api` trait is the server-side contract. All 31 methods (2 lifecycle + 29
+operations) default to returning "unsupported" (or `Ok(())` / default for
+lifecycle and status), so backends only implement what they support.
 
 ```rust
 pub trait Api {
@@ -645,7 +659,16 @@ pub trait Api {
     // File I/O (default: unsupported)
     fn read_file(&self, ctx: Ctx, path: RemotePath) -> impl Future<Output = io::Result<Vec<u8>>>;
     fn write_file(&self, ctx: Ctx, path: RemotePath, data: Vec<u8>) -> impl Future<Output = io::Result<()>>;
-    // ... (26 methods total: 2 lifecycle + 24 operations covering files, dirs, search, process, system)
+    // ... (20 more methods covering files, dirs, search, process — all default to unsupported)
+
+    // Tunnel (default: unsupported)
+    fn tunnel_open(&self, ctx: Ctx, host: String, port: u16) -> impl Future<Output = io::Result<TunnelId>>;
+    fn tunnel_listen(&self, ctx: Ctx, host: String, port: u16) -> impl Future<Output = io::Result<(TunnelId, u16)>>;
+    fn tunnel_write(&self, ctx: Ctx, id: TunnelId, data: Vec<u8>) -> impl Future<Output = io::Result<()>>;
+    fn tunnel_close(&self, ctx: Ctx, id: TunnelId) -> impl Future<Output = io::Result<()>>;
+
+    // Status (default: empty StatusInfo)
+    fn status(&self, ctx: Ctx) -> impl Future<Output = io::Result<StatusInfo>>;
 
     // System
     fn version(&self, ctx: Ctx) -> impl Future<Output = io::Result<Version>>;
@@ -696,15 +719,20 @@ via an `InmemoryTransport::pair(100)`, and returns the client end.
 | **File watch** | `notify` crate (native + poll modes) | Not supported | Not supported |
 | **Search** | `ignore::WalkBuilder` + `grep` crate | Not supported | Probes for `rg`/`grep`/`find` in container |
 | **Copy** | `tokio::fs::copy` + `walkdir` | SFTP recursive | tar upload |
+| **Tunnel** | Forward + reverse via `tokio::net` (actor model) | Forward (`direct-tcpip`) + reverse (`tcpip_forward`/`forwarded-tcpip`) | Forward only (`socat`/`nc` via Docker exec); no reverse |
 | **Path handling** | Native `PathBuf` | `SftpPathBuf` (Unix/Windows format conversion) | Container paths (always Unix) |
 
 ### distant-host Details
 
-- **State:** `GlobalState` holds `ProcessState`, `SearchState`, `WatcherState`
+- **State:** `GlobalState` holds `ProcessState`, `SearchState`, `WatcherState`,
+  `TunnelState`
 - **Process:** `Process` trait with `pty` (portable-pty) and `simple`
   (tokio::process) variants
 - **Watch:** Native filesystem events via `notify`, with recursive/filter support
 - **Search:** Respects `.gitignore` via `ignore::WalkBuilder`
+- **Tunnel:** `TunnelState` actor model — `TcpStream::connect` for forward,
+  `TcpListener::bind` for reverse. Each tunnel is a `connection_task` that relays
+  between TCP and the reply channel
 
 ### distant-ssh Details
 
@@ -717,6 +745,9 @@ via an `InmemoryTransport::pair(100)`, and returns the client end.
   `SSH_TIMEOUT_SECS` constant (never the russh-sftp 10s default).
 - **Config resolution:** Reads `~/.ssh/config` for hostname, port, user, identity
   files, ProxyCommand, certificate paths.
+- **Tunnel:** Forward via `direct-tcpip` SSH channels; reverse via
+  `tcpip_forward` global request + `forwarded-tcpip` channel callback. Tunnel
+  channels bypass `ChannelPool` counting.
 
 ### distant-docker Details
 
@@ -729,6 +760,10 @@ via an `InmemoryTransport::pair(100)`, and returns the client end.
 - **Container lifecycle:** `Docker::launch()` creates containers named
   `distant-<hex>` with `sleep infinity` entrypoint. Containers are
   auto-removed on server shutdown if configured.
+- **Tunnel:** Forward only via `socat` or `nc` (netcat) relay inside the
+  container using Docker exec. `probe_tunnel_tools()` detects availability at
+  init; `CAP_TCP_TUNNEL` is only advertised when tools are present. Reverse
+  tunnels are unsupported.
 
 ---
 
@@ -789,6 +824,7 @@ pub struct ManagerServer {
     channels: RwLock<HashMap<ManagerChannelId, ManagerChannel>>,
     connections: RwLock<HashMap<ConnectionId, ManagerConnection>>,
     registry: Arc<RwLock<HashMap<ManagerAuthenticationId, oneshot::Sender<AuthenticationResponse>>>>,
+    managed_tunnels: RwLock<HashMap<ManagedTunnelId, ManagedTunnel>>,
 }
 ```
 
@@ -820,7 +856,8 @@ connection using zero-copy packet forwarding via `Header` + raw payload bytes.
 
 `ManagerClient` is a typed `Client<ManagerRequest, ManagerResponse>` with
 high-level methods: `launch()`, `connect()`, `open_raw_channel()`, `version()`,
-`info()`, `kill()`, `list()`.
+`info()`, `kill()`, `list()`, `forward_tunnel()`, `reverse_tunnel()`,
+`close_managed_tunnel()`, `list_managed_tunnels()`.
 
 The `launch()` and `connect()` methods handle the authentication relay loop
 inline — they process `ManagerResponse::Authenticate` messages by forwarding
@@ -828,7 +865,178 @@ challenges to the provided `AuthHandler` and sending responses back.
 
 ---
 
-## 10. CLI Command Tree
+## 10. TCP Tunneling
+
+distant supports TCP tunneling to forward or reverse-proxy TCP connections
+through an established server connection. Tunnels operate at three levels:
+**server-side** (raw `TunnelOpen`/`TunnelListen` API), **client-side**
+(high-level `RemoteTunnel`/`RemoteTunnelListener` wrappers), and
+**manager-hosted** (persistent tunnels managed by the manager daemon).
+
+### Capability Advertisement
+
+The `Version` response includes capability strings so clients can discover
+tunnel support before attempting operations:
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `Version::CAP_TCP_TUNNEL` | `"tcp_tunnel"` | Forward tunnels supported |
+| `Version::CAP_TCP_REV_TUNNEL` | `"tcp_rev_tunnel"` | Reverse tunnels supported |
+
+The host backend always advertises both. The SSH backend advertises both. The
+Docker backend conditionally advertises `CAP_TCP_TUNNEL` only when `socat` or
+`nc` is detected in the container; reverse tunnels are never advertised.
+
+### Forward Tunnel Flow
+
+A forward tunnel binds a local port and relays connections to a remote
+host:port through the server.
+
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Manager
+    participant Server
+    participant Target as Remote Target
+
+    CLI->>Manager: ForwardTunnel { connection_id, bind_port, remote_host, remote_port }
+    Manager->>Manager: TcpListener::bind(127.0.0.1:bind_port)
+    Manager-->>CLI: ManagedTunnelStarted { id, port }
+
+    Note over Manager: Local client connects to 127.0.0.1:port
+
+    Manager->>Server: TunnelOpen { host, port }
+    Server->>Target: TcpStream::connect(host:port)
+    Server-->>Manager: TunnelOpened { id }
+
+    loop Bidirectional relay
+        Manager->>Server: TunnelWrite { id, data }
+        Server->>Target: TCP write
+        Target-->>Server: TCP read
+        Server-->>Manager: TunnelData { id, data }
+    end
+
+    Manager->>Server: TunnelClose { id }
+    Server-->>Manager: TunnelClosed { id }
+```
+
+### Reverse Tunnel Flow
+
+A reverse tunnel listens on the remote server and forwards incoming connections
+to a local host:port.
+
+```mermaid
+sequenceDiagram
+    participant Remote as Remote Client
+    participant Server
+    participant Manager
+    participant Local as Local Target
+
+    CLI->>Manager: ReverseTunnel { connection_id, remote_port, local_host, local_port }
+    Manager->>Server: TunnelListen { host: "0.0.0.0", port: remote_port }
+    Server->>Server: TcpListener::bind(0.0.0.0:remote_port)
+    Server-->>Manager: TunnelListening { id, port }
+    Manager-->>CLI: ManagedTunnelStarted { id, port }
+
+    Note over Server: Remote client connects to server:port
+
+    Server-->>Manager: TunnelIncoming { listener_id, tunnel_id, peer_addr }
+    Manager->>Local: TcpStream::connect(local_host:local_port)
+
+    loop Bidirectional relay
+        Remote-->>Server: TCP read
+        Server-->>Manager: TunnelData { tunnel_id, data }
+        Manager->>Local: TCP write
+        Local-->>Manager: TCP read
+        Manager->>Server: TunnelWrite { tunnel_id, data }
+        Server->>Remote: TCP write
+    end
+```
+
+### Server-Side Architecture
+
+The host backend uses an actor model for managing tunnel state:
+
+```mermaid
+flowchart TB
+    Api["host::Api"]
+    TS["TunnelState"]
+    Actor["tunnel_task<br/>(actor loop)"]
+
+    Api -->|"open / listen / write / close / list"| TS
+    TS -->|"InnerTunnelMsg via mpsc"| Actor
+
+    subgraph "Forward Tunnel"
+        CT1["connection_task<br/>(TcpStream ↔ Reply)"]
+    end
+
+    subgraph "Reverse Tunnel"
+        LT["listener_task<br/>(TcpListener::accept loop)"]
+        CT2["connection_task<br/>(per-connection)"]
+        LT -->|"InternalRegisterSubTunnel"| Actor
+        LT --> CT2
+    end
+
+    Actor -->|"spawn"| CT1
+    Actor -->|"spawn"| LT
+
+    style TS fill:#e1f5fe
+    style Actor fill:#fff3e0
+```
+
+`TunnelState` owns a `TunnelChannel` (mpsc sender) that communicates with the
+`tunnel_task` actor. The actor maintains a `HashMap<TunnelId, TunnelEntry>`
+where entries are either `Connection` (forward tunnel or sub-tunnel) or
+`Listener` (reverse tunnel accepting incoming connections). Each `connection_task`
+uses `tokio::select!` to concurrently read from the TCP stream and write from an
+mpsc channel.
+
+The SSH backend uses `direct-tcpip` channels for forward tunnels and
+`tcpip_forward`/`forwarded-tcpip` for reverse tunnels, with a similar
+`tunnel_relay_task` pattern. The Docker backend runs `socat` or `nc` inside the
+container via Docker exec for forward tunnels only.
+
+### Client-Side Abstractions
+
+| Type | Purpose |
+|------|---------|
+| `RemoteTunnel` | High-level forward tunnel: spawns request/response tasks, exposes `writer`/`reader` |
+| `RemoteTunnelListener` | High-level reverse tunnel listener: processes `TunnelIncoming` events, yields `IncomingTunnel` |
+| `RemoteTunnelWriter` | Send half: queues outgoing data as `TunnelWrite` requests |
+| `RemoteTunnelReader` | Receive half: yields `TunnelData` payloads from the server |
+| `IncomingTunnel` | Accepted reverse connection: contains `tunnel_id`, `peer_addr`, `writer`, `reader` |
+| `relay_tcp_to_tunnel()` | Bidirectional relay between a `TcpStream` and a `RemoteTunnelWriter`/`RemoteTunnelReader` pair |
+
+The `ChannelExt` trait on `Channel` provides convenience methods: `tunnel_open()`,
+`tunnel_listen()`, `tunnel_close()`, `status()`.
+
+### Manager-Hosted Lifecycle
+
+Managed tunnels are long-lived tunnels whose lifecycle is tied to the manager
+process. The manager opens an `InternalRawChannel` on the server connection,
+then calls `start_forward_tunnel()` or `start_reverse_tunnel()`:
+
+- **Forward:** Binds a local `TcpListener`, accepts connections, opens a
+  `RemoteTunnel` per connection, and runs `relay_tcp_to_tunnel()` for each.
+- **Reverse:** Opens a `RemoteTunnelListener` on the server, accepts
+  `IncomingTunnel` events, connects to the local target, and runs
+  `relay_tcp_to_tunnel()` for each.
+
+When a connection is killed (`ManagerRequest::Kill`), all managed tunnels
+belonging to that connection are aborted. `ManagedTunnel` entries are stored in
+`ManagerServer::managed_tunnels`.
+
+### Backend Support Matrix
+
+| Backend | Forward | Reverse | Mechanism |
+|---------|---------|---------|-----------|
+| **Host** | Yes | Yes | `tokio::net::TcpStream`/`TcpListener` via actor model |
+| **SSH** | Yes | Yes | `direct-tcpip` channels / `tcpip_forward` + `forwarded-tcpip` |
+| **Docker** | Yes | No | `socat`/`nc` relay via Docker exec; `probe_tunnel_tools()` at init |
+
+---
+
+## 11. CLI Command Tree
 
 ```
 distant
@@ -851,6 +1059,11 @@ distant
 │   ├── set-permissions <path>
 │   ├── watch <path>
 │   └── write <path>
+├── tunnel [connection_id]          # TCP tunnel management
+│   ├── open <SPEC>               # Forward: BIND_PORT[:HOST]:REMOTE_PORT
+│   ├── listen <SPEC>             # Reverse: REMOTE_PORT[:HOST]:LOCAL_PORT
+│   ├── close <ID>                # Close managed tunnel
+│   └── list                      # List managed tunnels
 ├── system-info [connection_id]    # Remote system info
 ├── version [connection_id]        # Remote server version
 ├── status [connection_id]         # Manager/connection status
@@ -881,6 +1094,10 @@ distant
 | `distant spawn <cmd>` | `OpenChannel` | `ProcSpawn { cmd }` |
 | `distant fs read <path>` | `Channel { request }` | `FileRead { path }` |
 | `distant fs watch <path>` | `Channel { request }` | `Watch { path }` |
+| `distant tunnel open <spec>` | `ForwardTunnel { ... }` | `TunnelOpen { host, port }` (per connection) |
+| `distant tunnel listen <spec>` | `ReverseTunnel { ... }` | `TunnelListen { host, port }` |
+| `distant tunnel close <id>` | `CloseManagedTunnel { id }` | — |
+| `distant tunnel list` | `ListManagedTunnels` | — |
 | `distant system-info` | `Channel { request }` | `SystemInfo {}` |
 
 ### Shell Session with Predictive Echo
@@ -912,7 +1129,7 @@ prediction temporarily.
 
 ---
 
-## 11. Test Harness (`distant-test-harness`)
+## 12. Test Harness (`distant-test-harness`)
 
 The test harness provides four patterns for testing at different levels of
 integration.
@@ -1019,7 +1236,7 @@ jitter=true) with 60s slow-timeout.
 
 ---
 
-## 12. Key Type Reference
+## 13. Key Type Reference
 
 ### Core Traits and Implementors
 
@@ -1032,6 +1249,7 @@ jitter=true) with 60s slow-timeout.
 | `ServerHandler` | `ApiServerHandler<T: Api>`, `ManagerServer` |
 | `AuthenticationMethod` | `NoneAuthenticationMethod`, `StaticKeyAuthenticationMethod` |
 | `AuthHandler` | `DummyAuthHandler`, `SingleAuthHandler`, `AuthHandlerMap` (core); `PromptAuthHandler`, `JsonAuthHandler` (CLI) |
+| `ChannelExt` | `Channel` (extension trait: `tunnel_open`, `tunnel_listen`, `tunnel_close`, `status`) |
 | `Reconnectable` | All `Transport` implementations |
 
 ### Key Type Aliases
@@ -1046,6 +1264,8 @@ jitter=true) with 60s slow-timeout.
 | `ConnectionId` | `u32` |
 | `ProcessId` | `u32` |
 | `SearchId` | `u32` |
+| `TunnelId` | `u32` |
+| `ManagedTunnelId` | `u32` |
 | `BoxedCodec` | `Box<dyn Codec + Send + Sync>` |
 | `SecretKey32` | 32-byte key wrapper |
 
@@ -1072,3 +1292,7 @@ jitter=true) with 60s slow-timeout.
 | `CLIENT_PIPE_CAPACITY` | 10,000 |
 | `CLIENT_WATCHER_CAPACITY` | 100 |
 | `CLIENT_SEARCHER_CAPACITY` | 10,000 |
+| `CLIENT_TUNNEL_CAPACITY` | 10,000 |
+| `TUNNEL_RELAY_BUFFER_SIZE` | 8,192 bytes |
+| `TUNNEL_CHANNEL_CAPACITY` | 1,024 |
+| `TUNNEL_TRANSPORT_CAPACITY` | 100 |
