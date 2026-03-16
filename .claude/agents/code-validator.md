@@ -14,6 +14,7 @@ tools:
 memory: project
 skills:
   - distant-conventions
+  - architecture-guide
 ---
 
 # Code Validator Agent

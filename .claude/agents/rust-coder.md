@@ -16,6 +16,7 @@ tools:
 memory: project
 skills:
   - distant-conventions
+  - architecture-guide
 ---
 
 # Rust Coder Agent

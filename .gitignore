@@ -12,6 +12,7 @@
 !.claude/CLAUDE.md
 !.claude/.clauderules
 !.claude/agents/
+!.claude/commands/
 !.claude/prompts/
 !.claude/skills/
 !.claude/mcp.json
