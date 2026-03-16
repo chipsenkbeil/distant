@@ -17,6 +17,7 @@ tools:
 memory: project
 skills:
   - distant-conventions
+  - architecture-guide
 ---
 
 # Rust Explorer Agent
