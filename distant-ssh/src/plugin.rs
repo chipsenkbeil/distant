@@ -83,6 +83,11 @@ impl Plugin for SshPlugin {
                     ),
                     None => defaults.timeout,
                 },
+                tunneled: options
+                    .get("tunnel")
+                    .or_else(|| options.get("tunneled"))
+                    .map(|v| v == "true")
+                    .unwrap_or(false),
             };
 
             debug!("Launching via ssh: {opts:?}");

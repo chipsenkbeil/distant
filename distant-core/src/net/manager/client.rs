@@ -7,7 +7,8 @@ use log::*;
 use crate::net::client::Client;
 use crate::net::common::{ConnectionId, Destination, Map, Request};
 use crate::net::manager::data::{
-    ConnectionInfo, ConnectionList, ManagerRequest, ManagerResponse, SemVer,
+    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagedTunnelInfo, ManagerRequest,
+    ManagerResponse, SemVer,
 };
 
 // NOTE: Destination is still used for the Launched response, but launch/connect accept raw strings.
@@ -287,6 +288,110 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::List).await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Requests the manager to start a forward tunnel (local port → remote target).
+    ///
+    /// Returns the managed tunnel ID and the actual bound local port.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manager rejects the request or communication fails.
+    pub async fn forward_tunnel(
+        &mut self,
+        connection_id: ConnectionId,
+        bind_port: u16,
+        remote_host: impl Into<String>,
+        remote_port: u16,
+    ) -> io::Result<(ManagedTunnelId, u16)> {
+        let remote_host = remote_host.into();
+        trace!("forward_tunnel({connection_id}, {bind_port}, {remote_host}, {remote_port})");
+        let res = self
+            .send(ManagerRequest::ForwardTunnel {
+                connection_id,
+                bind_port,
+                remote_host,
+                remote_port,
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelStarted { id, port } => Ok((id, port)),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Requests the manager to start a reverse tunnel (remote listener → local target).
+    ///
+    /// Returns the managed tunnel ID and the actual remote port.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the manager rejects the request or communication fails.
+    pub async fn reverse_tunnel(
+        &mut self,
+        connection_id: ConnectionId,
+        remote_port: u16,
+        local_host: impl Into<String>,
+        local_port: u16,
+    ) -> io::Result<(ManagedTunnelId, u16)> {
+        let local_host = local_host.into();
+        trace!("reverse_tunnel({connection_id}, {remote_port}, {local_host}, {local_port})");
+        let res = self
+            .send(ManagerRequest::ReverseTunnel {
+                connection_id,
+                remote_port,
+                local_host,
+                local_port,
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelStarted { id, port } => Ok((id, port)),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Closes a managed tunnel by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no tunnel with `id` exists or communication fails.
+    pub async fn close_managed_tunnel(&mut self, id: ManagedTunnelId) -> io::Result<()> {
+        trace!("close_managed_tunnel({id})");
+        let res = self.send(ManagerRequest::CloseManagedTunnel { id }).await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnelClosed => Ok(()),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Lists all managed tunnels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if communication with the manager fails.
+    pub async fn list_managed_tunnels(&mut self) -> io::Result<Vec<ManagedTunnelInfo>> {
+        trace!("list_managed_tunnels()");
+        let res = self.send(ManagerRequest::ListManagedTunnels).await?;
+        match res.payload {
+            ManagerResponse::ManagedTunnels { tunnels } => Ok(tunnels),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1094,5 +1199,470 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(dest, expected_dest);
+    }
+
+    #[tokio::test]
+    async fn forward_tunnel_should_return_id_and_port_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelStarted { id: 10, port: 9090 },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let (id, port) = client.forward_tunnel(1, 0, "db-host", 5432).await.unwrap();
+        assert_eq!(id, 10);
+        assert_eq!(port, 9090);
+    }
+
+    #[tokio::test]
+    async fn forward_tunnel_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .forward_tunnel(1, 8080, "db-host", 5432)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn forward_tunnel_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .forward_tunnel(1, 8080, "db-host", 5432)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn forward_tunnel_should_send_correct_request() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            match &request.payload {
+                ManagerRequest::ForwardTunnel {
+                    connection_id,
+                    bind_port,
+                    remote_host,
+                    remote_port,
+                } => {
+                    assert_eq!(*connection_id, 7);
+                    assert_eq!(*bind_port, 8080);
+                    assert_eq!(remote_host, "db-host");
+                    assert_eq!(*remote_port, 5432);
+                }
+                other => panic!("Expected ForwardTunnel request, got {other:?}"),
+            }
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelStarted { id: 1, port: 8080 },
+                ))
+                .await
+                .unwrap();
+        });
+
+        client
+            .forward_tunnel(7, 8080, "db-host", 5432)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reverse_tunnel_should_return_id_and_port_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelStarted { id: 20, port: 3000 },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let (id, port) = client
+            .reverse_tunnel(1, 3000, "localhost", 3000)
+            .await
+            .unwrap();
+        assert_eq!(id, 20);
+        assert_eq!(port, 3000);
+    }
+
+    #[tokio::test]
+    async fn reverse_tunnel_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .reverse_tunnel(1, 3000, "localhost", 3000)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn reverse_tunnel_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client
+            .reverse_tunnel(1, 3000, "localhost", 3000)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn reverse_tunnel_should_send_correct_request() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            match &request.payload {
+                ManagerRequest::ReverseTunnel {
+                    connection_id,
+                    remote_port,
+                    local_host,
+                    local_port,
+                } => {
+                    assert_eq!(*connection_id, 5);
+                    assert_eq!(*remote_port, 9000);
+                    assert_eq!(local_host, "127.0.0.1");
+                    assert_eq!(*local_port, 3000);
+                }
+                other => panic!("Expected ReverseTunnel request, got {other:?}"),
+            }
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelStarted { id: 1, port: 9000 },
+                ))
+                .await
+                .unwrap();
+        });
+
+        client
+            .reverse_tunnel(5, 9000, "127.0.0.1", 3000)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_managed_tunnel_should_return_success_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelClosed,
+                ))
+                .await
+                .unwrap();
+        });
+
+        client.close_managed_tunnel(42).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_managed_tunnel_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client.close_managed_tunnel(42).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn close_managed_tunnel_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client.close_managed_tunnel(42).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn close_managed_tunnel_should_send_correct_request() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            match &request.payload {
+                ManagerRequest::CloseManagedTunnel { id } => {
+                    assert_eq!(*id, 99);
+                }
+                other => panic!("Expected CloseManagedTunnel request, got {other:?}"),
+            }
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnelClosed,
+                ))
+                .await
+                .unwrap();
+        });
+
+        client.close_managed_tunnel(99).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_managed_tunnels_should_return_tunnels_from_successful_response() {
+        let (mut client, mut transport) = setup();
+
+        let expected_tunnels = vec![ManagedTunnelInfo {
+            id: 1,
+            connection_id: 10,
+            direction: crate::protocol::TunnelDirection::Forward,
+            bind_port: 8080,
+            remote_host: "db-host".to_string(),
+            remote_port: 5432,
+        }];
+        let tunnels_clone = expected_tunnels.clone();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnels {
+                        tunnels: tunnels_clone,
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let tunnels = client.list_managed_tunnels().await.unwrap();
+        assert_eq!(tunnels, expected_tunnels);
+    }
+
+    #[tokio::test]
+    async fn list_managed_tunnels_should_return_empty_vec_when_no_tunnels() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnels {
+                        tunnels: Vec::new(),
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        let tunnels = client.list_managed_tunnels().await.unwrap();
+        assert!(tunnels.is_empty(), "Expected empty tunnels list");
+    }
+
+    #[tokio::test]
+    async fn list_managed_tunnels_should_report_error_if_receives_error_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, test_error_response()))
+                .await
+                .unwrap();
+        });
+
+        let err = client.list_managed_tunnels().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), test_error().to_string());
+    }
+
+    #[tokio::test]
+    async fn list_managed_tunnels_should_report_error_if_receives_unexpected_response() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            transport
+                .write_frame_for(&Response::new(request.id, ManagerResponse::Killed))
+                .await
+                .unwrap();
+        });
+
+        let err = client.list_managed_tunnels().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn list_managed_tunnels_should_send_correct_request() {
+        let (mut client, mut transport) = setup();
+
+        tokio::spawn(async move {
+            let request = transport
+                .read_frame_as::<Request<ManagerRequest>>()
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert!(
+                matches!(&request.payload, ManagerRequest::ListManagedTunnels),
+                "Expected ListManagedTunnels request, got {:?}",
+                request.payload
+            );
+
+            transport
+                .write_frame_for(&Response::new(
+                    request.id,
+                    ManagerResponse::ManagedTunnels {
+                        tunnels: Vec::new(),
+                    },
+                ))
+                .await
+                .unwrap();
+        });
+
+        client.list_managed_tunnels().await.unwrap();
     }
 }

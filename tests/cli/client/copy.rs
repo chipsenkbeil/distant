@@ -323,15 +323,20 @@ fn should_overwrite_existing_destination(ctx: ManagerCtx) {
 fn should_upload_to_server_cwd_with_bare_colon(ctx: ManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
-    // Create local source file
     let local_src = temp.child("bare_colon.txt");
     local_src.write_str("bare colon content").unwrap();
 
-    // Use bare `:` as destination — should resolve to server CWD
-    // The server CWD for test contexts is typically a known directory,
-    // so we verify by checking `distant fs read` can find the file there
     ctx.new_assert_cmd(["copy"])
         .args([local_src.to_str().unwrap(), ":"])
         .assert()
         .success();
+
+    // The server CWD is the test runner's CWD (workspace root),
+    // so the file lands at `current_dir/bare_colon.txt`.
+    let landed = std::env::current_dir().unwrap().join("bare_colon.txt");
+    assert_eq!(
+        std::fs::read_to_string(&landed).unwrap(),
+        "bare colon content"
+    );
+    std::fs::remove_file(&landed).unwrap();
 }

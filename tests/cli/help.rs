@@ -11,7 +11,9 @@ fn distant_help_should_include_top_level_commands() {
     let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    for cmd in ["status", "kill", "select", "ssh", "connect", "shell"] {
+    for cmd in [
+        "status", "kill", "select", "ssh", "connect", "shell", "tunnel",
+    ] {
         assert!(
             stdout.contains(cmd),
             "Expected top-level help to contain '{cmd}', got:\n{stdout}"
@@ -110,6 +112,20 @@ fn distant_generate_help_shows_subcommands() {
         assert!(
             stdout.contains(subcmd),
             "Expected generate help to contain '{subcmd}', got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn distant_tunnel_help_shows_subcommands() {
+    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
+    let output = cmd.args(["tunnel", "--help"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for subcmd in ["open", "listen", "close", "list"] {
+        assert!(
+            stdout.contains(subcmd),
+            "Expected tunnel help to contain '{subcmd}', got:\n{stdout}"
         );
     }
 }

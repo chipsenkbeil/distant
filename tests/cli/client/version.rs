@@ -47,8 +47,8 @@ fn should_output_capabilities(ctx: ManagerCtx) {
         Client: {client_version} (Protocol {PROTOCOL_VERSION})
         Server: {server_version} (Protocol {PROTOCOL_VERSION})
         Capabilities supported (+) or not (-):
-        +exec      +fs_io     +fs_perm   +fs_search
-        +fs_watch  +sys_info
+        +exec           +fs_io          +fs_perm        +fs_search
+        +fs_watch       +sys_info       +tcp_rev_tunnel +tcp_tunnel
     "};
 
     ctx.cmd("version")

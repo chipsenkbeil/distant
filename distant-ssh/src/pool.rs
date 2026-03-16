@@ -6,7 +6,7 @@ use log::*;
 use russh::Channel;
 use russh::client::{Handle, Msg};
 use russh_sftp::client::SftpSession;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::ClientHandler;
 use crate::utils::SSH_TIMEOUT_SECS;
@@ -31,14 +31,17 @@ struct PoolInner {
 /// to make room for new channels. For servers with `MaxSessions > 1`, the
 /// first open always succeeds — zero overhead.
 pub struct ChannelPool {
-    handle: Handle<ClientHandler>,
+    // Mutex is required because russh's `tcpip_forward` takes `&mut self`.
+    // Tracked upstream: https://github.com/Eugeny/russh/issues/658
+    // Once that changes to `&self`, this can revert to a plain `Handle`.
+    handle: Mutex<Handle<ClientHandler>>,
     inner: Mutex<PoolInner>,
 }
 
 impl ChannelPool {
     pub fn new(handle: Handle<ClientHandler>) -> Arc<Self> {
         Arc::new(Self {
-            handle,
+            handle: Mutex::new(handle),
             inner: Mutex::new(PoolInner {
                 sftp: None,
                 open_count: 0,
@@ -119,7 +122,7 @@ impl ChannelPool {
     /// delay. If the retry also fails, `evict_sftp()` returns false (already
     /// evicted) and an error is returned immediately.
     async fn open_channel(&self) -> io::Result<Channel<Msg>> {
-        match self.handle.channel_open_session().await {
+        match self.handle.lock().await.channel_open_session().await {
             Ok(channel) => {
                 let mut inner = self.inner.lock().await;
                 inner.open_count += 1;
@@ -189,6 +192,16 @@ impl ChannelPool {
     /// at which point the current open count is recorded as the limit.
     pub async fn channel_limit(&self) -> Option<usize> {
         self.inner.lock().await.channel_limit
+    }
+
+    /// Returns a lock guard for the underlying SSH handle.
+    ///
+    /// Used for SSH operations that bypass `MaxSessions` (tunnel channels like
+    /// `direct-tcpip` and `forwarded-tcpip`, and global requests like
+    /// `tcpip-forward`). These must NOT go through the pool's counting/eviction
+    /// logic since they do not consume session channel slots.
+    pub async fn handle(&self) -> MutexGuard<'_, Handle<ClientHandler>> {
+        self.handle.lock().await
     }
 }
 

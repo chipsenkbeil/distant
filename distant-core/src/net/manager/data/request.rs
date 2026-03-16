@@ -1,7 +1,7 @@
 use crate::auth::msg::AuthenticationResponse;
 use serde::{Deserialize, Serialize};
 
-use super::{ManagerAuthenticationId, ManagerChannelId};
+use super::{ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId};
 use crate::net::common::{ConnectionId, Map, UntypedRequest};
 
 #[allow(clippy::large_enum_variant)]
@@ -68,4 +68,161 @@ pub enum ManagerRequest {
 
     /// Retrieve list of connections being managed
     List,
+
+    /// Start a forward tunnel (local listener -> remote target) in the manager
+    ForwardTunnel {
+        connection_id: ConnectionId,
+        bind_port: u16,
+        remote_host: String,
+        remote_port: u16,
+    },
+
+    /// Start a reverse tunnel (remote listener -> local target) in the manager
+    ReverseTunnel {
+        connection_id: ConnectionId,
+        remote_port: u16,
+        local_host: String,
+        local_port: u16,
+    },
+
+    /// Close a managed tunnel by ID
+    CloseManagedTunnel { id: ManagedTunnelId },
+
+    /// List all managed tunnels
+    ListManagedTunnels,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forward_tunnel_should_serialize_and_deserialize_via_json() {
+        let request = ManagerRequest::ForwardTunnel {
+            connection_id: 5,
+            bind_port: 8080,
+            remote_host: "db-host".to_string(),
+            remote_port: 5432,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(
+            json.contains("\"forward_tunnel\""),
+            "Expected snake_case variant tag in JSON: {json}"
+        );
+
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerRequest::ForwardTunnel {
+                connection_id,
+                bind_port,
+                remote_host,
+                remote_port,
+            } => {
+                assert_eq!(connection_id, 5);
+                assert_eq!(bind_port, 8080);
+                assert_eq!(remote_host, "db-host");
+                assert_eq!(remote_port, 5432);
+            }
+            other => panic!("Expected ForwardTunnel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reverse_tunnel_should_serialize_and_deserialize_via_json() {
+        let request = ManagerRequest::ReverseTunnel {
+            connection_id: 3,
+            remote_port: 9000,
+            local_host: "localhost".to_string(),
+            local_port: 3000,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(
+            json.contains("\"reverse_tunnel\""),
+            "Expected snake_case variant tag in JSON: {json}"
+        );
+
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerRequest::ReverseTunnel {
+                connection_id,
+                remote_port,
+                local_host,
+                local_port,
+            } => {
+                assert_eq!(connection_id, 3);
+                assert_eq!(remote_port, 9000);
+                assert_eq!(local_host, "localhost");
+                assert_eq!(local_port, 3000);
+            }
+            other => panic!("Expected ReverseTunnel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn close_managed_tunnel_should_serialize_and_deserialize_via_json() {
+        let request = ManagerRequest::CloseManagedTunnel { id: 42 };
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(
+            json.contains("\"close_managed_tunnel\""),
+            "Expected snake_case variant tag in JSON: {json}"
+        );
+
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerRequest::CloseManagedTunnel { id } => {
+                assert_eq!(id, 42);
+            }
+            other => panic!("Expected CloseManagedTunnel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_managed_tunnels_should_serialize_and_deserialize_via_json() {
+        let request = ManagerRequest::ListManagedTunnels;
+        let json = serde_json::to_string(&request).unwrap();
+
+        assert!(
+            json.contains("\"list_managed_tunnels\""),
+            "Expected snake_case variant tag in JSON: {json}"
+        );
+
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(deserialized, ManagerRequest::ListManagedTunnels),
+            "Expected ListManagedTunnels, got {deserialized:?}"
+        );
+    }
+
+    #[test]
+    fn forward_tunnel_should_reject_unknown_fields() {
+        let json = r#"{"type":"forward_tunnel","connection_id":1,"bind_port":80,"remote_host":"h","remote_port":80,"extra":"bad"}"#;
+        let result = serde_json::from_str::<ManagerRequest>(json);
+        assert!(
+            result.is_err(),
+            "Expected deserialization to fail on unknown field"
+        );
+    }
+
+    #[test]
+    fn reverse_tunnel_should_reject_unknown_fields() {
+        let json = r#"{"type":"reverse_tunnel","connection_id":1,"remote_port":80,"local_host":"h","local_port":80,"extra":"bad"}"#;
+        let result = serde_json::from_str::<ManagerRequest>(json);
+        assert!(
+            result.is_err(),
+            "Expected deserialization to fail on unknown field"
+        );
+    }
+
+    #[test]
+    fn close_managed_tunnel_should_reject_unknown_fields() {
+        let json = r#"{"type":"close_managed_tunnel","id":1,"extra":"bad"}"#;
+        let result = serde_json::from_str::<ManagerRequest>(json);
+        assert!(
+            result.is_err(),
+            "Expected deserialization to fail on unknown field"
+        );
+    }
 }

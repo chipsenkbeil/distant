@@ -1,5 +1,6 @@
 pub type ManagerChannelId = u32;
 pub type ManagerAuthenticationId = u32;
+pub type ManagedTunnelId = u32;
 pub use semver::Version as SemVer;
 
 mod info;

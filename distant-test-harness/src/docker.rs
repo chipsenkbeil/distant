@@ -3,6 +3,7 @@
 //! Provides [`DockerContainer`] for managing test container lifecycles and rstest fixtures
 //! for obtaining [`Client`] instances connected to Docker containers.
 
+use std::io;
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::Duration;
 
@@ -82,6 +83,13 @@ impl DockerContainer {
             }
         }
     }
+
+    /// Execute a command inside this container.
+    ///
+    /// Delegates to [`DockerClient::exec_cmd`].
+    pub async fn exec(&self, cmd: &[&str]) -> io::Result<()> {
+        self.client.exec_cmd(&self.name, cmd).await
+    }
 }
 
 impl Drop for DockerContainer {
@@ -158,6 +166,33 @@ pub async fn docker_container() -> Option<DockerContainer> {
 #[fixture]
 pub async fn client(#[future] docker_container: Option<DockerContainer>) -> Option<Ctx<Client>> {
     let container = docker_container.await?;
+    let docker = Docker::connect(&container.name, DockerOpts::default())
+        .await
+        .ok()?;
+    let client = docker.into_distant_client().await.ok()?;
+    Some(Ctx {
+        value: client,
+        container,
+    })
+}
+
+/// rstest fixture that provides an [`Option<Ctx<Client>>`] with tunnel tools
+/// (netcat) pre-installed in the container.
+///
+/// Returns `None` if Docker is not available.
+#[fixture]
+pub async fn client_with_tunnel_tools(
+    #[future] docker_container: Option<DockerContainer>,
+) -> Option<Ctx<Client>> {
+    let container = docker_container.await?;
+
+    // Install nc before creating the distant connection so TunnelTools detects it
+    container.exec(&["apt-get", "update", "-qq"]).await.ok()?;
+    container
+        .exec(&["apt-get", "install", "-y", "-qq", "netcat-openbsd"])
+        .await
+        .ok()?;
+
     let docker = Docker::connect(&container.name, DockerOpts::default())
         .await
         .ok()?;

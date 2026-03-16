@@ -132,6 +132,14 @@ Distant ships with three built-in plugins compiled directly into the binary
 Built-in plugins implement the `Plugin` trait (`distant_core::Plugin`) directly.
 They receive raw destination strings and handle URI parsing internally.
 
+
+
+For the full API protocol reference (request/response types, capabilities, streaming
+operations, per-plugin support matrix, and TCP tunneling protocol detail), see
+[`docs/PROTOCOL.md`](PROTOCOL.md).
+
+---
+
 ## Example: Minimal Plugin (Bash)
 
 A minimal plugin that only supports `connect` (not `launch`):

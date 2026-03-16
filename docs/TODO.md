@@ -26,10 +26,10 @@ Each item is tagged with a category:
 These are internal shortcuts and known rough edges that should eventually be
 addressed.
 
-### TD-1: Windows service dead code
+### TD-1: Windows service integration incomplete
 
-**(Refactor)** `win_service.rs` service integration works, but
-`is_windows_service()` (line 84) is dead code that should be removed or used.
+**(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service
+integration may be incomplete/untested.
 
 ### TD-2: Windows CI SSH test flakiness
 
@@ -54,7 +54,7 @@ directory, which causes "Cannot perform a cyclic copy" when src and dst are
 sibling files in the same directory.
 
 - **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/api.rs:642-648`
+- **File:** `distant-ssh/src/utils.rs`
 
 ### TD-4: Docker image pull has no CLI-visible progress
 
@@ -65,51 +65,110 @@ during long plugin operations like image pulls.
 
 - **Crate:** `distant-docker`
 
-### TD-5: @cert-authority known hosts parsing
+### TD-5: Terminal programs hang after termwiz removal
 
-**(Limitation)** `distant-ssh` cannot validate host certificates against
-`@cert-authority` entries in known_hosts files. russh 0.57's
-`parse_public_key()` uses `KeyData::decode` which strips certificate
-structure, and the client never negotiates certificate-based host key
-algorithms during KEX. This means servers presenting host certificates will
-fall back to plain key algorithms.
+**(Bug)** Running `distant ssh` or `distant shell` after removing termwiz has
+resulted in programs like `nvim` (neovim) hanging and not displaying anything
+other than the cursor, or `ntop` (top on windows) hanging after the first
+visual display of the processes (no refresh, no time tick displayed).
 
-**Current workaround:** ProxyCommand support (added alongside this item)
-allows corporate proxies like `x2ssh` to handle certificate verification
-internally. The tunneled connection then presents a plain key verifiable
-against system known_hosts.
+- **Crate:** `distant` (binary), `distant-ssh`
+- **Context:** The PTY handling was changed when termwiz was removed. The
+  current pty implementation may not correctly handle full-screen terminal
+  applications that use alternate screen buffers or rely on specific terminal
+  capabilities.
 
-**Unblock condition:** russh adds host certificate algorithm support upstream
-(negotiation of `*-cert-v01@openssh.com` host key types and certificate
-chain validation in `check_server_key`).
+### TD-6: SSH config HostName not respected
+
+**(Bug)** Performing `distant ssh windows-vm` fails to connect to
+`ssh://windows-vm` with "failed to lookup address information: nodename nor
+servname provided, or not known" even though regular `ssh windows-vm` works
+via `~/.ssh/config` with `HostName` directive.
 
 - **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/lib.rs` (known_hosts verification)
+- **File:** `distant-ssh/src/lib.rs` (connect logic, host resolution)
+- **Context:** The SSH config parsing uses `ssh2-config-rs` and does resolve
+  `HostName` from config at line ~356 (`ssh_config.host_name.as_deref()`).
+  The issue may be that the config is not loaded or queried with the right
+  host alias, or that the destination is parsed before config lookup happens.
+  This is also reported by external user in issue #251.
+- **Related:** [#251](#issue-251), [#252](#issue-252)
 
 ---
 
 ## Open Issues
 
-### Issue #233: Exited Unexpectedly: exit code 1
+### Issue #252: Does not use keys from agent or from `identity_files` option
 
-- **Type:** Bug (UX)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/233
+- **Type:** Bug
+- **URL:** https://github.com/chipsenkbeil/distant/issues/252
+- **Crate:** `distant-ssh`
 
-**Problem:** `distant launch` or `:DistantConnect` from neovim plugin fails
-with "Exited unexpectedly: exit code 1" with no helpful error message. Root
-cause in reported cases: the distant server starts on the remote but listens
-on a port not reachable from the client (e.g. Azure VM without port exposed).
+**Problem:** SSH authentication fails with "unhandled auth case;
+methods=PUBLIC_KEY, status={PUBLIC_KEY: Denied}" when using `identity_files`
+option or when an ssh-agent is running. Users must explicitly set
+`IdentityFile` in `~/.ssh/config` for keys to work.
 
-**Codebase context:** The `launch` command SSHs into the remote, starts a
-distant server, then tries to connect back to the server's port. If that port
-is firewalled, the connection times out with a generic error.
+**Codebase context:** The `distant-ssh` crate loads keys directly from files
+only — there is no ssh-agent integration. Key loading logic is in
+`distant-ssh/src/lib.rs` (lines ~675-738) with a three-tier resolution:
+explicit CLI options → SSH config `IdentityFile` → default paths
+(`~/.ssh/id_ed25519`, `id_rsa`, `id_ecdsa`). The `identity_files` CLI option
+may not be correctly propagated or parsed (comma-separated paths from the
+`--options` string in `plugin.rs` line ~196).
 
 **Work needed:**
-1. Improve error messages for connection timeouts during launch — suggest
-   checking firewall/port accessibility
-2. Consider using SSH port forwarding during launch to avoid needing open
-   ports (related to [#165](#issue-165))
-3. Document common failure modes and troubleshooting steps
+1. Fix `identity_files` option parsing to correctly load specified keys
+2. Add ssh-agent support via `russh`'s agent client capabilities
+3. Related to [#238](#issue-238)
+
+---
+
+### Issue #251: Fails to authenticate using public key if host is named in .ssh/config
+
+- **Type:** Bug
+- **URL:** https://github.com/chipsenkbeil/distant/issues/251
+
+**Problem:** Using a Host alias (e.g. `ssh://nostromo`) from `~/.ssh/config`
+fails with "Socket error: Connection reset by peer" or "unhandled auth case"
+unless there is also a `Host` entry matching the raw IP address. Works only
+after adding a `Host <IP>` entry alongside the named `Host` entry.
+
+**Codebase context:** SSH config is parsed via `ssh2-config-rs`. The
+`HostName` resolution at `distant-ssh/src/lib.rs:356` uses
+`ssh_config.host_name.as_deref().unwrap_or(host.as_ref())`. The issue may be
+that the config query doesn't match the alias correctly, or that the
+`IdentityFile` from the config is not applied when connecting via alias.
+
+**Work needed:**
+1. Ensure SSH config is queried by the host alias (not the resolved hostname)
+2. Verify all config directives (HostName, IdentityFile, User, Port) are
+   applied when connecting via alias
+3. Related to [#252](#issue-252), [TD-6](#td-6)
+
+---
+
+---
+
+### Issue #238: Does not use ssh-agent to retrieve passwords for ssh-keys
+
+- **Type:** Enhancement
+- **URL:** https://github.com/chipsenkbeil/distant/issues/238
+
+**Problem:** `distant launch ssh://...` prompts for passphrase to decrypt SSH
+key even when ssh-agent is running and has the key loaded. Regular `ssh` does
+not prompt because it uses the agent.
+
+**Codebase context:** The `distant-ssh` crate uses `russh` for SSH, which
+does have agent client support (`russh-keys::agent`). However, the current
+authentication flow in `lib.rs` only loads keys from files via
+`decode_secret_key()` and never queries the SSH agent.
+
+**Work needed:**
+1. Add ssh-agent support using `russh-keys::agent::client`
+2. Try agent authentication before falling back to key file loading
+3. Handle agent forwarding if applicable
+4. Related to [#252](#issue-252)
 
 ---
 
@@ -222,12 +281,35 @@ connection state changes (connected, reconnecting, disconnected).
 
 **Codebase context:** `ConnectionState` enum and `ConnectionWatcher` already
 exist in `distant-core/src/net/client/reconnect.rs` with states
-`Reconnecting`, `Connected`, `Disconnected`. `ConnectionWatcher` is already
-exposed in the public Rust API (`distant-core/src/net/client.rs:143,598`).
+`Reconnecting`, `Connected`, `Disconnected`. The infrastructure exists but
+may not be exposed to consumers of the client API or the neovim plugin.
 
 **Work needed:**
-1. Add CLI output for connection state changes
-2. Wire notifications to the neovim plugin via the API protocol
+1. Expose `ConnectionWatcher` through the public client API
+2. Add CLI output for connection state changes
+3. Wire notifications to the neovim plugin via the API protocol
+
+---
+
+### Issue #186: Modernize release output
+
+- **Type:** Enhancement
+- **URL:** https://github.com/chipsenkbeil/distant/issues/186
+
+**Problem:** Release binaries are larger than necessary and may require newer
+glibc than target systems provide.
+
+**Codebase context:** Release profile already uses `opt-level = "z"` and
+`strip = true`. UPX compression was tried but causes issues on macOS.
+
+**Work needed:**
+1. Use release profile to strip (already done with `strip = true`)
+2. Consider `panic = "abort"` to reduce binary size
+3. Support nightly builds with `-Zbuild-std` for further optimization
+4. Windows-specific size optimizations
+5. Build Linux releases on older distros (via Docker) to reduce glibc
+   version requirements
+6. Consider static linking or musl target for Linux
 
 ---
 
@@ -254,32 +336,6 @@ operations transmit raw bytes without integrity verification.
 
 ---
 
-### Issue #165: Support TCP forwarding
-
-- **Type:** Enhancement / Refactor (Breaking)
-- **URL:** https://github.com/chipsenkbeil/distant/issues/165
-
-**Problem:** Need TCP forwarding for jump host scenarios (e.g. laptop →
-server1 → server2). Also enables SSH ProxyJump equivalent.
-
-**Codebase context:** Capability constants `CAP_TCP_TUNNEL` and
-`CAP_TCP_REV_TUNNEL` are defined but commented out in
-`distant-core/src/protocol/common/version.rs`. No TCP forwarding operations
-exist in the `Api` trait or request/response types.
-
-**Work needed:**
-1. Add request/response types mirroring process I/O: TcpOpen, TcpWrite,
-   TcpRead, TcpClose
-2. Add `Api` trait methods for TCP forwarding
-3. Implement server-side TCP connection management in `distant-host`
-4. Add `distant proxy` CLI command to listen locally and forward
-5. Support reverse proxy (server notifies client of incoming connections)
-6. Enable jump host workflow: TCP forward + connect through forwarded port
-7. Large feature with significant complexity — detailed design in issue
-   comments
-
----
-
 ### Issue #164: [Investigate] Switch directory retrieval and file reading to streams
 
 - **Type:** Investigation (Breaking)
@@ -297,6 +353,49 @@ exists.
 2. Evaluate impact on all backends (host, SSH, Docker)
 3. Consider backwards compatibility or version negotiation
 4. Decision should be made before 1.0
+
+---
+
+### Issue #163: Support for Termux (Android)
+
+- **Type:** Enhancement / Refactor
+- **URL:** https://github.com/chipsenkbeil/distant/issues/163
+
+**Problem:** Building on Termux (`aarch64-linux-android`) fails due to
+`termios` crate incompatibility.
+
+**Codebase context:** The `termios` issue was from the old `termwiz`
+dependency which has since been removed. The nightly CI already builds for
+`aarch64-linux-android` target. The `pty` feature in `distant-host` is
+gated and can be disabled for Android. A Termux package was created upstream
+(termux-packages PR #15610).
+
+**Work needed:**
+1. Verify current codebase compiles for `aarch64-linux-android` without
+   `pty` feature (nightly CI already does this)
+2. Ensure the Termux package stays up to date with releases
+3. Document Termux installation and limitations (no PTY/shell support)
+4. This may already be resolved — verify and close if so
+
+---
+
+### Issue #162: Cannot find known_hosts file if username has whitespace on Windows
+
+- **Type:** Bug
+- **URL:** https://github.com/chipsenkbeil/distant/issues/162
+
+**Problem:** On Windows, if the username contains spaces (e.g. `C:\Users\fa
+fa\.ssh\known_hosts`), distant cannot find the known_hosts file.
+
+**Codebase context:** The old `wezterm-ssh` backend was the culprit. Current
+`distant-ssh` uses `PathBuf` for known_hosts paths which handles spaces
+correctly. Host key verification is now implemented (TOFU via russh's
+`known_hosts` module). The path parsing in `plugin.rs` uses `PathBuf::from()`
+which handles spaces fine.
+
+**Work needed:**
+1. Test known_hosts file paths with Windows usernames containing spaces
+2. May be resolved by the backend switch — verify and close if so
 
 ---
 
@@ -407,29 +506,6 @@ behind feature flags.
 
 ---
 
-### Issue #26: Support SSH client tunneling natively
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/26
-
-**Problem:** Tunnel distant traffic through SSH (like `ssh -L`) to avoid
-needing additional open ports. Currently requires separate port allocation on
-the remote.
-
-**Codebase context:** `russh` supports `channel_direct_tcpip` which could be
-used for tunneling. This is related to [#165](#issue-165) (TCP forwarding)
-and would eliminate the need for the distant server to listen on an
-externally-accessible port.
-
-**Work needed:**
-1. Use `russh::Channel::channel_direct_tcpip()` to create a tunnel
-2. Route distant protocol traffic through the SSH channel
-3. Eliminates need for open ports on remote — solves [#233](#issue-233)
-   firewall issues too
-4. Previously blocked on wezterm-ssh; now feasible with russh
-
----
-
 ### Issue #7: Support transfer command
 
 - **Type:** Enhancement
@@ -438,14 +514,14 @@ externally-accessible port.
 **Problem:** Want an scp-like `distant copy` command for local↔remote file
 transfer.
 
-**Codebase context:** Remote-to-remote copy already works via
-`distant client fs copy`. The remaining work is local-to-remote and
-remote-to-local transfers. `FileRead`/`FileWrite` can be composed
-client-side. The CLI was refactored to support top-level `distant copy`.
+**Codebase context:** Remote-to-remote `Copy` already exists in the
+protocol. `FileRead`/`FileWrite` can be composed client-side for
+local↔remote transfers but there's no dedicated CLI command. The CLI was
+refactored to support top-level `distant copy` (comment from author).
 
 **Work needed:**
 1. Add `distant copy <src> <dst>` CLI command parsing local vs remote paths
-   (e.g. `distant copy <local-path> <host:remote-path>`)
+   (e.g. `host:path/to/file` syntax)
 2. Implement client-side logic: read local + write remote (upload), or read
    remote + write local (download)
 3. Support directory transfers with recursion

@@ -8,20 +8,26 @@ use tokio::sync::{RwLock, oneshot};
 
 use crate::net::common::{ConnectionId, Map};
 use crate::net::manager::{
-    ConnectionInfo, ConnectionList, ManagerAuthenticationId, ManagerChannelId, ManagerRequest,
-    ManagerResponse, SemVer,
+    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
+    ManagerRequest, ManagerResponse, SemVer,
 };
-use crate::net::server::{RequestCtx, Server, ServerHandler};
+use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
 use crate::plugin::extract_scheme;
 
 mod authentication;
 pub use authentication::*;
+
+mod channel;
+pub use channel::*;
 
 mod config;
 pub use config::*;
 
 mod connection;
 pub use connection::*;
+
+mod tunnel;
+pub use tunnel::*;
 
 /// Represents a manager of multiple server connections.
 pub struct ManagerServer {
@@ -38,6 +44,9 @@ pub struct ManagerServer {
     /// Mapping of auth id -> callback
     registry:
         Arc<RwLock<HashMap<ManagerAuthenticationId, oneshot::Sender<AuthenticationResponse>>>>,
+
+    /// Tunnels whose lifecycle is managed by this server process
+    managed_tunnels: RwLock<HashMap<ManagedTunnelId, ManagedTunnel>>,
 }
 
 impl ManagerServer {
@@ -50,6 +59,7 @@ impl ManagerServer {
             channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry: Arc::new(RwLock::new(HashMap::new())),
+            managed_tunnels: RwLock::new(HashMap::new()),
         })
     }
 
@@ -178,6 +188,20 @@ impl ManagerServer {
                     }
                 }
 
+                // Abort managed tunnels belonging to this connection
+                let mut tunnels = self.managed_tunnels.write().await;
+                let tunnel_ids: Vec<ManagedTunnelId> = tunnels
+                    .values()
+                    .filter(|t| t.connection_id == id)
+                    .map(|t| t.id)
+                    .collect();
+                for tid in tunnel_ids {
+                    if let Some(t) = tunnels.remove(&tid) {
+                        debug!("[Conn {id}] Aborting managed tunnel {tid}");
+                        t.abort();
+                    }
+                }
+
                 // Make sure the connection is aborted so nothing new can happen
                 debug!("[Conn {id}] Aborting");
                 connection.abort();
@@ -189,6 +213,14 @@ impl ManagerServer {
                 "No connection found",
             )),
         }
+    }
+}
+
+/// Sends an error response and returns early from `on_request`.
+fn reply_err(reply: ServerReply<ManagerResponse>, conn_id: ConnectionId, err: io::Error) {
+    let response = ManagerResponse::from(err);
+    if let Err(x) = reply.send(response) {
+        error!("[Conn {}] {}", conn_id, x);
     }
 }
 
@@ -360,6 +392,116 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
+            ManagerRequest::ForwardTunnel {
+                connection_id,
+                bind_port,
+                remote_host,
+                remote_port,
+            } => {
+                debug!("Starting forward tunnel on connection {connection_id}");
+                // Open the internal channel while briefly holding the read lock,
+                // then drop the lock before doing async I/O (TCP bind).
+                let internal = match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => match InternalRawChannel::open(connection) {
+                        Ok(ic) => ic,
+                        Err(x) => return reply_err(reply, connection_id, x),
+                    },
+                    None => {
+                        return reply_err(
+                            reply,
+                            connection_id,
+                            io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "Connection does not exist",
+                            ),
+                        );
+                    }
+                };
+                // Lock dropped here — async tunnel setup proceeds without blocking connections
+                match start_forward_tunnel(
+                    internal,
+                    connection_id,
+                    bind_port,
+                    remote_host,
+                    remote_port,
+                )
+                .await
+                {
+                    Ok((managed, port)) => {
+                        let id = managed.id;
+                        self.managed_tunnels.write().await.insert(id, managed);
+                        info!("Started forward tunnel {id} on port {port}");
+                        ManagerResponse::ManagedTunnelStarted { id, port }
+                    }
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
+            ManagerRequest::ReverseTunnel {
+                connection_id,
+                remote_port,
+                local_host,
+                local_port,
+            } => {
+                debug!("Starting reverse tunnel on connection {connection_id}");
+                let internal = match self.connections.read().await.get(&connection_id) {
+                    Some(connection) => match InternalRawChannel::open(connection) {
+                        Ok(ic) => ic,
+                        Err(x) => return reply_err(reply, connection_id, x),
+                    },
+                    None => {
+                        return reply_err(
+                            reply,
+                            connection_id,
+                            io::Error::new(
+                                io::ErrorKind::NotConnected,
+                                "Connection does not exist",
+                            ),
+                        );
+                    }
+                };
+                match start_reverse_tunnel(
+                    internal,
+                    connection_id,
+                    remote_port,
+                    local_host,
+                    local_port,
+                )
+                .await
+                {
+                    Ok((managed, port)) => {
+                        let id = managed.id;
+                        self.managed_tunnels.write().await.insert(id, managed);
+                        info!("Started reverse tunnel {id} on port {port}");
+                        ManagerResponse::ManagedTunnelStarted { id, port }
+                    }
+                    Err(x) => ManagerResponse::from(x),
+                }
+            }
+            ManagerRequest::CloseManagedTunnel { id } => {
+                debug!("Closing managed tunnel {id}");
+                match self.managed_tunnels.write().await.remove(&id) {
+                    Some(tunnel) => {
+                        tunnel.abort();
+                        info!("Closed managed tunnel {id}");
+                        ManagerResponse::ManagedTunnelClosed
+                    }
+                    None => ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("No managed tunnel with id {id}"),
+                    )),
+                }
+            }
+            ManagerRequest::ListManagedTunnels => {
+                debug!("Listing managed tunnels");
+                let tunnels = self
+                    .managed_tunnels
+                    .read()
+                    .await
+                    .values()
+                    .map(|t| t.info.clone())
+                    .collect();
+                ManagerResponse::ManagedTunnels { tunnels }
+            }
         };
 
         if let Err(x) = reply.send(response) {
@@ -476,6 +618,7 @@ mod tests {
             channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             registry,
+            managed_tunnels: RwLock::new(HashMap::new()),
         };
 
         (server, authenticator)

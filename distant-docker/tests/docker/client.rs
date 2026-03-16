@@ -6,7 +6,7 @@ use distant_core::protocol::{
     FileType, SearchQueryCondition, SearchQueryMatch, SearchQueryOptions,
 };
 use distant_core::{ChannelExt, Client};
-use distant_test_harness::docker::{Ctx, client};
+use distant_test_harness::docker::{Ctx, client, client_with_tunnel_tools};
 use distant_test_harness::skip_if_no_docker;
 use rstest::*;
 use test_log::test;
@@ -568,4 +568,71 @@ async fn metadata_should_fail_for_missing_path(#[future] client: Option<Ctx<Clie
             || err_msg.contains("404"),
         "Expected not-found error, got: {err_msg}",
     );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn tunnel_open_should_fail_without_relay_tools(#[future] client: Option<Ctx<Client>>) {
+    let mut client = skip_if_no_docker!(client.await);
+    let result = client.tunnel_open("127.0.0.1", 12345).await;
+    let err = result.expect_err("Expected error without tunnel tools");
+    let err_msg = err.to_string().to_lowercase();
+    assert!(
+        err_msg.contains("unsupported") || err_msg.contains("no tunnel relay tools"),
+        "Expected unsupported error, got: {err_msg}",
+    );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn tunnel_open_should_send_and_receive_data(
+    #[future] client_with_tunnel_tools: Option<Ctx<Client>>,
+) {
+    let mut client = skip_if_no_docker!(client_with_tunnel_tools.await);
+
+    // Start a listener inside the container that sends data to whoever connects
+    let _proc = client
+        .spawn(
+            "sh -c 'echo HELLO | nc -l -p 17777'".to_string(),
+            Default::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Give the listener time to start accepting connections
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Open tunnel to the in-container listener
+    let mut tunnel = client.tunnel_open("127.0.0.1", 17777).await.unwrap();
+    let mut reader = tunnel.reader.take().unwrap();
+
+    // Read the data sent by the nc listener
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    let mut accumulated = Vec::new();
+    loop {
+        match tokio::time::timeout_at(deadline, reader.read()).await {
+            Ok(Ok(data)) => {
+                accumulated.extend_from_slice(&data);
+                let s = String::from_utf8_lossy(&accumulated);
+                if s.contains("HELLO") {
+                    break;
+                }
+            }
+            Ok(Err(_)) => break,
+            Err(_) => panic!("Timed out waiting for tunnel data"),
+        }
+    }
+
+    let received = String::from_utf8_lossy(&accumulated);
+    assert!(
+        received.contains("HELLO"),
+        "Expected 'HELLO' from tunnel, got: '{received}'",
+    );
+
+    // Drop writer and reader to allow the tunnel tasks to finish
+    drop(tunnel.writer.take());
+    drop(reader);
+    tunnel.wait().await;
 }

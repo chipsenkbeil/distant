@@ -25,6 +25,7 @@
 use std::io;
 
 use bollard::Docker as BollardDocker;
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, InspectContainerOptions, RemoveContainerOptionsBuilder,
@@ -169,6 +170,70 @@ impl DockerClient {
         match self.0.info().await {
             Ok(info) => info.os_type.as_deref() != Some("windows"),
             Err(_) => false,
+        }
+    }
+
+    /// Execute a command inside a running container and wait for it to finish.
+    ///
+    /// This is a convenience wrapper around bollard's exec API. The command runs
+    /// non-interactively with stdout/stderr attached so we can detect errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the exec cannot be created, started, or exits with a
+    /// non-zero status.
+    pub async fn exec_cmd(&self, container: &str, cmd: &[&str]) -> io::Result<()> {
+        let created = self
+            .0
+            .create_exec(
+                container,
+                CreateExecOptions {
+                    cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| {
+                io::Error::other(format!("Failed to create exec in '{container}': {e}"))
+            })?;
+
+        let result = self
+            .0
+            .start_exec(
+                &created.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|e| io::Error::other(format!("Failed to start exec in '{container}': {e}")))?;
+
+        // Drain output to ensure the command completes
+        if let StartExecResults::Attached { mut output, .. } = result {
+            while let Some(msg) = output.next().await {
+                if let Err(e) = msg {
+                    return Err(io::Error::other(format!(
+                        "Exec output error in '{container}': {e}"
+                    )));
+                }
+            }
+        }
+
+        // Check exit code
+        let inspect = self
+            .0
+            .inspect_exec(&created.id)
+            .await
+            .map_err(|e| io::Error::other(format!("Failed to inspect exec: {e}")))?;
+
+        match inspect.exit_code {
+            Some(0) | None => Ok(()),
+            Some(code) => Err(io::Error::other(format!(
+                "Exec command failed with exit code {code}"
+            ))),
         }
     }
 

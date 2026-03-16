@@ -16,6 +16,8 @@ use distant_core::{ChannelExt, Client};
 use predicates::prelude::*;
 use rstest::*;
 use test_log::test;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 use distant_test_harness::sshd::*;
 
@@ -2349,4 +2351,94 @@ async fn proc_spawn_should_report_nonzero_exit_code(#[future] client: Ctx<Client
         "Expected exit code 42, got {:?}",
         status.code
     );
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn tunnel_open_should_send_and_receive_data_then_auto_close_on_remote_end(
+    #[future] client: Ctx<Client>,
+) {
+    let mut client = client.await;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_port = listener.local_addr().unwrap().port();
+
+    let mut tunnel = client.tunnel_open("127.0.0.1", target_port).await.unwrap();
+    let mut writer = tunnel.writer.take().unwrap();
+    let mut reader = tunnel.reader.take().unwrap();
+
+    let (mut stream, _) = listener.accept().await.unwrap();
+
+    // Send data client → remote
+    let outgoing = b"Hello from client";
+    writer.write(outgoing.to_vec()).await.unwrap();
+
+    let mut buf = vec![0u8; 256];
+    let n = stream.read(&mut buf).await.unwrap();
+    assert_eq!(&buf[..n], outgoing);
+
+    // Send data remote → client
+    let incoming = b"Hello from remote";
+    stream.write_all(incoming).await.unwrap();
+
+    let data = reader.read().await.unwrap();
+    assert_eq!(data, incoming.as_slice());
+
+    // Remote closes its end
+    drop(stream);
+    drop(listener);
+
+    // Tunnel should auto-close: reader returns BrokenPipe once the
+    // server sends TunnelClosed and the incoming task exits
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    loop {
+        match tokio::time::timeout_at(deadline, reader.read()).await {
+            Ok(Ok(_data)) => continue,
+            Ok(Err(e)) => {
+                assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
+                break;
+            }
+            Err(_) => panic!("Timed out waiting for tunnel to auto-close"),
+        }
+    }
+
+    // Drop writer before wait() so the outgoing task can complete
+    drop(writer);
+    tunnel.wait().await;
+
+    // SSH session must still be alive
+    let info = client.system_info().await.unwrap();
+    assert_eq!(info.family, std::env::consts::FAMILY);
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn tunnel_open_should_fail_if_remote_port_not_listening(#[future] client: Ctx<Client>) {
+    let mut client = client.await;
+
+    // Bind a listener to get an unused port, then drop it so nothing is listening
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let unused_port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    match client.tunnel_open("127.0.0.1", unused_port).await {
+        Err(_) => {
+            // Unix: sshd rejects the channel open synchronously.
+        }
+        Ok(mut tunnel) => {
+            // Windows: sshd confirms the channel before the async TCP connect
+            // completes, then the connection fails (WSAECONNREFUSED). The
+            // tunnel should close almost immediately — verify the reader hits
+            // BrokenPipe.
+            let mut reader = tunnel.reader.take().expect("tunnel should have reader");
+            let result = tokio::time::timeout(Duration::from_secs(5), reader.read()).await;
+            match result {
+                Ok(Err(e)) => {
+                    assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
+                }
+                Ok(Ok(_)) => panic!("Expected tunnel to close, but got data"),
+                Err(_) => panic!("Timed out waiting for tunnel to close"),
+            }
+        }
+    }
 }

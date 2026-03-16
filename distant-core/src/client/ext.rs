@@ -6,12 +6,13 @@ use crate::net::client::Channel;
 use crate::net::common::Request;
 
 use crate::client::{
-    RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, Searcher,
-    Watcher,
+    RemoteCommand, RemoteLspCommand, RemoteLspProcess, RemoteOutput, RemoteProcess, RemoteTunnel,
+    RemoteTunnelListener, Searcher, Watcher,
 };
 use crate::protocol::{
     self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, SystemInfo, Version,
+    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId,
+    Version,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -163,6 +164,22 @@ pub trait ChannelExt {
         path: impl Into<RemotePath>,
         data: impl Into<String>,
     ) -> AsyncReturn<'_, ()>;
+
+    /// Opens a forward tunnel to the specified host and port
+    fn tunnel_open(&mut self, host: impl Into<String>, port: u16) -> AsyncReturn<'_, RemoteTunnel>;
+
+    /// Starts a reverse tunnel listener on the specified host and port
+    fn tunnel_listen(
+        &mut self,
+        host: impl Into<String>,
+        port: u16,
+    ) -> AsyncReturn<'_, RemoteTunnelListener>;
+
+    /// Closes an active tunnel or listener
+    fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()>;
+
+    /// Returns aggregated status information from the server
+    fn status(&mut self) -> AsyncReturn<'_, StatusInfo>;
 }
 
 macro_rules! make_body {
@@ -509,6 +526,36 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
             @ok
         )
     }
+
+    fn tunnel_open(&mut self, host: impl Into<String>, port: u16) -> AsyncReturn<'_, RemoteTunnel> {
+        let host = host.into();
+        Box::pin(async move { RemoteTunnel::open(self.clone(), host, port).await })
+    }
+
+    fn tunnel_listen(
+        &mut self,
+        host: impl Into<String>,
+        port: u16,
+    ) -> AsyncReturn<'_, RemoteTunnelListener> {
+        let host = host.into();
+        Box::pin(async move { RemoteTunnelListener::listen(self.clone(), host, port).await })
+    }
+
+    fn tunnel_close(&mut self, id: TunnelId) -> AsyncReturn<'_, ()> {
+        make_body!(
+            self,
+            protocol::Request::TunnelClose { id },
+            @ok
+        )
+    }
+
+    fn status(&mut self) -> AsyncReturn<'_, StatusInfo> {
+        make_body!(self, protocol::Request::Status {}, |data| match data {
+            protocol::Response::StatusInfo(info) => Ok(info),
+            protocol::Response::Error(x) => Err(io::Error::from(x)),
+            _ => Err(mismatched_response()),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -521,7 +568,8 @@ mod tests {
     use crate::Client;
     use crate::net::common::{FramedTransport, InmemoryTransport, Request, Response};
     use crate::protocol::{
-        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, SystemInfo, Version,
+        self, DirEntry, FileType, Metadata, Permissions, SetPermissionsOptions, StatusInfo,
+        SystemInfo, Version,
     };
     use test_log::test;
 
@@ -531,10 +579,6 @@ mod tests {
         let (t1, t2) = FramedTransport::pair(100);
         (t1, Client::spawn_inmemory(t2, Default::default()))
     }
-
-    // ------------------------------------------------------------------
-    // append_file
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn append_file_should_send_correct_request_and_return_ok() {
@@ -606,10 +650,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // append_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn append_file_text_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -635,10 +675,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // copy
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn copy_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -663,10 +699,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // create_dir
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn create_dir_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -690,10 +722,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // exists
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn exists_should_return_true_when_response_is_true() {
@@ -756,10 +784,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.to_string(), "Mismatched response");
     }
-
-    // ------------------------------------------------------------------
-    // is_compatible
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn is_compatible_should_return_true_for_matching_protocol_version() {
@@ -832,10 +856,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
-    // ------------------------------------------------------------------
-    // metadata
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn metadata_should_send_correct_request_and_return_metadata() {
         let (mut transport, session) = make_session();
@@ -904,10 +924,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    // ------------------------------------------------------------------
-    // set_permissions
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn set_permissions_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -946,10 +962,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // cancel_search
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn cancel_search_should_send_correct_request_and_return_ok() {
@@ -996,10 +1008,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
-
-    // ------------------------------------------------------------------
-    // read_dir
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn read_dir_should_send_correct_request_and_return_entries() {
@@ -1067,10 +1075,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // read_file
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn read_file_should_send_correct_request_and_return_data() {
         let (mut transport, session) = make_session();
@@ -1123,10 +1127,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
-    // ------------------------------------------------------------------
-    // read_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn read_file_text_should_send_correct_request_and_return_string() {
         let (mut transport, session) = make_session();
@@ -1178,10 +1178,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // remove
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn remove_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1206,10 +1202,6 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
-    // ------------------------------------------------------------------
-    // rename
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn rename_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1233,10 +1225,6 @@ mod tests {
 
         task.await.unwrap().unwrap();
     }
-
-    // ------------------------------------------------------------------
-    // unwatch
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn unwatch_should_send_correct_request_and_return_ok() {
@@ -1283,10 +1271,6 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
-
-    // ------------------------------------------------------------------
-    // system_info
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn system_info_should_return_system_info_on_success() {
@@ -1363,10 +1347,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // version
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn version_should_return_version_on_success() {
         let (mut transport, session) = make_session();
@@ -1438,10 +1418,6 @@ mod tests {
         assert_eq!(err.to_string(), "Mismatched response");
     }
 
-    // ------------------------------------------------------------------
-    // protocol_version
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn protocol_version_should_return_current_protocol_version() {
         let (_transport, session) = make_session();
@@ -1450,10 +1426,6 @@ mod tests {
         let version = channel.protocol_version();
         assert_eq!(version, protocol::PROTOCOL_VERSION);
     }
-
-    // ------------------------------------------------------------------
-    // write_file
-    // ------------------------------------------------------------------
 
     #[test(tokio::test)]
     async fn write_file_should_send_correct_request_and_return_ok() {
@@ -1504,10 +1476,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
-    // ------------------------------------------------------------------
-    // write_file_text
-    // ------------------------------------------------------------------
-
     #[test(tokio::test)]
     async fn write_file_text_should_send_correct_request_and_return_ok() {
         let (mut transport, session) = make_session();
@@ -1547,6 +1515,82 @@ mod tests {
                 req.id,
                 protocol::Response::Exists { value: true },
             ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "Mismatched response");
+    }
+
+    #[test(tokio::test)]
+    async fn status_should_return_status_info_on_success() {
+        use crate::protocol::{TunnelDirection, TunnelInfo};
+
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.status().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        match req.payload {
+            protocol::Request::Status {} => {}
+            x => panic!("Unexpected request: {:?}", x),
+        }
+
+        let expected = StatusInfo {
+            tunnels: vec![TunnelInfo {
+                id: 1,
+                direction: TunnelDirection::Forward,
+                host: String::from("localhost"),
+                port: 8080,
+            }],
+        };
+
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::StatusInfo(expected.clone()),
+            ))
+            .await
+            .unwrap();
+
+        let result = task.await.unwrap().unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test(tokio::test)]
+    async fn status_should_return_error_on_error_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.status().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(
+                req.id,
+                protocol::Response::Error(protocol::Error {
+                    kind: protocol::ErrorKind::Other,
+                    description: String::from("status failed"),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test(tokio::test)]
+    async fn status_should_return_error_on_mismatched_response() {
+        let (mut transport, session) = make_session();
+        let mut channel = session.clone_channel();
+
+        let task = tokio::spawn(async move { channel.status().await });
+
+        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
+        transport
+            .write_frame_for(&Response::new(req.id, protocol::Response::Ok))
             .await
             .unwrap();
 

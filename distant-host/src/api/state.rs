@@ -8,6 +8,9 @@ pub use process::*;
 mod search;
 pub use search::*;
 
+mod tunnel;
+pub use tunnel::*;
+
 mod watcher;
 pub use watcher::*;
 
@@ -19,6 +22,9 @@ pub struct GlobalState {
     /// State that holds information about searches running on the server
     pub search: SearchState,
 
+    /// State that holds information about active TCP tunnels on the server
+    pub tunnel: TunnelState,
+
     /// Watcher used for filesystem events
     pub watcher: WatcherState,
 }
@@ -28,6 +34,7 @@ impl GlobalState {
         Ok(Self {
             process: ProcessState::new(),
             search: SearchState::new(),
+            tunnel: TunnelState::new(),
             watcher: WatcherBuilder::new()
                 .with_config(config.watch)
                 .initialize()?,
