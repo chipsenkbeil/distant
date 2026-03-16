@@ -655,7 +655,6 @@ pub trait Api {
 
 > **Note:** The trait itself has no supertrait bounds. `Send + Sync + 'static`
 > is required by `ApiServerHandler<T: Api>` when bridging to `ServerHandler`.
-```
 
 `ApiServerHandler<T: Api>` bridges any `Api` impl into a `ServerHandler` by
 dispatching each `Request` variant to the corresponding trait method.
