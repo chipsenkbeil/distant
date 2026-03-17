@@ -1127,6 +1127,245 @@ At high latency (SRTT > 80ms), predictions are rendered with underline to
 indicate unconfirmed input. Bulk paste (>100 bytes within 10ms) disables
 prediction temporarily.
 
+#### Concurrency Architecture
+
+`TerminalSession::start()` creates an `Arc<Mutex<TerminalFramebuffer>>` shared
+between two concurrent tasks. Both tasks hold the framebuffer lock only for the
+duration of a single operation, never across an `await` point.
+
+```mermaid
+flowchart LR
+    subgraph "Input Task (input_loop)"
+        CT[crossterm events] --> FB_IN[framebuffer.lock\non_keystroke]
+        FB_IN --> STDOUT_IN[stdout.write_all\ndisplay bytes]
+        FB_IN --> REMOTE_IN[stdin.write_str\nencoded bytes]
+    end
+
+    subgraph "Output Task (StdoutFilter in RemoteProcessLink)"
+        SRV[server stdout] --> FB_OUT[framebuffer.lock\nrender_server_output]
+        FB_OUT --> STDOUT_OUT[stdout.write_all\ncombined bytes]
+    end
+
+    FB_IN -. "Arc‹Mutex‹TerminalFramebuffer››" .-> FB_OUT
+
+    subgraph "TerminalFramebuffer"
+        VT[vt100::Parser\nshadow screen]
+        OV[PredictionOverlay]
+        SAN[TerminalSanitizer]
+    end
+```
+
+#### Keystroke Prediction Lifecycle
+
+Sequence diagram showing the full lifecycle of a single predicted keystroke,
+from user input through server echo to confirmation:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant IL as input_loop
+    participant FB as TerminalFramebuffer
+    participant OV as PredictionOverlay
+    participant T as Local stdout
+    participant R as Remote stdin
+    participant S as Server
+
+    U->>IL: types 'a' (crossterm KeyEvent)
+    IL->>FB: lock(), on_keystroke(&ev)
+    FB->>FB: encode_key() → "a"
+    FB->>OV: on_input("a", screen)
+    OV->>OV: create PredictedCell{row, col, 'a', epoch, now}
+    FB->>FB: append_erase() — DECRC + spaces + DECRC
+    FB->>FB: append_predictions() — DECSC + 'a' (no DECRC)
+    FB-->>IL: (encoded="a", display_bytes)
+    IL->>T: write_all(display_bytes)
+    Note over T: prediction visible immediately
+    IL->>FB: unlock()
+    IL->>R: write_str("a")
+    R->>S: forward to remote PTY
+
+    S->>S: shell echoes 'a'
+    S-->>FB: stdout bytes arrive
+
+    Note over FB: StdoutFilter callback:
+    FB->>FB: lock(), render_server_output(bytes)
+    FB->>FB: append_erase() — remove displayed predictions
+    FB->>FB: sanitizer.filter() → sanitized bytes
+    FB->>FB: vt_parser.process() — update shadow screen
+    FB->>OV: confirm_predictions(screen)
+    OV->>OV: screen cell matches 'a' → RTT sample taken
+    OV->>OV: confirmed_epoch = max(confirmed_epoch, pred.epoch)
+    FB->>FB: append_predictions() — re-display remaining
+    FB-->>T: write_all(combined output)
+    FB->>FB: unlock()
+```
+
+#### Prediction Data Structures
+
+```
+PredictedCell {
+    row: u16,              // predicted screen row
+    col: u16,              // predicted screen column
+    ch: char,              // predicted character
+    epoch: u64,            // epoch when prediction was created
+    sent_at: Instant,      // wall-clock time for RTT measurement
+}
+
+BackspacePrediction {
+    row: u16,              // screen row of erased cell
+    col: u16,              // screen column of erased cell
+    original_char: String, // character from shadow screen (for erase restore)
+    epoch: u64,
+    sent_at: Instant,
+}
+
+PredictionOverlay {
+    mode: PredictMode,
+    rtt: RttEstimator,
+    epoch_counter: u64,                      // increments on epoch boundaries
+    confirmed_epoch: u64,                    // highest epoch confirmed by server
+    cells: Vec<PredictedCell>,               // pending forward predictions
+    backspace_predictions: Vec<BackspacePrediction>,
+    last_input_time: Option<Instant>,        // bulk paste detection
+    input_byte_count: usize,                 // bulk paste detection
+    input_floor: Option<(u16, u16)>,         // (row, col) — backspace lower bound
+}
+```
+
+The `input_floor` prevents backspace predictions from visually deleting the
+shell prompt: it records the cursor position at the start of user input within
+the current epoch, and backspace predictions cannot go below that column on the
+same row.
+
+#### Epoch-Based Confirmation
+
+Epochs partition the prediction timeline. Within an epoch, predictions
+accumulate; at a boundary, they are cleared and the epoch counter advances.
+The display gate ensures predictions are only shown after the server has
+echoed at least one character from the current epoch.
+
+```mermaid
+flowchart TD
+    INPUT[Keystroke arrives] --> CLASS{Classify input}
+    CLASS -->|"Enter, Escape, Tab,\nCtrl+A–Z, arrow keys,\nmulti-byte escapes"| BOUNDARY[Epoch boundary]
+    CLASS -->|Printable char| PREDICT[Add PredictedCell]
+    CLASS -->|Backspace| BS[Pop cell or add\nBackspacePrediction]
+
+    BOUNDARY --> INC[epoch_counter += 1]
+    INC --> EMPTY{"Predictions empty?\n(checked BEFORE clearing)"}
+    EMPTY -->|Yes| CATCHUP["confirmed_epoch =\nepoch_counter − 1"]
+    EMPTY -->|No| WAIT[Pending predictions\nneed server confirmation]
+    CATCHUP --> CLEAR["clear cells +\nbackspace_predictions +\ninput_floor"]
+    WAIT --> CLEAR
+
+    PREDICT --> GATE{Display gate}
+    GATE -->|"Fast / FastAdaptive"| SHOW[Show predictions]
+    GATE -->|"epoch_counter ≤\nconfirmed_epoch"| SHOW
+    GATE -->|"epoch_counter >\nconfirmed_epoch"| HIDE[Suppress predictions]
+
+    subgraph "Epoch Recovery"
+        RECV[Server output arrives] --> CONFIRM[confirm_predictions]
+        CONFIRM --> ALL_GONE{All predictions\nconsumed?}
+        ALL_GONE -->|"Yes, gap > 1"| RECOVER["confirmed_epoch =\nepoch_counter − 1"]
+        ALL_GONE -->|No| RETAIN[Keep waiting]
+    end
+```
+
+**Password protection:** After Enter, the epoch advances and predictions are
+hidden. If the server never echoes (password prompt), `confirmed_epoch` stays
+behind `epoch_counter` and predictions remain suppressed until the server
+echoes again (e.g., after login).
+
+#### RTT Estimation
+
+Jacobson/Karels smoothed RTT estimator, updated only on successful prediction
+confirmation:
+
+```
+rttvar = 3/4 * rttvar + 1/4 * |srtt - sample|
+srtt   = 7/8 * srtt   + 1/8 * sample
+```
+
+All arithmetic is saturating to avoid overflow on extreme values.
+
+| Parameter | Value |
+|-----------|-------|
+| Initial SRTT | 100 ms |
+| Initial RTTVAR | 50 ms |
+| Adaptive activation threshold | 30 ms |
+| Underline indicator threshold | 80 ms |
+
+Samples are collected from `PredictedCell.sent_at.elapsed()` and
+`BackspacePrediction.sent_at.elapsed()` at the moment the shadow screen
+confirms the prediction.
+
+#### Rendering Technique
+
+Predictions are rendered using cursor save/restore escape sequences rather
+than a full-screen diff. This avoids reparsing the entire terminal screen on
+every keystroke.
+
+| Sequence | Code | Purpose |
+|----------|------|---------|
+| DECSC | `ESC 7` | Save server cursor position |
+| DECRC | `ESC 8` | Restore server cursor position |
+| SGR underline on | `ESC[4m` | Mark unconfirmed predictions (SRTT > 80ms) |
+| SGR underline off | `ESC[24m` | End underline attribute |
+| SGR reset | `ESC[m` | Clear attributes before erasing |
+
+**`append_predictions`** — called to display predicted characters:
+1. DECSC saves the server cursor position
+2. If SRTT > 80ms, enable underline (`ESC[4m`)
+3. Write predicted characters (backspace offsets first, then forward chars)
+4. If underline was enabled, disable it (`ESC[24m`)
+5. Cursor is NOT restored — it stays at the predicted position so it tracks
+   user typing
+
+**`append_erase`** — called to remove displayed predictions before server
+output:
+1. DECRC restores the server cursor position
+2. SGR reset clears any underline
+3. Move cursor back for backspace predictions, restore original characters
+4. Write spaces over forward predictions
+5. DECRC restores cursor again
+
+All output from `render_server_output` is batched into a single `Vec<u8>` and
+written via one `write_all` call to prevent tearing.
+
+#### TerminalSanitizer
+
+Strips escape sequences that would interfere with the local terminal when
+forwarded from a remote host (especially Windows with ConPTY):
+
+| Category | Sequences | Why stripped |
+|----------|-----------|-------------|
+| ConPTY modes | `?9001h/l` | Win32 input mode — meaningless on Unix |
+| Mouse tracking | `?1000h/l`, `?1002h/l`, `?1003h/l`, `?1005h/l`, `?1006h/l`, `?1015h/l` | Prevents raw mouse escapes echoing as text |
+| Focus tracking | `?1004h/l` | Prevents focus in/out noise |
+| Device attributes | DA1 (`CSI c`), DA2 (`CSI > c`), DA3 (`CSI = c`) | Prevents query responses polluting stdin |
+| Device status | DSR (`CSI 5n`, `CSI 6n`), private DSR (`CSI ? 5n`, `CSI ? 6n`) | Prevents cursor position reports |
+| Terminal version | XTVERSION (`CSI > q`) | Prevents version response |
+| Mode query | DECRQM (`CSI ? ... $ p`) | Prevents mode report |
+| Keyboard query | Kitty keyboard (`CSI ? u`) | Prevents keyboard mode response |
+| OSC queries | Any OSC ending with `?` | Prevents color/title query responses |
+| DCS queries | DECRQSS (`DCS $ q ... ST`), XTGETTCAP (`DCS + q ... ST`) | Prevents capability responses |
+| Window ops | XTWINOPS (`CSI 8 ; rows ; cols t`) | Prevents resize feedback loops |
+
+Cross-chunk buffering: when a chunk boundary splits an escape sequence, the
+trailing bytes are buffered internally (up to 4 KB) and prepended to the next
+`filter` call. On shutdown, `flush_pending` drains any buffered bytes and
+`reset_sequence` writes `ESC[?<mode>l` for each blocked mode.
+
+#### Source File Map
+
+| File | Components |
+|------|------------|
+| `src/cli/commands/common/predict.rs` | `PredictMode`, `RttEstimator` |
+| `src/cli/commands/common/framebuffer.rs` | `TerminalFramebuffer`, `PredictionOverlay`, `PredictedCell`, `BackspacePrediction` |
+| `src/cli/commands/common/terminal.rs` | `TerminalSession`, `TerminalSanitizer`, `input_loop` |
+| `src/cli/commands/common/keyencode.rs` | `encode_key()` |
+| `src/cli/commands/common/link.rs` | `RemoteProcessLink`, `StdoutFilter` |
+
 ---
 
 ## 12. Test Harness (`distant-test-harness`)
