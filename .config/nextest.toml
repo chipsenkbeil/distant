@@ -13,6 +13,9 @@ max-threads = 4
 [test-groups.service-tests]
 max-threads = 1
 
+[test-groups.pty-tests]
+max-threads = 4
+
 [profile.default]
 fail-fast = false
 leak-timeout = { period = "100ms", result = "fail" }
@@ -50,10 +53,10 @@ test-group = 'ssh-integration'
 filter = 'test(parity::) & test(case_2)'
 test-group = 'ssh-integration'
 
-# PTY tests use expectrl which needs careful concurrency
+# PTY tests use portable-pty which needs careful concurrency
 [[profile.default.overrides]]
 filter = 'test(pty::)'
-max-threads = 4
+test-group = 'pty-tests'
 
 [profile.ci]
 retries = { backoff = "exponential", count = 4, delay = "1s", max-delay = "16s", jitter = true }
