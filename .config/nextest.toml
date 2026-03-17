@@ -7,6 +7,12 @@ max-threads = 1
 [test-groups.docker-integration]
 max-threads = 2
 
+[test-groups.tunnel-tests]
+max-threads = 4
+
+[test-groups.service-tests]
+max-threads = 1
+
 [profile.default]
 fail-fast = false
 leak-timeout = { period = "100ms", result = "fail" }
@@ -25,6 +31,29 @@ test-group = 'ssh-integration'
 [[profile.default.overrides]]
 filter = 'binary_id(distant-docker::lib)'
 test-group = 'docker-integration'
+
+[[profile.default.overrides]]
+filter = 'test(tunnel_)'
+test-group = 'tunnel-tests'
+
+[[profile.default.overrides]]
+filter = 'test(service_)'
+test-group = 'service-tests'
+
+# SSH CLI tests spawn real sshd processes per test
+[[profile.default.overrides]]
+filter = 'test(ssh_) | test(connect_ssh) | test(launch_ssh)'
+test-group = 'ssh-integration'
+
+# Parity tests with SSH backend also spawn sshd
+[[profile.default.overrides]]
+filter = 'test(parity::) & test(case_2)'
+test-group = 'ssh-integration'
+
+# PTY tests use expectrl which needs careful concurrency
+[[profile.default.overrides]]
+filter = 'test(pty::)'
+max-threads = 4
 
 [profile.ci]
 retries = { backoff = "exponential", count = 4, delay = "1s", max-delay = "16s", jitter = true }

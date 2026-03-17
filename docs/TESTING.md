@@ -92,18 +92,87 @@ Integration tests in `distant-docker` use real Docker containers. The harness:
 - Tests use the `skip_if_no_docker!` macro to skip gracefully when Docker is unavailable
 - Containers are cleaned up on drop
 
+### CLI Test Context Types (`distant-test-harness/src/manager.rs`)
+
+CLI integration tests use context types that manage the full lifecycle of
+distant processes (manager, server, connections):
+
+| Context Type | Backend | How It Connects |
+|-------------|---------|----------------|
+| `ManagerCtx` | Host (local) | `distant connect distant://...` |
+| `ManagerOnlyCtx` | None (manager only) | No connection — for testing error paths |
+| `SshManagerCtx` | SSH plugin | `distant connect ssh://localhost:{port}` via per-test sshd |
+| `SshLaunchCtx` | SSH plugin | `distant launch ssh://localhost:{port}` via per-test sshd |
+| `DockerManagerCtx` | Docker plugin | `distant connect docker://...` via ephemeral container |
+
+All context types expose `new_assert_cmd()`, `new_std_cmd()`, and `cmd_parts()`
+to build commands pre-configured with the correct socket, log file, and
+connection ID.
+
+### Cross-Plugin Parity Testing (`tests/cli/parity.rs`)
+
+The `BackendCtx` enum (`distant-test-harness/src/backend.rs`) wraps all context
+types behind a single interface. Tests use rstest `#[case]` to run the same
+assertion across Host, SSH, and Docker backends:
+
+```rust
+#[rstest]
+#[case(Backend::Host)]
+#[case(Backend::Ssh)]
+#[case(Backend::Docker)]
+fn fs_read_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    // ...test logic using ctx.new_assert_cmd(["fs", "read"])...
+}
+```
+
+The `skip_if_no_backend!` macro skips gracefully when a backend's
+prerequisites are unavailable (no sshd, no Docker).
+
+### Tunnel Testing (`tests/cli/tunnel.rs`)
+
+Tunnel tests use a custom `tcp-echo-server` binary
+(`distant-test-harness/src/bin/tcp_echo_server.rs`) instead of platform-specific
+`nc`/netcat. The server binds to `127.0.0.1:0`, prints its port to stdout,
+accepts one connection, echoes all data back, and exits on EOF or timeout.
+
+### PTY / Predictive Echo Testing (`tests/cli/pty.rs`)
+
+PTY tests are Unix-only (gated with `#[cfg(unix)]`) and use `expectrl` to
+interact with `distant shell` and `distant spawn --pty`. Purpose-built binaries
+exercise different PTY scenarios:
+
+- `pty-echo`: byte-by-byte stdin→stdout echo loop
+- `pty-interactive`: mini-shell with `$ ` prompt, `exit`, `passwd`, Ctrl+C handling
+- `pty-password`: password prompt with echo disabled (rpassword), then echo loop
+
+Tests verify `--predict off` and `--predict on` modes work end-to-end.
+
+### Service Tests (opt-in)
+
+Service tests (`distant manager service install/start/stop/uninstall`) require
+system privileges and service manager interaction. They are not run in standard
+CI. To run them locally:
+
+```bash
+DISTANT_TEST_SERVICE=1 cargo test --test cli_tests -- service_
+```
+
 ## Nextest Configuration
 
 Configuration lives in `.config/nextest.toml`.
 
 ### Test Groups (Throttling)
 
-To prevent resource exhaustion, certain crates have thread limits:
+To prevent resource exhaustion, certain test categories have thread limits:
 
-| Group | Crate | Max Threads | Reason |
+| Group | Scope | Max Threads | Reason |
 |-------|-------|-------------|--------|
-| `ssh-integration` | `distant-ssh` | 4 | Prevents sshd fork exhaustion |
-| `docker-integration` | `distant-docker` | 2 | Prevents Docker API contention |
+| `ssh-integration` | `distant-ssh` lib + SSH CLI tests | 4 | Prevents sshd fork exhaustion |
+| `ssh-integration-windows` | `distant-ssh` lib (Windows) | 1 | Windows sshd is fragile |
+| `docker-integration` | `distant-docker` lib | 2 | Prevents Docker API contention |
+| `tunnel-tests` | `test(tunnel_)` | 4 | Prevents port exhaustion |
+| `service-tests` | `test(service_)` | 1 | Service install/uninstall is sequential |
 
 ### CI Profile
 

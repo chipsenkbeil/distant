@@ -50,5 +50,9 @@ path = "src/bin/pty_interactive.rs"
 name = "tcp-to-stdio"
 path = "src/bin/tcp_to_stdio.rs"
 
+[[bin]]
+name = "tcp-echo-server"
+path = "src/bin/tcp_echo_server.rs"
+
 [lints]
 workspace = true

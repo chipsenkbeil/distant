@@ -506,29 +506,6 @@ behind feature flags.
 
 ---
 
-### Issue #7: Support transfer command
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/7
-
-**Problem:** Want an scp-like `distant copy` command for local↔remote file
-transfer.
-
-**Codebase context:** Remote-to-remote `Copy` already exists in the
-protocol. `FileRead`/`FileWrite` can be composed client-side for
-local↔remote transfers but there's no dedicated CLI command. The CLI was
-refactored to support top-level `distant copy` (comment from author).
-
-**Work needed:**
-1. Add `distant copy <src> <dst>` CLI command parsing local vs remote paths
-   (e.g. `host:path/to/file` syntax)
-2. Implement client-side logic: read local + write remote (upload), or read
-   remote + write local (download)
-3. Support directory transfers with recursion
-4. Add progress indication for large transfers
-
----
-
 ### Issue #2: SSDP or similar to detect existing distant instances
 
 - **Type:** Enhancement
