@@ -27,7 +27,7 @@ cargo test --all-features -p distant-docker
 ### CLI Tests
 
 Located in `tests/` under the root crate. Test the `distant` binary end-to-end
-using `assert_cmd` and `expectrl`.
+using `assert_cmd` and `portable-pty`.
 
 ```bash
 cargo test --all-features --test '*'
@@ -138,15 +138,20 @@ accepts one connection, echoes all data back, and exits on EOF or timeout.
 
 ### PTY / Predictive Echo Testing (`tests/cli/pty.rs`)
 
-PTY tests are Unix-only (gated with `#[cfg(unix)]`) and use `expectrl` to
-interact with `distant shell` and `distant spawn --pty`. Purpose-built binaries
-exercise different PTY scenarios:
+PTY tests are cross-platform and use `portable-pty` (`PtySession` in
+`tests/cli/pty.rs`) to interact with `distant shell` and `distant spawn --pty`.
+On Windows, `PtySession` automatically handles ConPTY cursor position queries
+(`\x1b[6n`) to prevent I/O deadlocks. Purpose-built binaries exercise different
+PTY scenarios:
 
 - `pty-echo`: byte-by-byte stdin→stdout echo loop
 - `pty-interactive`: mini-shell with `$ ` prompt, `exit`, `passwd`, Ctrl+C handling
 - `pty-password`: password prompt with echo disabled (rpassword), then echo loop
 
-Tests verify `--predict off` and `--predict on` modes work end-to-end.
+Tests verify `--predict off` and `--predict on` modes work end-to-end. Platform-
+specific commands (e.g., `sh -c` vs `cmd /c`, `stty size` vs `mode con`, `tput`
+vs PowerShell ANSI sequences) use `#[cfg]` for behavioral dispatch — the same
+test runs on all platforms with appropriate command variants.
 
 ### Service Tests (opt-in)
 

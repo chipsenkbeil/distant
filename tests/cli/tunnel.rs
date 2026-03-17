@@ -11,8 +11,10 @@ use rstest::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::time;
 
+use distant_test_harness::backend::{Backend, ctx_for_backend};
 use distant_test_harness::exe;
 use distant_test_harness::manager::*;
+use distant_test_harness::skip_if_no_backend;
 
 /// Parses the tunnel ID and actual port from a "Tunnel N started: ..." output line.
 ///
@@ -656,4 +658,172 @@ fn tunnel_listen_invalid_address(ctx: ManagerCtx) {
             "failed tunnel listen should produce error output"
         );
     }
+}
+
+#[rstest]
+#[case(Backend::Host)]
+#[case(Backend::Ssh)]
+#[case(Backend::Docker)]
+#[tokio::test]
+async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+
+    let echo_bin = exe::build_tcp_echo_server()
+        .await
+        .expect("failed to build tcp-echo-server");
+
+    let mut echo_child = tokio::process::Command::new(&echo_bin)
+        .arg("30")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("failed to spawn tcp-echo-server");
+
+    let stdout = echo_child.stdout.take().expect("stdout not captured");
+    let mut reader = tokio::io::BufReader::new(stdout);
+
+    let mut port_line = String::new();
+    time::timeout(Duration::from_secs(10), reader.read_line(&mut port_line))
+        .await
+        .expect("timed out waiting for echo server port")
+        .expect("failed to read echo server port");
+
+    let echo_port: u16 = port_line
+        .trim()
+        .parse()
+        .expect("echo server stdout should be a port number");
+
+    let spec = format!("0:127.0.0.1:{echo_port}");
+    let output = ctx
+        .new_std_cmd(["tunnel", "open"])
+        .arg(&spec)
+        .output()
+        .expect("failed to run tunnel open");
+
+    assert!(
+        output.status.success(),
+        "tunnel open should succeed via {backend:?}, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let (_id, local_port) = parse_tunnel_started(&stdout_str);
+    assert!(local_port > 0, "tunnel should bind to a real port");
+
+    let mut stream = time::timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect(format!("127.0.0.1:{local_port}")),
+    )
+    .await
+    .expect("timed out connecting to tunnel")
+    .expect("failed to connect to tunnel");
+
+    let payload = b"cross-backend tunnel data";
+    stream
+        .write_all(payload)
+        .await
+        .expect("failed to write to tunnel");
+
+    time::sleep(Duration::from_millis(200)).await;
+
+    stream
+        .shutdown()
+        .await
+        .expect("failed to shut down write half");
+
+    let mut response = Vec::new();
+    time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("timed out reading response through tunnel")
+        .expect("failed to read response through tunnel");
+
+    assert_eq!(
+        response, payload,
+        "data through tunnel should match what was sent via {backend:?}"
+    );
+}
+
+#[rstest]
+#[case(Backend::Host)]
+#[case(Backend::Ssh)]
+#[case(Backend::Docker)]
+#[tokio::test]
+async fn tunnel_listen_data_cross_backend(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+
+    let echo_bin = exe::build_tcp_echo_server()
+        .await
+        .expect("failed to build tcp-echo-server");
+
+    let mut echo_child = tokio::process::Command::new(&echo_bin)
+        .arg("30")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("failed to spawn tcp-echo-server");
+
+    let stdout = echo_child.stdout.take().expect("stdout not captured");
+    let mut reader = tokio::io::BufReader::new(stdout);
+
+    let mut port_line = String::new();
+    time::timeout(Duration::from_secs(10), reader.read_line(&mut port_line))
+        .await
+        .expect("timed out waiting for echo server port")
+        .expect("failed to read echo server port");
+
+    let echo_port: u16 = port_line
+        .trim()
+        .parse()
+        .expect("echo server stdout should be a port number");
+
+    let spec = format!("0:127.0.0.1:{echo_port}");
+    let output = ctx
+        .new_std_cmd(["tunnel", "listen"])
+        .arg(&spec)
+        .output()
+        .expect("failed to run tunnel listen");
+
+    assert!(
+        output.status.success(),
+        "tunnel listen should succeed via {backend:?}, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let (_id, remote_port) = parse_tunnel_started(&stdout_str);
+    assert!(remote_port > 0, "reverse tunnel should bind to a real port");
+
+    let mut stream = time::timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect(format!("127.0.0.1:{remote_port}")),
+    )
+    .await
+    .expect("timed out connecting to reverse tunnel")
+    .expect("failed to connect to reverse tunnel");
+
+    let payload = b"cross-backend reverse tunnel data";
+    stream
+        .write_all(payload)
+        .await
+        .expect("failed to write to reverse tunnel");
+
+    time::sleep(Duration::from_millis(200)).await;
+
+    stream
+        .shutdown()
+        .await
+        .expect("failed to shut down write half");
+
+    let mut response = Vec::new();
+    time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("timed out reading response through reverse tunnel")
+        .expect("failed to read response through reverse tunnel");
+
+    assert_eq!(
+        response, payload,
+        "data through reverse tunnel should match via {backend:?}"
+    );
 }

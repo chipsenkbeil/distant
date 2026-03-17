@@ -7,7 +7,7 @@
 use assert_fs::prelude::*;
 use rstest::*;
 
-use distant_test_harness::backend::{Backend, ctx_for_backend};
+use distant_test_harness::backend::{Backend, BackendCtx, ctx_for_backend};
 use distant_test_harness::skip_if_no_backend;
 
 // ---------------------------------------------------------------------------
@@ -385,6 +385,159 @@ fn fs_search(#[case] backend: Backend) {
     );
 }
 
-// Note: `kill` (proc_kill) is tested via the JSON API tests in `tests/cli/api/`.
-// Cross-backend kill testing would require API-level interaction that is
-// already covered by the existing proc_spawn/proc_kill API test suite.
+// ---------------------------------------------------------------------------
+// Watch operations
+// ---------------------------------------------------------------------------
+
+#[rstest]
+#[case(Backend::Host)]
+#[test_log::test]
+fn fs_watch(#[case] backend: Backend) {
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    // Start watching the temp directory for create events.
+    // `distant fs watch` is a streaming command — it runs until killed.
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .arg(temp.to_str().unwrap())
+        .arg("--recursive")
+        .arg("--only")
+        .arg("create")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn fs watch");
+
+    // Give the watch time to establish
+    std::thread::sleep(Duration::from_secs(1));
+
+    // Create a file in the watched directory — this should trigger an event
+    temp.child("watched-file.txt")
+        .write_str("watch content")
+        .unwrap();
+
+    // Give the watch event time to propagate and be written to stdout
+    std::thread::sleep(Duration::from_secs(2));
+
+    // Kill the watch process and collect output
+    child.kill().expect("Failed to kill watch process");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for watch process");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("watched-file.txt"),
+        "Expected 'watched-file.txt' in watch output, got: {stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PTY spawn operations
+// ---------------------------------------------------------------------------
+
+/// Verifies that `distant spawn --pty` works by running a simple echo command
+/// through a PTY-allocated remote process. Uses `PtySession` (portable-pty)
+/// because `--pty` requires a real terminal (raw mode). Only tested on Host
+/// backend since PTY through SSH and Docker is covered by Phase 3
+/// (`ssh_shell_interactive`) and Phase 4 (`spawn_pty_flag`).
+#[rstest]
+#[case(Backend::Host)]
+#[tokio::test]
+async fn spawn_with_pty(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+
+    let (bin, mut args) = match &ctx {
+        BackendCtx::Host(c) => c.cmd_parts(["spawn"]),
+        _ => unreachable!("spawn_with_pty only tests Host backend"),
+    };
+
+    args.push("--pty".to_string());
+    args.push("--".to_string());
+
+    // On Windows, `echo` is a cmd.exe built-in (no echo.exe).
+    #[cfg(windows)]
+    {
+        args.push("cmd".to_string());
+        args.push("/c".to_string());
+    }
+    args.push("echo".to_string());
+    args.push("pty-spawn-parity".to_string());
+
+    let mut session = super::pty::PtySession::spawn(&bin, &args);
+    session.expect("pty-spawn-parity");
+}
+
+// ---------------------------------------------------------------------------
+// Kill operations
+// ---------------------------------------------------------------------------
+
+/// Tests `distant kill` by killing the active connection and verifying that
+/// subsequent commands fail. Uses ManagerCtx directly (not BackendCtx)
+/// because we need the connection to be killable and then verify failure.
+#[test_log::test]
+fn kill_connection() {
+    use distant_test_harness::manager;
+
+    let ctx = manager::ManagerCtx::start();
+
+    // First verify the connection works
+    let output = ctx
+        .new_std_cmd(["version"])
+        .output()
+        .expect("Failed to run version");
+    assert!(
+        output.status.success(),
+        "version should succeed before kill"
+    );
+
+    // Get the connection ID from `distant status`
+    let status_output = ctx
+        .new_std_cmd(["status"])
+        .output()
+        .expect("Failed to run status");
+
+    // `distant status` outputs connection info to stderr in the format:
+    //   * <connection_id> -> distant://...
+    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
+    let status_stderr = String::from_utf8_lossy(&status_output.stderr);
+
+    // Search both stdout and stderr since output destination may vary.
+    // Connection lines have the format:
+    //   * <id> -> distant://...   (selected connection)
+    //     <id> -> distant://...   (other connections)
+    let combined = format!("{status_stdout}\n{status_stderr}");
+    let conn_id = combined
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim().strip_prefix("* ").unwrap_or(line.trim());
+            // A connection line contains " -> " separator
+            if !trimmed.contains(" -> ") {
+                return None;
+            }
+            trimmed.split_whitespace().next()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Failed to find connection ID in status output.\nstdout: {status_stdout}\nstderr: {status_stderr}"
+            )
+        });
+
+    // Kill the connection
+    ctx.new_assert_cmd(["kill"]).arg(conn_id).assert().success();
+
+    // After killing, commands should fail
+    let output = ctx
+        .new_std_cmd(["version"])
+        .output()
+        .expect("Failed to run version after kill");
+
+    assert!(
+        !output.status.success(),
+        "version should fail after connection is killed"
+    );
+}

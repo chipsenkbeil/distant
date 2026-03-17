@@ -1036,6 +1036,7 @@ dependencies = [
  "expectrl",
  "fork",
  "indoc",
+ "libc",
  "log",
  "portable-pty",
  "predicates",

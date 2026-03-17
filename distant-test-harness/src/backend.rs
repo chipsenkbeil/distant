@@ -94,12 +94,19 @@ pub fn ctx_for_backend(backend: Backend) -> Option<BackendCtx> {
 /// across match arms.
 #[cfg(feature = "docker")]
 fn ctx_for_docker() -> Option<BackendCtx> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create runtime");
-    rt.block_on(crate::docker::DockerManagerCtx::start())
-        .map(BackendCtx::Docker)
+    // Spawn the Docker context creation on a separate thread to avoid
+    // "Cannot start a runtime from within a runtime" when called from
+    // within a #[tokio::test] context.
+    std::thread::spawn(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create runtime");
+        rt.block_on(crate::docker::DockerManagerCtx::start())
+            .map(BackendCtx::Docker)
+    })
+    .join()
+    .expect("Docker context thread panicked")
 }
 
 /// Returns `None` when the `docker` feature is not enabled.

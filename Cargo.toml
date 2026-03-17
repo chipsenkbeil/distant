@@ -101,6 +101,7 @@ distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
 env_logger = "0.11.9"
 expectrl = "0.8"
 indoc = "2.0.7"
+libc = "0.2"
 portable-pty = "0.9.0"
 predicates = "3.1.4"
 regex = "1"
