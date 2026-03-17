@@ -660,10 +660,11 @@ fn tunnel_listen_invalid_address(ctx: ManagerCtx) {
     }
 }
 
+/// Docker is excluded because `tunnel open` forwards to `127.0.0.1` inside
+/// the container, where no tcp-echo-server runs (it runs on the host).
 #[rstest]
 #[case(Backend::Host)]
 #[case(Backend::Ssh)]
-#[case(Backend::Docker)]
 #[tokio::test]
 async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
@@ -744,10 +745,11 @@ async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
     );
 }
 
+/// Docker is excluded because the Docker backend does not support
+/// `tunnel_listen` (returns "tunnel_listen is not supported for Docker backends").
 #[rstest]
 #[case(Backend::Host)]
 #[case(Backend::Ssh)]
-#[case(Backend::Docker)]
 #[tokio::test]
 async fn tunnel_listen_data_cross_backend(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));

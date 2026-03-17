@@ -43,6 +43,16 @@ pub enum BackendCtx {
 }
 
 impl BackendCtx {
+    /// Returns which backend this context uses.
+    pub fn backend(&self) -> Backend {
+        match self {
+            Self::Host(_) => Backend::Host,
+            Self::Ssh(_) => Backend::Ssh,
+            #[cfg(feature = "docker")]
+            Self::Docker(_) => Backend::Docker,
+        }
+    }
+
     /// Produces a new [`assert_cmd::Command`] configured with the given subcommands.
     ///
     /// The returned command is pre-configured to communicate with the

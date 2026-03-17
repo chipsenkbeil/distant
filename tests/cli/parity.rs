@@ -3,12 +3,96 @@
 //! Verifies that the same operations produce consistent results across
 //! Host, SSH, and Docker backends. Uses [`BackendCtx`] to parameterize
 //! each test over all available backends.
+//!
+//! All file operations use the `distant` CLI for both setup and verification
+//! so that tests work regardless of whether the backend operates on the host
+//! filesystem (Host, SSH) or inside a container (Docker).
 
-use assert_fs::prelude::*;
+use std::io::Write as _;
+use std::process::Stdio;
+
 use rstest::*;
 
 use distant_test_harness::backend::{Backend, BackendCtx, ctx_for_backend};
 use distant_test_harness::skip_if_no_backend;
+
+/// Returns a unique temp directory path valid for the backend's filesystem.
+///
+/// Docker containers always use `/tmp/` (Linux). Host and SSH use the
+/// platform's temp directory (also `/tmp/` on Unix, `%TEMP%` on Windows).
+fn unique_dir(ctx: &BackendCtx, label: &str) -> String {
+    let id: u64 = rand::random();
+    let base = match ctx.backend() {
+        Backend::Docker => std::path::PathBuf::from("/tmp"),
+        _ => std::env::temp_dir(),
+    };
+    base.join(format!("distant-parity-{label}-{id}"))
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Creates a file through the distant CLI, works for all backends.
+fn cli_write(ctx: &BackendCtx, path: &str, content: &str) {
+    let mut child = ctx
+        .new_std_cmd(["fs", "write"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fs write");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "fs write setup failed for {path}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Reads a file through the distant CLI, works for all backends.
+fn cli_read(ctx: &BackendCtx, path: &str) -> String {
+    let output = ctx
+        .new_std_cmd(["fs", "read"])
+        .arg(path)
+        .output()
+        .expect("failed to run fs read");
+    assert!(
+        output.status.success(),
+        "fs read failed for {path}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Checks if a path exists through the distant CLI, works for all backends.
+fn cli_exists(ctx: &BackendCtx, path: &str) -> bool {
+    let output = ctx
+        .new_std_cmd(["fs", "exists"])
+        .arg(path)
+        .output()
+        .expect("failed to run fs exists");
+    output.status.success() && String::from_utf8_lossy(&output.stdout).contains("true")
+}
+
+/// Creates a directory through the distant CLI, works for all backends.
+fn cli_mkdir(ctx: &BackendCtx, path: &str) {
+    let output = ctx
+        .new_std_cmd(["fs", "make-dir"])
+        .arg(path)
+        .output()
+        .expect("failed to run fs make-dir");
+    assert!(
+        output.status.success(),
+        "fs make-dir failed for {path}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Filesystem operations
@@ -21,12 +105,13 @@ use distant_test_harness::skip_if_no_backend;
 #[test_log::test]
 fn fs_read_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("read-test.txt");
-    file.write_str("parity read content").unwrap();
+    let dir = unique_dir(&ctx, "read");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/read-test.txt");
+    cli_write(&ctx, &path, "parity read content");
 
     ctx.new_assert_cmd(["fs", "read"])
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .assert()
         .success()
         .stdout("parity read content");
@@ -39,18 +124,34 @@ fn fs_read_file(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_write_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("write-test.txt");
+    let dir = unique_dir(&ctx, "write");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/write-test.txt");
 
-    ctx.new_assert_cmd(["fs", "write"])
-        .arg(file.to_str().unwrap())
-        .write_stdin("parity write content")
-        .assert()
-        .success();
+    // This is the operation under test
+    let mut child = ctx
+        .new_std_cmd(["fs", "write"])
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fs write");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"parity write content")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "fs write should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let contents =
-        std::fs::read_to_string(file.path()).expect("Failed to read written file from disk");
+    // Verify via CLI read (works for all backends)
+    let contents = cli_read(&ctx, &path);
     assert_eq!(contents, "parity write content");
 }
 
@@ -61,19 +162,19 @@ fn fs_write_file(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_copy(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let src = temp.child("copy-src.txt");
-    src.write_str("parity copy content").unwrap();
-    let dst = temp.child("copy-dst.txt");
+    let dir = unique_dir(&ctx, "copy");
+    cli_mkdir(&ctx, &dir);
+    let src = format!("{dir}/copy-src.txt");
+    let dst = format!("{dir}/copy-dst.txt");
+    cli_write(&ctx, &src, "parity copy content");
 
     ctx.new_assert_cmd(["fs", "copy"])
-        .arg(src.to_str().unwrap())
-        .arg(dst.to_str().unwrap())
+        .arg(&src)
+        .arg(&dst)
         .assert()
         .success();
 
-    let contents =
-        std::fs::read_to_string(dst.path()).expect("Failed to read copied file from disk");
+    let contents = cli_read(&ctx, &dst);
     assert_eq!(contents, "parity copy content");
 }
 
@@ -84,13 +185,14 @@ fn fs_copy(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_exists(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("exists-test.txt");
-    file.write_str("exists").unwrap();
+    let dir = unique_dir(&ctx, "exists");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/exists-test.txt");
+    cli_write(&ctx, &path, "exists");
 
     let output = ctx
         .new_std_cmd(["fs", "exists"])
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .output()
         .expect("Failed to run fs exists");
 
@@ -113,15 +215,19 @@ fn fs_exists(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_make_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("new-dir");
+    let dir = unique_dir(&ctx, "mkdir");
+    cli_mkdir(&ctx, &dir);
+    let new_dir = format!("{dir}/new-dir");
 
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .arg(dir.to_str().unwrap())
+        .arg(&new_dir)
         .assert()
         .success();
 
-    assert!(dir.path().is_dir(), "Directory should be created");
+    assert!(
+        cli_exists(&ctx, &new_dir),
+        "Directory should be created (verified via CLI)"
+    );
 }
 
 #[rstest]
@@ -131,17 +237,21 @@ fn fs_make_dir(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_remove(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("remove-test.txt");
-    file.write_str("to be removed").unwrap();
-    assert!(file.path().exists());
+    let dir = unique_dir(&ctx, "remove");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/remove-test.txt");
+    cli_write(&ctx, &path, "to be removed");
+    assert!(cli_exists(&ctx, &path), "File should exist before removal");
 
     ctx.new_assert_cmd(["fs", "remove"])
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .assert()
         .success();
 
-    assert!(!file.path().exists(), "File should be removed");
+    assert!(
+        !cli_exists(&ctx, &path),
+        "File should be removed (verified via CLI)"
+    );
 }
 
 #[rstest]
@@ -151,20 +261,27 @@ fn fs_remove(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_rename(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let src = temp.child("rename-src.txt");
-    src.write_str("rename content").unwrap();
-    let dst = temp.child("rename-dst.txt");
+    let dir = unique_dir(&ctx, "rename");
+    cli_mkdir(&ctx, &dir);
+    let src = format!("{dir}/rename-src.txt");
+    let dst = format!("{dir}/rename-dst.txt");
+    cli_write(&ctx, &src, "rename content");
 
     ctx.new_assert_cmd(["fs", "rename"])
-        .arg(src.to_str().unwrap())
-        .arg(dst.to_str().unwrap())
+        .arg(&src)
+        .arg(&dst)
         .assert()
         .success();
 
-    assert!(!src.path().exists(), "Source should no longer exist");
-    assert!(dst.path().exists(), "Destination should exist");
-    let contents = std::fs::read_to_string(dst.path()).unwrap();
+    assert!(
+        !cli_exists(&ctx, &src),
+        "Source should no longer exist (verified via CLI)"
+    );
+    assert!(
+        cli_exists(&ctx, &dst),
+        "Destination should exist (verified via CLI)"
+    );
+    let contents = cli_read(&ctx, &dst);
     assert_eq!(contents, "rename content");
 }
 
@@ -175,13 +292,14 @@ fn fs_rename(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_metadata(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("metadata-test.txt");
-    file.write_str("metadata content").unwrap();
+    let dir = unique_dir(&ctx, "metadata");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/metadata-test.txt");
+    cli_write(&ctx, &path, "metadata content");
 
     let output = ctx
         .new_std_cmd(["fs", "metadata"])
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .output()
         .expect("Failed to run fs metadata");
 
@@ -296,14 +414,15 @@ fn version(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_read_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    temp.child("aaa.txt").write_str("a").unwrap();
-    temp.child("bbb.txt").write_str("b").unwrap();
+    let dir = unique_dir(&ctx, "readdir");
+    cli_mkdir(&ctx, &dir);
+    cli_write(&ctx, &format!("{dir}/aaa.txt"), "a");
+    cli_write(&ctx, &format!("{dir}/bbb.txt"), "b");
 
     // `distant fs read <dir>` returns directory entries when given a directory
     let output = ctx
         .new_std_cmd(["fs", "read"])
-        .arg(temp.to_str().unwrap())
+        .arg(&dir)
         .output()
         .expect("Failed to run fs read (directory)");
 
@@ -331,20 +450,21 @@ fn fs_read_dir(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_set_permissions(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("perms-test.txt");
-    file.write_str("perms content").unwrap();
+    let dir = unique_dir(&ctx, "perms");
+    cli_mkdir(&ctx, &dir);
+    let path = format!("{dir}/perms-test.txt");
+    cli_write(&ctx, &path, "perms content");
 
     // Set file to readonly using chmod-style mode
     ctx.new_assert_cmd(["fs", "set-permissions"])
         .arg("readonly")
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .assert()
         .success();
 
     // Verify the file is still readable
     ctx.new_assert_cmd(["fs", "read"])
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .assert()
         .success()
         .stdout("perms content");
@@ -358,17 +478,20 @@ fn fs_set_permissions(#[case] backend: Backend) {
 #[test_log::test]
 fn fs_search(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
-    let temp = assert_fs::TempDir::new().unwrap();
-    temp.child("needle.txt")
-        .write_str("haystack needle haystack")
-        .unwrap();
-    temp.child("other.txt").write_str("no match here").unwrap();
+    let dir = unique_dir(&ctx, "search");
+    cli_mkdir(&ctx, &dir);
+    cli_write(
+        &ctx,
+        &format!("{dir}/needle.txt"),
+        "haystack needle haystack",
+    );
+    cli_write(&ctx, &format!("{dir}/other.txt"), "no match here");
 
     // `distant fs search <pattern> [PATHS]...` — pattern is the first positional arg
     let output = ctx
         .new_std_cmd(["fs", "search"])
         .arg("needle")
-        .arg(temp.to_str().unwrap())
+        .arg(&dir)
         .output()
         .expect("Failed to run fs search");
 
@@ -389,12 +512,19 @@ fn fs_search(#[case] backend: Backend) {
 // Watch operations
 // ---------------------------------------------------------------------------
 
+/// Watch is only tested on Host backend because it requires host-level
+/// filesystem events (inotify/FSEvents/ReadDirectoryChanges). Docker
+/// containers use overlayfs which may not propagate inotify events
+/// reliably. SSH-connected backends also use the host filesystem but
+/// adding watch tests for SSH would be redundant given that the same
+/// code path is exercised.
 #[rstest]
 #[case(Backend::Host)]
 #[test_log::test]
 fn fs_watch(#[case] backend: Backend) {
-    use std::process::Stdio;
     use std::time::Duration;
+
+    use assert_fs::prelude::*;
 
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let temp = assert_fs::TempDir::new().unwrap();

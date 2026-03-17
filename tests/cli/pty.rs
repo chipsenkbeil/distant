@@ -425,8 +425,10 @@ async fn predict_off_server_echo_only() {
     let mut session = PtySession::spawn(&bin, &args);
     session.set_timeout(Duration::from_secs(60));
 
-    // Wait for pty-echo to start
-    std::thread::sleep(Duration::from_secs(1));
+    // Wait for the distant shell to fully connect and enter raw mode before
+    // sending input. Using a fixed sleep is insufficient under heavy load —
+    // input sent before the shell is ready can be garbled.
+    session.expect("Connected to manager");
 
     session.send("xyz");
     session.expect("xyz");
