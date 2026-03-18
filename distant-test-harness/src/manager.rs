@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::process::{kill_process_tree, set_process_group};
+use crate::process;
 use crate::sshd::{self, Sshd};
 
 use assert_cmd::Command;
@@ -83,7 +83,7 @@ impl HostManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -107,7 +107,7 @@ impl HostManagerCtx {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            set_process_group(&mut server_cmd);
+            process::set_process_group(&mut server_cmd);
             eprintln!("Spawning server cmd: {server_cmd:?}");
             server = match server_cmd.spawn() {
                 Ok(server) => Some(server),
@@ -474,8 +474,8 @@ fn random_log_file(prefix: &str) -> PathBuf {
 impl Drop for HostManagerCtx {
     /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
-        kill_process_tree(&mut self.server);
+        process::kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.server);
     }
 }
 
@@ -527,7 +527,7 @@ impl ManagerOnlyCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -546,7 +546,7 @@ impl ManagerOnlyCtx {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        set_process_group(&mut server_cmd);
+        process::set_process_group(&mut server_cmd);
         eprintln!("ManagerOnlyCtx: Spawning server cmd: {server_cmd:?}");
         let mut server = server_cmd.spawn().expect("Failed to spawn server");
 
@@ -645,8 +645,8 @@ impl ManagerOnlyCtx {
 impl Drop for ManagerOnlyCtx {
     /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
-        kill_process_tree(&mut self.server);
+        process::kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.server);
     }
 }
 
@@ -702,7 +702,7 @@ impl SshManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("SshManagerCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -881,7 +881,7 @@ impl SshManagerCtx {
 impl Drop for SshManagerCtx {
     /// Kills the manager process. The sshd cleans itself up via its own Drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.manager);
     }
 }
 
@@ -942,7 +942,7 @@ impl SshLaunchCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("SshLaunchCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -1121,7 +1121,7 @@ impl SshLaunchCtx {
 impl Drop for SshLaunchCtx {
     /// Kills the manager process. The sshd cleans itself up via its own Drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.manager);
     }
 }
 

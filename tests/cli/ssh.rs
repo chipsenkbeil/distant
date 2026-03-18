@@ -1,8 +1,10 @@
-//! E2E CLI tests for the SSH backend.
+//! E2E CLI tests for `distant connect ssh://`, `distant launch ssh://`, and
+//! `distant ssh` workflows.
 //!
-//! Tests `distant connect ssh://` and `distant launch ssh://` workflows, plus
-//! filesystem and process operations routed through the SSH plugin. Each test
-//! spawns a real per-test sshd via the test harness.
+//! Filesystem and process operation coverage lives in `parity.rs` (which
+//! parameterizes each operation over Host, SSH, and Docker backends). This
+//! file focuses on SSH-specific connection/launch error paths and the
+//! interactive `distant ssh` command.
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -10,7 +12,14 @@ use std::time::Duration;
 use assert_fs::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::manager::{
+    self, ManagerOnlyCtx, SshLaunchCtx, SshManagerCtx, manager_only_ctx, ssh_launch_ctx,
+    ssh_manager_ctx,
+};
+
+/// Maximum time to wait for a launch command to fail against an unresponsive
+/// SSH server before concluding it is stuck on the handshake.
+const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn test_log_file(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("distant");
@@ -100,7 +109,7 @@ fn launch_ssh_wrong_credentials(manager_only_ctx: ManagerOnlyCtx) {
     let output = manager_only_ctx
         .new_std_cmd(["launch"])
         .arg("--distant")
-        .arg(bin_path())
+        .arg(manager::bin_path())
         .arg("ssh://127.0.0.1:22")
         .arg("--options")
         .arg("identity_files=/nonexistent/key,identities_only=true")
@@ -110,168 +119,6 @@ fn launch_ssh_wrong_credentials(manager_only_ctx: ManagerOnlyCtx) {
     assert!(
         !output.status.success(),
         "launch with bad credentials should fail"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_fs_read_file(ssh_manager_ctx: SshManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-read.txt");
-    file.write_str("ssh read test content").unwrap();
-
-    ssh_manager_ctx
-        .new_assert_cmd(["fs", "read"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout("ssh read test content");
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_fs_write_file(ssh_manager_ctx: SshManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-write.txt");
-
-    ssh_manager_ctx
-        .new_assert_cmd(["fs", "write"])
-        .arg(file.to_str().unwrap())
-        .write_stdin("ssh write test content")
-        .assert()
-        .success();
-
-    // Give the OS time to flush to disk
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    let contents = std::fs::read_to_string(file.path())
-        .expect("Failed to read written file from local filesystem");
-    assert_eq!(
-        contents, "ssh write test content",
-        "File contents should match what was written via SSH backend"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_spawn_process(ssh_manager_ctx: SshManagerCtx) {
-    let output = ssh_manager_ctx
-        .new_std_cmd(["spawn"])
-        .args(["--", "echo", "hello-from-ssh"])
-        .output()
-        .expect("Failed to run spawn command");
-
-    assert!(
-        output.status.success(),
-        "spawn via SSH should succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("hello-from-ssh"),
-        "Expected 'hello-from-ssh' in stdout, got: {stdout}"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_system_info(ssh_manager_ctx: SshManagerCtx) {
-    let output = ssh_manager_ctx
-        .new_std_cmd(["system-info"])
-        .output()
-        .expect("Failed to run system-info command");
-
-    assert!(
-        output.status.success(),
-        "system-info via SSH should succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Family:"),
-        "Expected 'Family:' in system-info output, got: {stdout}"
-    );
-    assert!(
-        stdout.contains("Arch:"),
-        "Expected 'Arch:' in system-info output, got: {stdout}"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_fs_copy(ssh_manager_ctx: SshManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let src = temp.child("copy-src.txt");
-    src.write_str("ssh copy content").unwrap();
-    let dst = temp.child("copy-dst.txt");
-
-    ssh_manager_ctx
-        .new_assert_cmd(["fs", "copy"])
-        .arg(src.to_str().unwrap())
-        .arg(dst.to_str().unwrap())
-        .assert()
-        .success();
-
-    let contents =
-        std::fs::read_to_string(dst.path()).expect("Failed to read copied file from filesystem");
-    assert_eq!(
-        contents, "ssh copy content",
-        "Copied file contents should match the source"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_fs_remove(ssh_manager_ctx: SshManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("remove-me.txt");
-    file.write_str("to be removed").unwrap();
-    assert!(file.path().exists(), "file should exist before remove");
-
-    ssh_manager_ctx
-        .new_assert_cmd(["fs", "remove"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success();
-
-    assert!(
-        !file.path().exists(),
-        "file should be gone after remove via SSH backend"
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_shell_with_command(ssh_manager_ctx: SshManagerCtx) {
-    let output = ssh_manager_ctx
-        .new_std_cmd(["spawn"])
-        .args(["--", "ls", "/tmp"])
-        .output()
-        .expect("Failed to run spawn -- ls /tmp via SSH");
-
-    assert!(
-        output.status.success(),
-        "spawn -- ls /tmp via SSH should succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[rstest]
-#[test_log::test]
-fn ssh_invalid_host(manager_only_ctx: ManagerOnlyCtx) {
-    let output = manager_only_ctx
-        .new_std_cmd(["connect"])
-        .arg("ssh://nonexistent.invalid:22")
-        .arg("--options")
-        .arg("identities_only=true")
-        .output()
-        .expect("Failed to run connect command");
-
-    assert!(
-        !output.status.success(),
-        "connect to nonexistent SSH host should fail"
     );
 }
 
@@ -295,10 +142,10 @@ async fn launch_ssh_connection_timeout() {
 
     // Run `distant launch` against the unresponsive "SSH server".
     // The SSH handshake will never begin because the server never sends data.
-    let mut child = tokio::process::Command::new(bin_path())
+    let mut child = tokio::process::Command::new(manager::bin_path())
         .arg("launch")
         .arg("--distant")
-        .arg(bin_path())
+        .arg(manager::bin_path())
         .arg(format!("ssh://127.0.0.1:{port}"))
         .arg("--options")
         .arg("identities_only=true")
@@ -320,9 +167,9 @@ async fn launch_ssh_connection_timeout() {
         .expect("failed to spawn launch command");
 
     // The SSH handshake should fail or the process should hang. Either way,
-    // the launch must NOT succeed. We give it 15 seconds to fail on its own
+    // the launch must NOT succeed. We give it enough time to fail on its own
     // (russh has internal timeouts); if it hasn't exited by then, we kill it.
-    match tokio::time::timeout(Duration::from_secs(15), child.wait()).await {
+    match tokio::time::timeout(LAUNCH_TIMEOUT, child.wait()).await {
         Ok(result) => {
             let status = result.expect("failed to wait on child");
             assert!(
@@ -331,7 +178,7 @@ async fn launch_ssh_connection_timeout() {
             );
         }
         Err(_) => {
-            // The process is still running after 15s — it's stuck on
+            // The process is still running after the timeout -- it's stuck on
             // the SSH handshake, which confirms the timeout scenario.
             child.kill().await.ok();
         }
@@ -343,7 +190,7 @@ async fn ssh_shell_interactive() {
     use distant_test_harness::sshd;
 
     if which::which("sshd").is_err() {
-        eprintln!("sshd not available — skipping test");
+        eprintln!("sshd not available -- skipping test");
         return;
     }
 
@@ -375,7 +222,7 @@ async fn ssh_shell_interactive() {
     // creating an SSH connection and opening a PTY session.
     //
     // This tests the full interactive I/O path through `distant ssh` (which
-    // is separate from `distant shell` — it handles the SSH connect flow
+    // is separate from `distant shell` -- it handles the SSH connect flow
     // itself). The pty-echo binary echoes bytes back through the PTY,
     // proving bidirectional interactive communication works.
     let pty_echo = distant_test_harness::exe::build_pty_echo()
@@ -383,7 +230,7 @@ async fn ssh_shell_interactive() {
         .expect("Failed to build pty-echo");
     let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
-    let bin = bin_path();
+    let bin = manager::bin_path();
     let args = vec![
         "ssh".to_string(),
         format!("{}@127.0.0.1:{}", *sshd::USERNAME, port),
