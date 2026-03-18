@@ -17,8 +17,11 @@ use portable_pty::{
     Child as PortablePtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system,
 };
 
+use rstest::*;
+
+use distant_test_harness::backend::{Backend, BackendCtx};
 use distant_test_harness::exe;
-use distant_test_harness::manager::HostManagerCtx;
+use distant_test_harness::skip_if_no_backend;
 
 /// Default timeout for `expect()` calls waiting for PTY output.
 const EXPECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -227,7 +230,7 @@ fn find_subsequence_from(haystack: &[u8], needle: &[u8], start: usize) -> Option
 }
 
 /// Builds cmd_parts for `distant shell` with extra args.
-fn shell_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
+fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["shell"]);
     for arg in extra_args {
         args.push(arg.to_string());
@@ -236,7 +239,7 @@ fn shell_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<St
 }
 
 /// Builds cmd_parts for `distant spawn` with extra args.
-fn spawn_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
+fn spawn_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["spawn"]);
     for arg in extra_args {
         args.push(arg.to_string());
@@ -247,9 +250,13 @@ fn spawn_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<St
 /// Verifies that `distant shell -- pty-echo` echoes input back through the
 /// PTY channel. Sends "abc" and expects to receive "abc" within the timeout.
 /// A timeout failure indicates the PTY relay is not passing data through.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_echo_input_through_pty() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_echo_input_through_pty(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -265,9 +272,13 @@ async fn shell_should_echo_input_through_pty() {
 /// Verifies that `distant shell -- pty-interactive` displays a prompt.
 /// Spawns the interactive helper and expects the `$ ` prompt string within
 /// the timeout. Failure indicates the PTY is not relaying server output.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_display_interactive_prompt() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_display_interactive_prompt(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -284,9 +295,13 @@ async fn shell_should_display_interactive_prompt() {
 /// Verifies that sending EOF (Ctrl+D on Unix, "exit" command on Windows)
 /// causes `pty-interactive` to exit cleanly with code 0. On Unix, retries
 /// Ctrl+D up to 5 times to handle line-discipline buffering edge cases.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_exit_on_eof_signal() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_exit_on_eof_signal(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -324,9 +339,13 @@ async fn shell_should_exit_on_eof_signal() {
 /// Verifies that `distant spawn --pty -- pty-echo` allocates a PTY for the
 /// spawned process. Sends "hello" and expects the echo back, confirming that
 /// the `--pty` flag enables PTY allocation in the spawn subcommand.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn spawn_should_support_pty_flag() {
-    let ctx = HostManagerCtx::start();
+async fn spawn_should_support_pty_flag(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -342,9 +361,13 @@ async fn spawn_should_support_pty_flag() {
 /// Verifies that `distant shell --predict off` runs a simple echo command
 /// and exits with code 0. Uses platform-specific echo invocations (`echo`
 /// on Unix, `cmd /c echo` on Windows).
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_run_command_with_predict_off() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_run_command_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     // On Windows, `echo` is a cmd.exe built-in (no echo.exe), so we wrap it.
     #[cfg(unix)]
@@ -372,9 +395,13 @@ async fn shell_should_run_command_with_predict_off() {
 /// to the server-side process. Sends Ctrl+C to `pty-interactive`, then
 /// confirms the shell re-displays a fresh prompt, indicating the interrupt
 /// was handled without crashing.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_handle_ctrl_c_interrupt() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -401,9 +428,13 @@ async fn shell_should_handle_ctrl_c_interrupt() {
 /// Runs `pty-password` with `--predict on`, types a password, and confirms
 /// authentication succeeds. The prediction engine should detect the echo
 /// suppression and not locally echo the password characters.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_suppress_predicted_password_echo() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_suppress_predicted_password_echo(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -422,9 +453,13 @@ async fn shell_should_suppress_predicted_password_echo() {
 /// Verifies that `distant shell --predict on` runs a simple echo command
 /// and exits with code 0. Uses platform-specific echo invocations (`echo`
 /// on Unix, `cmd /c echo` on Windows).
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_run_command_with_predict_on() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_run_command_with_predict_on(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     #[cfg(unix)]
     let extra_args: &[&str] = &["--predict", "on", "--", "echo", "predict-on-ok"];
@@ -450,9 +485,13 @@ async fn shell_should_run_command_with_predict_on() {
 /// Verifies that password entry works correctly with prediction disabled.
 /// Runs `pty-password` with `--predict off` and confirms authentication
 /// succeeds, ensuring no prediction interference with echo suppression.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_not_echo_locally_with_predict_off() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -475,9 +514,13 @@ async fn shell_should_not_echo_locally_with_predict_off() {
 /// from local prediction. Sends characters one at a time through `pty-echo`
 /// and confirms each is echoed back, proving the server relay path works
 /// without local prediction.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_echo_from_server_only_with_predict_off() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_echo_from_server_only_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -508,9 +551,13 @@ async fn shell_should_echo_from_server_only_with_predict_off() {
 /// Verifies that with `--predict on`, characters are echoed immediately
 /// (locally predicted) before server confirmation. Sends a string through
 /// `pty-echo` and expects it back within the timeout.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_echo_immediately_with_predict_on() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_echo_immediately_with_predict_on(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -530,9 +577,13 @@ async fn shell_should_echo_immediately_with_predict_on() {
 /// mismatch between predicted and actual output. The engine should detect
 /// this, suppress further predictions, transmit the password, and resume
 /// normal operation after authentication.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_correct_prediction_mismatch() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_correct_prediction_mismatch(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -555,9 +606,13 @@ async fn shell_should_correct_prediction_mismatch() {
 /// `distant shell` to the remote process. Resizes the PTY to 50x132, then
 /// checks that the remote command (`stty size` on Unix, `mode con` on
 /// Windows) reports 50 rows after a delay.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn spawn_should_propagate_pty_resize() {
-    let ctx = HostManagerCtx::start();
+async fn spawn_should_propagate_pty_resize(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     let delay_str = RESIZE_DELAY_SECS.to_string();
 
@@ -602,9 +657,13 @@ async fn spawn_should_propagate_pty_resize() {
 /// `distant shell`. Enters alternate screen (smcup), exits it (rmcup),
 /// then prints a marker. The marker appearing confirms the PTY relay
 /// handles mode-switching escape sequences correctly.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_enter_alternate_screen() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_enter_alternate_screen(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     // Verify that alternate screen mode entry/exit works through distant shell.
     // Text inside the alternate screen is discarded on rmcup, so the marker
@@ -642,9 +701,13 @@ async fn shell_should_enter_alternate_screen() {
 /// discarded when returning to the main buffer. Enters alternate screen,
 /// prints "IN_ALT", exits alternate screen, then prints "RESTORED".
 /// Expects "RESTORED" to confirm the main buffer is restored correctly.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn shell_should_exit_alternate_screen() {
-    let ctx = HostManagerCtx::start();
+async fn shell_should_exit_alternate_screen(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     // Enter alt screen, print content (discarded on rmcup), exit alt screen,
     // then print a marker in the main buffer.
