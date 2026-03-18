@@ -17,7 +17,6 @@ mod manager;
 mod parity;
 mod pty;
 mod server;
-mod service;
 mod ssh;
 mod tcp_echo_server;
 mod tunnel;
