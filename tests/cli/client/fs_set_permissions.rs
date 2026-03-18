@@ -13,7 +13,7 @@ use distant_test_harness::manager::*;
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_set_file_readonly_with_octal_mode(ctx: ManagerCtx) {
+fn should_set_file_readonly_with_octal_mode(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("hello").unwrap();
@@ -32,7 +32,7 @@ fn should_set_file_readonly_with_octal_mode(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_set_file_permissions_with_symbolic_mode(ctx: ManagerCtx) {
+fn should_set_file_permissions_with_symbolic_mode(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("hello").unwrap();
@@ -52,7 +52,7 @@ fn should_set_file_permissions_with_symbolic_mode(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_set_permissions_recursively(ctx: ManagerCtx) {
+fn should_set_permissions_recursively(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
@@ -77,7 +77,7 @@ fn should_set_permissions_recursively(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_fail_if_path_does_not_exist(ctx: ManagerCtx) {
+fn should_fail_if_path_does_not_exist(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let missing = temp.child("nonexistent");
 
@@ -90,7 +90,7 @@ fn should_fail_if_path_does_not_exist(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_readonly_keyword(ctx: ManagerCtx) {
+fn should_support_readonly_keyword(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("hello").unwrap();
@@ -111,7 +111,7 @@ fn should_support_readonly_keyword(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_notreadonly_keyword(ctx: ManagerCtx) {
+fn should_support_notreadonly_keyword(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("hello").unwrap();
@@ -137,7 +137,7 @@ fn should_support_notreadonly_keyword(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_fail_on_invalid_mode_string(ctx: ManagerCtx) {
+fn should_fail_on_invalid_mode_string(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("test-file");
     file.write_str("hello").unwrap();

@@ -9,7 +9,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_true_if_exists(ctx: ManagerCtx) {
+fn should_output_true_if_exists(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create file
@@ -26,7 +26,7 @@ fn should_output_true_if_exists(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_false_if_not_exists(ctx: ManagerCtx) {
+fn should_output_false_if_not_exists(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file
@@ -42,7 +42,7 @@ fn should_output_false_if_not_exists(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_true_for_directory(ctx: ManagerCtx) {
+fn should_output_true_for_directory(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -58,7 +58,7 @@ fn should_output_true_for_directory(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_always_exit_zero_for_false(ctx: ManagerCtx) {
+fn should_always_exit_zero_for_false(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("nonexistent");
 

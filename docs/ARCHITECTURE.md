@@ -1383,7 +1383,7 @@ flowchart TB
         P1_Transport <--> P1_Server
     end
 
-    subgraph "Pattern 2: Full CLI (ManagerCtx)"
+    subgraph "Pattern 2: Full CLI (HostManagerCtx)"
         P2_Test["Test Process"]
         P2_Manager["distant manager listen<br/>(child process)"]
         P2_Server["distant server listen<br/>(child process)"]
@@ -1417,7 +1417,7 @@ flowchart TB
 - **Scope:** API-level tests without CLI or subprocess overhead
 - **Cleanup:** `_done_tx` channel drop signals server shutdown
 
-### Pattern 2: Full CLI (`ManagerCtx`)
+### Pattern 2: Full CLI (`HostManagerCtx`)
 
 - **Fixtures:** `manager::ctx()` (auto-connects), `manager_only_ctx()` (no
   auto-connect, exposes credentials)

@@ -99,7 +99,7 @@ distant processes (manager, server, connections):
 
 | Context Type | Backend | How It Connects |
 |-------------|---------|----------------|
-| `ManagerCtx` | Host (local) | `distant connect distant://...` |
+| `HostManagerCtx` | Host (local) | `distant connect distant://...` |
 | `ManagerOnlyCtx` | None (manager only) | No connection — for testing error paths |
 | `SshManagerCtx` | SSH plugin | `distant connect ssh://localhost:{port}` via per-test sshd |
 | `SshLaunchCtx` | SSH plugin | `distant launch ssh://localhost:{port}` via per-test sshd |

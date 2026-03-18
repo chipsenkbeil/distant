@@ -618,13 +618,13 @@ async fn spawn_with_pty(#[case] backend: Backend) {
 // ---------------------------------------------------------------------------
 
 /// Tests `distant kill` by killing the active connection and verifying that
-/// subsequent commands fail. Uses ManagerCtx directly (not BackendCtx)
+/// subsequent commands fail. Uses HostManagerCtx directly (not BackendCtx)
 /// because we need the connection to be killable and then verify failure.
 #[test_log::test]
 fn kill_connection() {
     use distant_test_harness::manager;
 
-    let ctx = manager::ManagerCtx::start();
+    let ctx = manager::HostManagerCtx::start();
 
     // First verify the connection works
     let output = ctx

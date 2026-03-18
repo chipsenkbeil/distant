@@ -5,7 +5,7 @@
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use distant_test_harness::manager::bin_path;
+use distant_test_harness::manager;
 
 #[cfg(unix)]
 #[test]
@@ -15,7 +15,7 @@ fn should_listen_on_custom_unix_socket() {
     let temp = assert_fs::TempDir::new().unwrap();
     let socket_path = temp.child("test.sock");
 
-    let mut child = Command::new(bin_path())
+    let mut child = Command::new(manager::bin_path())
         .args(["manager", "listen", "--unix-socket"])
         .arg(socket_path.path())
         .stdout(Stdio::piped())
@@ -50,7 +50,7 @@ fn should_listen_on_custom_unix_socket() {
 fn should_listen_on_custom_windows_pipe() {
     let pipe_name = format!("distant_test_listen_{}", std::process::id());
 
-    let mut child = Command::new(bin_path())
+    let mut child = Command::new(manager::bin_path())
         .args(["manager", "listen", "--windows-pipe", &pipe_name])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -84,7 +84,7 @@ fn should_fail_on_duplicate_socket() {
     let socket_path = temp.child("test.sock");
 
     // Start first manager
-    let mut child1 = Command::new(bin_path())
+    let mut child1 = Command::new(manager::bin_path())
         .args(["manager", "listen", "--unix-socket"])
         .arg(socket_path.path())
         .stdout(Stdio::piped())
@@ -102,7 +102,7 @@ fn should_fail_on_duplicate_socket() {
     }
 
     // Start second manager on same socket — should fail
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "listen", "--unix-socket"])
         .arg(socket_path.path())
         .stdout(Stdio::piped())
@@ -125,7 +125,7 @@ fn should_fail_on_duplicate_pipe() {
     let pipe_name = format!("distant_test_dup_{}", std::process::id());
 
     // Start first manager
-    let mut child1 = Command::new(bin_path())
+    let mut child1 = Command::new(manager::bin_path())
         .args(["manager", "listen", "--windows-pipe", &pipe_name])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -136,7 +136,7 @@ fn should_fail_on_duplicate_pipe() {
     std::thread::sleep(Duration::from_millis(500));
 
     // Start second manager on same pipe — should fail
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "listen", "--windows-pipe", &pipe_name])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

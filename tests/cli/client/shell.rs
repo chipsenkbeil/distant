@@ -22,12 +22,12 @@ use rstest::*;
 
 use distant_test_harness::manager::*;
 
-/// Builds a `std::process::Command` from ManagerCtx for use with `Session::spawn`.
+/// Builds a `std::process::Command` from HostManagerCtx for use with `Session::spawn`.
 ///
 /// We use `Session::spawn(Command)` rather than `expectrl::spawn(string)` because
 /// the string-based API uses a regex tokenizer that doesn't strip shell quotes,
 /// causing arguments with spaces or special characters to be mangled.
-fn build_shell_command(ctx: &ManagerCtx, extra_args: &[&str]) -> Command {
+fn build_shell_command(ctx: &HostManagerCtx, extra_args: &[&str]) -> Command {
     let (bin, mut args) = ctx.cmd_parts(["shell"]);
 
     for arg in extra_args {
@@ -74,7 +74,7 @@ where
 
 #[rstest]
 #[test_log::test]
-fn should_run_single_command_via_shell(ctx: ManagerCtx) {
+fn should_run_single_command_via_shell(ctx: HostManagerCtx) {
     #[cfg(unix)]
     {
         // On BSDs (kqueue-based), PTY slave output can be discarded before the
@@ -126,7 +126,7 @@ fn should_run_single_command_via_shell(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_forward_exit_code(ctx: ManagerCtx) {
+fn should_forward_exit_code(ctx: HostManagerCtx) {
     #[cfg(unix)]
     {
         let cmd = build_shell_command(&ctx, &["--", "false"]);
@@ -156,7 +156,7 @@ fn should_forward_exit_code(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_current_dir(ctx: ManagerCtx) {
+fn should_support_current_dir(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let temp_str = temp.path().to_str().unwrap();
 
@@ -236,7 +236,7 @@ fn should_support_current_dir(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_environment(ctx: ManagerCtx) {
+fn should_support_environment(ctx: HostManagerCtx) {
     #[cfg(unix)]
     {
         let env_args = vec!["--environment", "FOO=\"bar\"", "--", "env"];

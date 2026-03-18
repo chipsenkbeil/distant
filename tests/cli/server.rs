@@ -7,11 +7,11 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use distant_test_harness::manager::bin_path;
+use distant_test_harness::manager;
 
 #[test]
 fn server_listen_should_output_credentials_and_exit() {
-    let mut child = Command::new(bin_path())
+    let mut child = Command::new(manager::bin_path())
         .args(["server", "listen", "--shutdown", "after=1"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -54,7 +54,7 @@ fn server_listen_should_output_credentials_and_exit() {
 
 #[test]
 fn server_listen_custom_port() {
-    let mut child = Command::new(bin_path())
+    let mut child = Command::new(manager::bin_path())
         .args(["server", "listen", "--port", "0", "--shutdown", "after=1"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -108,7 +108,7 @@ fn server_listen_custom_port() {
 
 #[test]
 fn server_listen_help_should_show_options() {
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["server", "listen", "--help"])
         .output()
         .expect("Failed to run server listen --help");

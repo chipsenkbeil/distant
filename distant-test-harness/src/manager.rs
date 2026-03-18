@@ -31,7 +31,7 @@ const CHANNEL_BUFFER: usize = 100;
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
-    pub ctx: ManagerCtx,
+    pub ctx: HostManagerCtx,
 
     #[deref]
     #[deref_mut]
@@ -39,13 +39,13 @@ pub struct CtxCommand<T> {
 }
 
 /// Context for some listening distant server
-pub struct ManagerCtx {
+pub struct HostManagerCtx {
     manager: Child,
     server: Child,
     socket_or_pipe: String,
 }
 
-impl ManagerCtx {
+impl HostManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
@@ -471,7 +471,7 @@ fn random_log_file(prefix: &str) -> PathBuf {
     ))
 }
 
-impl Drop for ManagerCtx {
+impl Drop for HostManagerCtx {
     /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
         kill_process_tree(&mut self.manager);
@@ -1136,24 +1136,24 @@ pub fn manager_only_ctx() -> ManagerOnlyCtx {
 }
 
 #[fixture]
-pub fn ctx() -> ManagerCtx {
-    ManagerCtx::start()
+pub fn ctx() -> HostManagerCtx {
+    HostManagerCtx::start()
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: ManagerCtx) -> CtxCommand<Command> {
+pub fn lsp_cmd(ctx: HostManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: ManagerCtx) -> CtxCommand<StdCommand> {
+pub fn action_std_cmd(ctx: HostManagerCtx) -> CtxCommand<StdCommand> {
     let cmd = ctx.new_std_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn api_process(ctx: ManagerCtx) -> CtxCommand<ApiProcess> {
+pub fn api_process(ctx: HostManagerCtx) -> CtxCommand<ApiProcess> {
     let child = ctx
         .new_std_cmd(vec!["api"])
         .spawn()

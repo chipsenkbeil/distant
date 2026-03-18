@@ -3,11 +3,11 @@
 
 use std::process::{Command, Stdio};
 
-use distant_test_harness::manager::bin_path;
+use distant_test_harness::manager;
 
 #[test]
 fn manager_info_does_not_exist() {
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "info"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -22,7 +22,7 @@ fn manager_info_does_not_exist() {
 
 #[test]
 fn manager_list_does_not_exist() {
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "list"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -37,7 +37,7 @@ fn manager_list_does_not_exist() {
 
 #[test]
 fn manager_kill_does_not_exist() {
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "kill"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -52,7 +52,7 @@ fn manager_kill_does_not_exist() {
 
 #[test]
 fn manager_select_does_not_exist() {
-    let output = Command::new(bin_path())
+    let output = Command::new(manager::bin_path())
         .args(["manager", "select"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

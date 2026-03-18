@@ -7,11 +7,11 @@ use std::process::Command;
 
 use assert_fs::prelude::*;
 
-use distant_test_harness::manager::{self, ManagerCtx};
+use distant_test_harness::manager::{self, HostManagerCtx};
 
 /// Build a command with custom log settings, bypassing the default
 /// `--log-file` / `--log-level` injected by `new_std_cmd`.
-fn build_cmd_with_log(ctx: &ManagerCtx, log_level: &str, log_file: &str) -> Command {
+fn build_cmd_with_log(ctx: &HostManagerCtx, log_level: &str, log_file: &str) -> Command {
     let mut cmd = Command::new(manager::bin_path());
     cmd.arg("version")
         .arg("--log-file")
@@ -30,7 +30,7 @@ fn build_cmd_with_log(ctx: &ManagerCtx, log_level: &str, log_file: &str) -> Comm
 
 #[tokio::test]
 async fn log_level_trace_produces_verbose_log() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let temp = assert_fs::TempDir::new().unwrap();
     let log_file = temp.child("trace.log");
 
@@ -54,7 +54,7 @@ async fn log_level_trace_produces_verbose_log() {
 
 #[tokio::test]
 async fn log_level_error_produces_minimal_log() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let temp = assert_fs::TempDir::new().unwrap();
     let trace_log = temp.child("trace.log");
     let error_log = temp.child("error.log");
@@ -84,7 +84,7 @@ async fn log_level_error_produces_minimal_log() {
 
 #[tokio::test]
 async fn log_file_is_created_at_specified_path() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let temp = assert_fs::TempDir::new().unwrap();
     let log_file = temp.child("custom.log");
 
@@ -113,7 +113,7 @@ async fn log_file_is_created_at_specified_path() {
 async fn unix_socket_custom_path() {
     // The test harness already uses --unix-socket for isolation. A
     // successful version command proves the custom socket works.
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let output = ctx
         .new_std_cmd(["version"])

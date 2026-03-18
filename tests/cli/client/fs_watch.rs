@@ -38,7 +38,7 @@ fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_single_file(ctx: ManagerCtx) {
+fn should_support_watching_a_single_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
@@ -91,7 +91,7 @@ fn should_support_watching_a_single_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_watching_a_directory_recursively(ctx: ManagerCtx) {
+fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -151,7 +151,7 @@ fn should_support_watching_a_directory_recursively(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
+fn yield_an_error_when_fails(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 
@@ -181,7 +181,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_only_filter(ctx: ManagerCtx) {
+fn should_support_only_filter(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("watched");
     dir.create_dir_all().unwrap();
@@ -223,7 +223,7 @@ fn should_support_only_filter(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_except_filter(ctx: ManagerCtx) {
+fn should_support_except_filter(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
@@ -264,7 +264,7 @@ fn should_support_except_filter(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_report_file_creation_in_watched_directory(ctx: ManagerCtx) {
+fn should_report_file_creation_in_watched_directory(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("watched");
     dir.create_dir_all().unwrap();

@@ -57,7 +57,7 @@ fn parse_tunnel_started(output: &str) -> (u32, u16) {
 
 #[tokio::test]
 async fn tunnel_open_forwards_tcp_data() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -139,7 +139,7 @@ async fn tunnel_open_forwards_tcp_data() {
 
 #[tokio::test]
 async fn tunnel_open_prints_local_port() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -213,7 +213,7 @@ fn tunnel_open_no_connection(manager_only_ctx: ManagerOnlyCtx) {
 
 #[rstest]
 #[test_log::test]
-fn tunnel_list_empty(ctx: ManagerCtx) {
+fn tunnel_list_empty(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["tunnel", "list"])
         .output()
@@ -234,7 +234,7 @@ fn tunnel_list_empty(ctx: ManagerCtx) {
 
 #[tokio::test]
 async fn tunnel_list_shows_active_tunnels() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -305,7 +305,7 @@ async fn tunnel_list_shows_active_tunnels() {
 
 #[tokio::test]
 async fn tunnel_close_by_id() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -373,7 +373,7 @@ async fn tunnel_close_by_id() {
 
 #[rstest]
 #[test_log::test]
-fn tunnel_close_invalid_id(ctx: ManagerCtx) {
+fn tunnel_close_invalid_id(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["tunnel", "close"])
         .arg("99999")
@@ -388,7 +388,7 @@ fn tunnel_close_invalid_id(ctx: ManagerCtx) {
 
 #[tokio::test]
 async fn tunnel_open_specific_local_port() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -449,7 +449,7 @@ async fn tunnel_open_specific_local_port() {
 
 #[tokio::test]
 async fn tunnel_open_invalid_address() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     // 192.0.2.1 is TEST-NET-1 (RFC 5737), unreachable by design.
     // The tunnel is created lazily — it binds locally but only connects to the remote
@@ -482,7 +482,7 @@ async fn tunnel_open_invalid_address() {
 
 #[tokio::test]
 async fn tunnel_listen_forwards_tcp_data() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -568,7 +568,7 @@ async fn tunnel_listen_forwards_tcp_data() {
 
 #[tokio::test]
 async fn tunnel_listen_prints_remote_port() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -641,7 +641,7 @@ fn tunnel_listen_no_connection(manager_only_ctx: ManagerOnlyCtx) {
 
 #[rstest]
 #[test_log::test]
-fn tunnel_listen_invalid_address(ctx: ManagerCtx) {
+fn tunnel_listen_invalid_address(ctx: HostManagerCtx) {
     // Attempt to listen on a privileged port (port 1) which should fail
     let output = ctx
         .new_std_cmd(["tunnel", "listen"])

@@ -13,7 +13,7 @@ use distant_test_harness::utils::predicates_ext::TrimmedLinesMatchPredicate;
 
 #[rstest]
 #[test_log::test]
-fn should_output_capabilities(ctx: ManagerCtx) {
+fn should_output_capabilities(ctx: HostManagerCtx) {
     // Because all of our crates have the same version, we can expect it to match
     let version: semver::Version = env!("CARGO_PKG_VERSION").parse().unwrap();
 
@@ -59,7 +59,7 @@ fn should_output_capabilities(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_json_format_flag(ctx: ManagerCtx) {
+fn should_support_json_format_flag(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["version", "--format", "json"])
         .stdin(Stdio::null())

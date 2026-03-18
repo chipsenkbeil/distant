@@ -9,7 +9,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_connections_in_json_mode(ctx: ManagerCtx) {
+fn should_output_connections_in_json_mode(ctx: HostManagerCtx) {
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
         .assert()
@@ -29,7 +29,7 @@ fn should_output_connections_in_json_mode(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_detail_for_specific_connection(ctx: ManagerCtx) {
+fn should_output_detail_for_specific_connection(ctx: HostManagerCtx) {
     // First get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])

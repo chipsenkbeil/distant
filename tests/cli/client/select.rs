@@ -9,7 +9,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_select_connection_by_id(ctx: ManagerCtx) {
+fn should_select_connection_by_id(ctx: HostManagerCtx) {
     // Get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
@@ -41,7 +41,7 @@ fn should_select_connection_by_id(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_select_in_json_format(ctx: ManagerCtx) {
+fn should_select_in_json_format(ctx: HostManagerCtx) {
     // Spawn select --format json (without an ID, so it prompts via JSON)
     let child = ctx
         .new_std_cmd(vec!["select", "--format", "json"])

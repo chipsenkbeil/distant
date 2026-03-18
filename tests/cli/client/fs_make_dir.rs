@@ -11,7 +11,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_report_ok_when_done(ctx: ManagerCtx) {
+fn should_report_ok_when_done(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
 
@@ -28,7 +28,7 @@ fn should_report_ok_when_done(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_creating_missing_parent_directories_if_specified(ctx: ManagerCtx) {
+fn should_support_creating_missing_parent_directories_if_specified(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir1").child("dir2");
 
@@ -45,7 +45,7 @@ fn should_support_creating_missing_parent_directories_if_specified(ctx: ManagerC
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
+fn yield_an_error_when_fails(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("missing-dir").child("dir");
 
@@ -62,7 +62,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_fail_when_already_exists(ctx: ManagerCtx) {
+fn should_fail_when_already_exists(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("existing-dir");
     dir.create_dir_all().unwrap();
@@ -76,7 +76,7 @@ fn should_fail_when_already_exists(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_succeed_when_already_exists_with_all(ctx: ManagerCtx) {
+fn should_succeed_when_already_exists_with_all(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("existing-dir");
     dir.create_dir_all().unwrap();

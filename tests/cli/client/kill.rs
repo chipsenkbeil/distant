@@ -9,7 +9,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_kill_connection_by_id(ctx: ManagerCtx) {
+fn should_kill_connection_by_id(ctx: HostManagerCtx) {
     // Get the connection ID from JSON status
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
@@ -54,7 +54,7 @@ fn should_kill_connection_by_id(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_kill_in_json_format(ctx: ManagerCtx) {
+fn should_kill_in_json_format(ctx: HostManagerCtx) {
     // Get the connection ID from JSON status
     let status_output = ctx
         .new_std_cmd(vec!["status", "--format", "json"])
@@ -104,7 +104,7 @@ fn should_kill_in_json_format(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_fail_with_invalid_id(ctx: ManagerCtx) {
+fn should_fail_with_invalid_id(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(vec!["kill"])
         .arg("99999")

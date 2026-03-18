@@ -17,7 +17,7 @@ that is a file's contents
 
 #[rstest]
 #[test_log::test]
-fn should_output_metadata_for_file(ctx: ManagerCtx) {
+fn should_output_metadata_for_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -40,7 +40,7 @@ fn should_output_metadata_for_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_metadata_for_directory(ctx: ManagerCtx) {
+fn should_output_metadata_for_directory(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -63,7 +63,7 @@ fn should_output_metadata_for_directory(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
+fn should_support_including_a_canonicalized_path(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -93,7 +93,7 @@ fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_resolving_file_type_of_symlink(ctx: ManagerCtx) {
+fn should_support_resolving_file_type_of_symlink(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");
@@ -119,7 +119,7 @@ fn should_support_resolving_file_type_of_symlink(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
+fn yield_an_error_when_fails(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Don't create file
@@ -137,7 +137,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_output_unix_permissions(ctx: ManagerCtx) {
+fn should_output_unix_permissions(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let file = temp.child("file");

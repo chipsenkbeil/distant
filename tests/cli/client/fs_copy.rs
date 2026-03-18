@@ -17,7 +17,7 @@ that is a file's contents
 
 #[rstest]
 #[test_log::test]
-fn should_support_copying_file(ctx: ManagerCtx) {
+fn should_support_copying_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("file");
@@ -38,7 +38,7 @@ fn should_support_copying_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_copying_nonempty_directory(ctx: ManagerCtx) {
+fn should_support_copying_nonempty_directory(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Make a non-empty directory
@@ -63,7 +63,7 @@ fn should_support_copying_nonempty_directory(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
+fn yield_an_error_when_fails(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let src = temp.child("dir");

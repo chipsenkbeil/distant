@@ -22,7 +22,7 @@ const SEARCH_RESULTS_REGEX: &str = indoc! {r"
 
 #[rstest]
 #[test_log::test]
-fn should_search_filesystem_using_query(ctx: ManagerCtx) {
+fn should_search_filesystem_using_query(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file1.txt").write_str("some file text").unwrap();
     root.child("file2.txt")
@@ -60,7 +60,7 @@ fn should_search_filesystem_using_query(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_target_path(ctx: ManagerCtx) {
+fn should_support_target_path(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("matching_name.txt")
         .write_str("irrelevant")
@@ -88,7 +88,7 @@ fn should_support_target_path(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_include_filter(ctx: ManagerCtx) {
+fn should_support_include_filter(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file.txt").write_str("hello world").unwrap();
     root.child("file.log").write_str("hello world").unwrap();
@@ -114,7 +114,7 @@ fn should_support_include_filter(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_exclude_filter(ctx: ManagerCtx) {
+fn should_support_exclude_filter(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("keep.txt").write_str("hello world").unwrap();
     root.child("skip.txt").write_str("hello world").unwrap();
@@ -140,7 +140,7 @@ fn should_support_exclude_filter(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_limit_option(ctx: ManagerCtx) {
+fn should_support_limit_option(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("a.txt").write_str("match here").unwrap();
     root.child("b.txt").write_str("match here").unwrap();
@@ -168,7 +168,7 @@ fn should_support_limit_option(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_max_depth_option(ctx: ManagerCtx) {
+fn should_support_max_depth_option(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("top.txt").write_str("findme").unwrap();
     let sub = root.child("sub");
@@ -196,7 +196,7 @@ fn should_support_max_depth_option(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_support_upward_search(ctx: ManagerCtx) {
+fn should_support_upward_search(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("marker.txt").write_str("anchor").unwrap();
     let sub = root.child("sub");
@@ -220,7 +220,7 @@ fn should_support_upward_search(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_return_no_results_for_nonmatching_pattern(ctx: ManagerCtx) {
+fn should_return_no_results_for_nonmatching_pattern(ctx: HostManagerCtx) {
     let root = assert_fs::TempDir::new().unwrap();
     root.child("file.txt").write_str("hello world").unwrap();
 

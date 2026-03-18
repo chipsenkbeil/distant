@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 use distant_test_harness::exe;
-use distant_test_harness::manager::ManagerCtx;
+use distant_test_harness::manager::HostManagerCtx;
 
 /// Cross-platform PTY session for testing.
 ///
@@ -205,7 +205,7 @@ fn find_subsequence_from(haystack: &[u8], needle: &[u8], start: usize) -> Option
 }
 
 /// Builds cmd_parts for `distant shell` with extra args.
-fn shell_cmd_args(ctx: &ManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
+fn shell_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["shell"]);
     for arg in extra_args {
         args.push(arg.to_string());
@@ -214,7 +214,7 @@ fn shell_cmd_args(ctx: &ManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String
 }
 
 /// Builds cmd_parts for `distant spawn` with extra args.
-fn spawn_cmd_args(ctx: &ManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
+fn spawn_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["spawn"]);
     for arg in extra_args {
         args.push(arg.to_string());
@@ -224,7 +224,7 @@ fn spawn_cmd_args(ctx: &ManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<String
 
 #[tokio::test]
 async fn shell_pty_echo_roundtrip() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -239,7 +239,7 @@ async fn shell_pty_echo_roundtrip() {
 
 #[tokio::test]
 async fn shell_pty_interactive_prompt() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -255,7 +255,7 @@ async fn shell_pty_interactive_prompt() {
 
 #[tokio::test]
 async fn shell_pty_interactive_exit() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -292,7 +292,7 @@ async fn shell_pty_interactive_exit() {
 
 #[tokio::test]
 async fn spawn_pty_flag() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -307,7 +307,7 @@ async fn spawn_pty_flag() {
 
 #[tokio::test]
 async fn predict_off_runs_command() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     // On Windows, `echo` is a cmd.exe built-in (no echo.exe), so we wrap it.
     #[cfg(unix)]
@@ -333,7 +333,7 @@ async fn predict_off_runs_command() {
 
 #[tokio::test]
 async fn shell_pty_ctrl_c() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
         .expect("Failed to build pty-interactive");
@@ -358,7 +358,7 @@ async fn shell_pty_ctrl_c() {
 
 #[tokio::test]
 async fn predict_on_password_suppressed() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -376,7 +376,7 @@ async fn predict_on_password_suppressed() {
 
 #[tokio::test]
 async fn predict_on_runs_command() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     #[cfg(unix)]
     let extra_args: &[&str] = &["--predict", "on", "--", "echo", "predict-on-ok"];
@@ -401,7 +401,7 @@ async fn predict_on_runs_command() {
 
 #[tokio::test]
 async fn predict_off_no_local_echo() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -422,7 +422,7 @@ async fn predict_off_no_local_echo() {
 
 #[tokio::test]
 async fn predict_off_server_echo_only() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -452,7 +452,7 @@ async fn predict_off_server_echo_only() {
 
 #[tokio::test]
 async fn predict_on_immediate_echo() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
         .expect("Failed to build pty-echo");
@@ -469,7 +469,7 @@ async fn predict_on_immediate_echo() {
 
 #[tokio::test]
 async fn predict_on_mismatch_correction() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
         .expect("Failed to build pty-password");
@@ -490,7 +490,7 @@ async fn predict_on_mismatch_correction() {
 
 #[tokio::test]
 async fn spawn_pty_resize() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     // Platform-specific commands to check terminal size after a delay.
     // The delay gives us time to resize the PTY before the command checks.
@@ -529,7 +529,7 @@ async fn spawn_pty_resize() {
 
 #[tokio::test]
 async fn shell_alternate_screen_entry() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     // Verify that alternate screen mode entry/exit works through distant shell.
     // Text inside the alternate screen is discarded on rmcup, so the marker
@@ -565,7 +565,7 @@ async fn shell_alternate_screen_entry() {
 
 #[tokio::test]
 async fn shell_alternate_screen_exit() {
-    let ctx = ManagerCtx::start();
+    let ctx = HostManagerCtx::start();
 
     // Enter alt screen, print content (discarded on rmcup), exit alt screen,
     // then print a marker in the main buffer.

@@ -9,7 +9,7 @@
 
 use std::process::{Command, Stdio};
 
-use distant_test_harness::manager::bin_path;
+use distant_test_harness::manager;
 
 /// Returns true if service tests are enabled via `DISTANT_TEST_SERVICE=1`.
 fn service_tests_enabled() -> bool {
@@ -33,7 +33,7 @@ fn service_install_and_uninstall() {
     skip_if_no_service!();
 
     // Install the manager as a system service
-    let install = Command::new(bin_path())
+    let install = Command::new(manager::bin_path())
         .args(["manager", "service", "install"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -47,7 +47,7 @@ fn service_install_and_uninstall() {
     );
 
     // Uninstall the service
-    let uninstall = Command::new(bin_path())
+    let uninstall = Command::new(manager::bin_path())
         .args(["manager", "service", "uninstall"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -66,7 +66,7 @@ fn service_start_and_stop() {
     skip_if_no_service!();
 
     // Install first (start requires the service to be installed)
-    let install = Command::new(bin_path())
+    let install = Command::new(manager::bin_path())
         .args(["manager", "service", "install"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -80,7 +80,7 @@ fn service_start_and_stop() {
     );
 
     // Start the service
-    let start = Command::new(bin_path())
+    let start = Command::new(manager::bin_path())
         .args(["manager", "service", "start"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -97,7 +97,7 @@ fn service_start_and_stop() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Stop the service
-    let stop = Command::new(bin_path())
+    let stop = Command::new(manager::bin_path())
         .args(["manager", "service", "stop"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -111,7 +111,7 @@ fn service_start_and_stop() {
     );
 
     // Clean up: uninstall
-    let uninstall = Command::new(bin_path())
+    let uninstall = Command::new(manager::bin_path())
         .args(["manager", "service", "uninstall"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -130,7 +130,7 @@ fn service_start_without_install_fails() {
     skip_if_no_service!();
 
     // Trying to start a service that is not installed should fail
-    let start = Command::new(bin_path())
+    let start = Command::new(manager::bin_path())
         .args(["manager", "service", "start"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -145,10 +145,10 @@ fn service_start_without_install_fails() {
     }
 
     // If it succeeded, stop and uninstall the leftover service
-    let _ = Command::new(bin_path())
+    let _ = Command::new(manager::bin_path())
         .args(["manager", "service", "stop"])
         .output();
-    let _ = Command::new(bin_path())
+    let _ = Command::new(manager::bin_path())
         .args(["manager", "service", "uninstall"])
         .output();
 }
@@ -158,7 +158,7 @@ fn service_stop_without_running_fails() {
     skip_if_no_service!();
 
     // Install the service but don't start it
-    let install = Command::new(bin_path())
+    let install = Command::new(manager::bin_path())
         .args(["manager", "service", "install"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -170,7 +170,7 @@ fn service_stop_without_running_fails() {
     }
 
     // Stop without starting — should fail or return error
-    let stop = Command::new(bin_path())
+    let stop = Command::new(manager::bin_path())
         .args(["manager", "service", "stop"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -178,7 +178,7 @@ fn service_stop_without_running_fails() {
         .expect("Failed to run service stop");
 
     // Clean up
-    let _ = Command::new(bin_path())
+    let _ = Command::new(manager::bin_path())
         .args(["manager", "service", "uninstall"])
         .output();
 

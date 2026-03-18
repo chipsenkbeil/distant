@@ -1,6 +1,6 @@
 //! Cross-plugin backend abstraction for parameterized integration tests.
 //!
-//! Provides [`BackendCtx`] to unify [`ManagerCtx`](crate::manager::ManagerCtx),
+//! Provides [`BackendCtx`] to unify [`HostManagerCtx`](crate::manager::HostManagerCtx),
 //! [`SshManagerCtx`](crate::manager::SshManagerCtx), and
 //! [`DockerManagerCtx`](crate::docker::DockerManagerCtx) behind a single
 //! interface. Tests can use rstest `#[case]` parameters to run the same
@@ -32,7 +32,7 @@ pub enum Backend {
 /// command-building methods so tests can remain backend-agnostic.
 pub enum BackendCtx {
     /// Host backend context.
-    Host(manager::ManagerCtx),
+    Host(manager::HostManagerCtx),
 
     /// SSH backend context.
     Ssh(manager::SshManagerCtx),
@@ -89,7 +89,7 @@ impl BackendCtx {
 ///   Linux Docker daemon.
 pub fn ctx_for_backend(backend: Backend) -> Option<BackendCtx> {
     match backend {
-        Backend::Host => Some(BackendCtx::Host(manager::ManagerCtx::start())),
+        Backend::Host => Some(BackendCtx::Host(manager::HostManagerCtx::start())),
         Backend::Ssh => {
             which::which("sshd").ok()?;
             Some(BackendCtx::Ssh(manager::SshManagerCtx::start()))

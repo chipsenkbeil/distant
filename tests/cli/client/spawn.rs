@@ -11,7 +11,7 @@ use distant_test_harness::utils::regex_pred;
 
 #[rstest]
 #[test_log::test]
-fn should_execute_program_and_return_exit_status(ctx: ManagerCtx) {
+fn should_execute_program_and_return_exit_status(ctx: HostManagerCtx) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -32,7 +32,7 @@ fn should_execute_program_and_return_exit_status(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_capture_and_print_stdout(ctx: ManagerCtx) {
+fn should_capture_and_print_stdout(ctx: HostManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")
@@ -51,7 +51,7 @@ fn should_capture_and_print_stdout(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_capture_and_print_stderr(ctx: ManagerCtx) {
+fn should_capture_and_print_stderr(ctx: HostManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")
@@ -72,7 +72,7 @@ fn should_capture_and_print_stderr(ctx: ManagerCtx) {
 #[rstest]
 #[test_log::test]
 #[allow(clippy::zombie_processes)] // Test intentionally spawns child without waiting
-fn should_forward_stdin_to_remote_process(ctx: ManagerCtx) {
+fn should_forward_stdin_to_remote_process(ctx: HostManagerCtx) {
     use std::io::{BufRead, BufReader, Write};
 
     // distant action proc-spawn {cmd} [args]
@@ -113,7 +113,7 @@ fn should_forward_stdin_to_remote_process(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn reflect_the_exit_code_of_the_process(ctx: ManagerCtx) {
+fn reflect_the_exit_code_of_the_process(ctx: HostManagerCtx) {
     // Windows prints out a message whereas unix prints nothing
     #[cfg(windows)]
     let stdout = regex_pred(".+");
@@ -134,7 +134,7 @@ fn reflect_the_exit_code_of_the_process(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
+fn yield_an_error_when_fails(ctx: HostManagerCtx) {
     // distant spawn -- {cmd} [args]
     ctx.cmd("spawn")
         .arg("--")
@@ -148,7 +148,7 @@ fn yield_an_error_when_fails(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_support_dash_c_flag(ctx: ManagerCtx) {
+fn should_support_dash_c_flag(ctx: HostManagerCtx) {
     // distant spawn -c "echo hello"
     ctx.cmd("spawn")
         .args(["-c", "echo hello"])
@@ -160,7 +160,7 @@ fn should_support_dash_c_flag(ctx: ManagerCtx) {
 #[cfg(windows)]
 #[rstest]
 #[test_log::test]
-fn should_support_dash_c_flag(ctx: ManagerCtx) {
+fn should_support_dash_c_flag(ctx: HostManagerCtx) {
     // distant spawn -c "echo hello"
     ctx.cmd("spawn")
         .args(["-c", "echo hello"])
@@ -172,7 +172,7 @@ fn should_support_dash_c_flag(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_support_current_dir_option(ctx: ManagerCtx) {
+fn should_support_current_dir_option(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // distant spawn --current-dir {path} -- pwd
@@ -196,7 +196,7 @@ fn should_support_current_dir_option(ctx: ManagerCtx) {
 #[cfg(windows)]
 #[rstest]
 #[test_log::test]
-fn should_support_current_dir_option(ctx: ManagerCtx) {
+fn should_support_current_dir_option(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // distant spawn --current-dir {path} -- cmd /c cd
@@ -222,7 +222,7 @@ fn should_support_current_dir_option(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_support_environment_option(ctx: ManagerCtx) {
+fn should_support_environment_option(ctx: HostManagerCtx) {
     // distant spawn --environment 'MY_TEST_VAR=hello_from_distant' -- printenv MY_TEST_VAR
     ctx.new_assert_cmd(["spawn"])
         .args([
@@ -240,7 +240,7 @@ fn should_support_environment_option(ctx: ManagerCtx) {
 #[cfg(windows)]
 #[rstest]
 #[test_log::test]
-fn should_support_environment_option(ctx: ManagerCtx) {
+fn should_support_environment_option(ctx: HostManagerCtx) {
     // distant spawn --environment 'MY_TEST_VAR=hello_from_distant' -- cmd /c echo %MY_TEST_VAR%
     let output = ctx
         .new_assert_cmd(["spawn"])
@@ -266,7 +266,7 @@ fn should_support_environment_option(ctx: ManagerCtx) {
 #[cfg(unix)]
 #[rstest]
 #[test_log::test]
-fn should_support_shell_flag(ctx: ManagerCtx) {
+fn should_support_shell_flag(ctx: HostManagerCtx) {
     // distant spawn --shell -- 'echo $HOME'
     // When --shell is used, the command is wrapped in a shell, allowing variable expansion
     let output = ctx
@@ -290,7 +290,7 @@ fn should_support_shell_flag(ctx: ManagerCtx) {
 #[cfg(windows)]
 #[rstest]
 #[test_log::test]
-fn should_support_shell_flag(ctx: ManagerCtx) {
+fn should_support_shell_flag(ctx: HostManagerCtx) {
     // distant spawn --shell -- 'echo %USERPROFILE%'
     // When --shell is used, the command is wrapped in a shell, allowing variable expansion
     let output = ctx

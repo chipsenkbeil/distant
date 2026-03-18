@@ -16,7 +16,7 @@ const WRITE_DELAY: Duration = Duration::from_millis(100);
 
 #[rstest]
 #[test_log::test]
-fn should_upload_single_file(ctx: ManagerCtx) {
+fn should_upload_single_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create local source file
@@ -39,7 +39,7 @@ fn should_upload_single_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_download_single_file(ctx: ManagerCtx) {
+fn should_download_single_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create "remote" file using fs write
@@ -67,7 +67,7 @@ fn should_download_single_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_upload_directory_recursively(ctx: ManagerCtx) {
+fn should_upload_directory_recursively(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create local directory tree
@@ -97,7 +97,7 @@ fn should_upload_directory_recursively(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_download_directory_recursively(ctx: ManagerCtx) {
+fn should_download_directory_recursively(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create "remote" directory structure using fs commands
@@ -146,7 +146,7 @@ fn should_download_directory_recursively(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_error_when_both_paths_are_local(ctx: ManagerCtx) {
+fn should_error_when_both_paths_are_local(ctx: HostManagerCtx) {
     ctx.new_assert_cmd(["copy"])
         .args(["./local_a", "./local_b"])
         .assert()
@@ -156,7 +156,7 @@ fn should_error_when_both_paths_are_local(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_error_when_both_paths_are_remote(ctx: ManagerCtx) {
+fn should_error_when_both_paths_are_remote(ctx: HostManagerCtx) {
     ctx.new_assert_cmd(["copy"])
         .args([":/remote_a", ":/remote_b"])
         .assert()
@@ -166,7 +166,7 @@ fn should_error_when_both_paths_are_remote(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_error_when_directory_without_recursive_flag(ctx: ManagerCtx) {
+fn should_error_when_directory_without_recursive_flag(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let local_dir = temp.child("a_dir");
@@ -185,7 +185,7 @@ fn should_error_when_directory_without_recursive_flag(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_error_when_source_not_found(ctx: ManagerCtx) {
+fn should_error_when_source_not_found(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
     let missing = temp.child("nonexistent.txt");
     let remote_path = format!(":{}", temp.child("dst.txt").to_str().unwrap());
@@ -199,7 +199,7 @@ fn should_error_when_source_not_found(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_upload_into_existing_directory(ctx: ManagerCtx) {
+fn should_upload_into_existing_directory(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create local file
@@ -227,7 +227,7 @@ fn should_upload_into_existing_directory(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_handle_empty_file(ctx: ManagerCtx) {
+fn should_handle_empty_file(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Upload empty file
@@ -258,7 +258,7 @@ fn should_handle_empty_file(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_preserve_binary_content(ctx: ManagerCtx) {
+fn should_preserve_binary_content(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create a file with non-UTF8 binary content
@@ -291,7 +291,7 @@ fn should_preserve_binary_content(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_overwrite_existing_destination(ctx: ManagerCtx) {
+fn should_overwrite_existing_destination(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Create initial remote file
@@ -320,7 +320,7 @@ fn should_overwrite_existing_destination(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_upload_to_server_cwd_with_bare_colon(ctx: ManagerCtx) {
+fn should_upload_to_server_cwd_with_bare_colon(ctx: HostManagerCtx) {
     let temp = assert_fs::TempDir::new().unwrap();
 
     let local_src = temp.child("bare_colon.txt");

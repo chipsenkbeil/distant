@@ -10,7 +10,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_system_info(ctx: ManagerCtx) {
+fn should_output_system_info(ctx: HostManagerCtx) {
     ctx.cmd("system-info").assert().success().stdout(format!(
         concat!(
             "Family: {:?}\n",
