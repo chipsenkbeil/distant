@@ -44,7 +44,7 @@ fn connect_ssh_establishes_connection(ssh_manager_ctx: SshManagerCtx) {
 fn connect_ssh_wrong_port(manager_only_ctx: ManagerOnlyCtx) {
     let output = manager_only_ctx
         .new_std_cmd(["connect"])
-        .arg("ssh://localhost:1")
+        .arg("ssh://127.0.0.1:1")
         .arg("--options")
         .arg("identities_only=true")
         .output()
@@ -101,7 +101,7 @@ fn launch_ssh_wrong_credentials(manager_only_ctx: ManagerOnlyCtx) {
         .new_std_cmd(["launch"])
         .arg("--distant")
         .arg(bin_path())
-        .arg("ssh://localhost:22")
+        .arg("ssh://127.0.0.1:22")
         .arg("--options")
         .arg("identity_files=/nonexistent/key,identities_only=true")
         .output()
@@ -299,7 +299,7 @@ async fn launch_ssh_connection_timeout() {
         .arg("launch")
         .arg("--distant")
         .arg(bin_path())
-        .arg(format!("ssh://localhost:{port}"))
+        .arg(format!("ssh://127.0.0.1:{port}"))
         .arg("--options")
         .arg("identities_only=true")
         .arg("--log-file")
@@ -386,7 +386,7 @@ async fn ssh_shell_interactive() {
     let bin = bin_path();
     let args = vec![
         "ssh".to_string(),
-        format!("{}@localhost:{}", *sshd::USERNAME, port),
+        format!("{}@127.0.0.1:{}", *sshd::USERNAME, port),
         "--options".to_string(),
         options,
         "--predict".to_string(),

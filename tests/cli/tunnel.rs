@@ -11,7 +11,7 @@ use rstest::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::time;
 
-use distant_test_harness::backend::{Backend, ctx_for_backend};
+use distant_test_harness::backend::Backend;
 use distant_test_harness::exe;
 use distant_test_harness::manager::*;
 use distant_test_harness::skip_if_no_backend;
@@ -667,7 +667,7 @@ fn tunnel_listen_invalid_address(ctx: HostManagerCtx) {
 #[case(Backend::Ssh)]
 #[tokio::test]
 async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -752,7 +752,7 @@ async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
 #[case(Backend::Ssh)]
 #[tokio::test]
 async fn tunnel_listen_data_cross_backend(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let echo_bin = exe::build_tcp_echo_server()
         .await

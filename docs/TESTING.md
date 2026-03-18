@@ -121,7 +121,7 @@ assertion across Host, SSH, and Docker backends:
 #[case(Backend::Ssh)]
 #[case(Backend::Docker)]
 fn fs_read_file(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     // ...test logic using ctx.new_assert_cmd(["fs", "read"])...
 }
 ```

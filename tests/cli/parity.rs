@@ -14,7 +14,7 @@ use std::process::Stdio;
 
 use rstest::*;
 
-use distant_test_harness::backend::{Backend, BackendCtx, ctx_for_backend};
+use distant_test_harness::backend::{Backend, BackendCtx};
 use distant_test_harness::skip_if_no_backend;
 
 /// Returns a unique temp directory path valid for the backend's filesystem.
@@ -115,7 +115,7 @@ fn cli_mkdir(ctx: &BackendCtx, path: &str) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_read_file(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "read");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "read-test.txt");
@@ -134,7 +134,7 @@ fn fs_read_file(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_write_file(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "write");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "write-test.txt");
@@ -172,7 +172,7 @@ fn fs_write_file(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_copy(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "copy");
     cli_mkdir(&ctx, &dir);
     let src = child_path(&ctx, &dir, "copy-src.txt");
@@ -195,7 +195,7 @@ fn fs_copy(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_exists(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "exists");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "exists-test.txt");
@@ -225,7 +225,7 @@ fn fs_exists(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_make_dir(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "mkdir");
     cli_mkdir(&ctx, &dir);
     let new_dir = child_path(&ctx, &dir, "new-dir");
@@ -247,7 +247,7 @@ fn fs_make_dir(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_remove(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "remove");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "remove-test.txt");
@@ -271,7 +271,7 @@ fn fs_remove(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_rename(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "rename");
     cli_mkdir(&ctx, &dir);
     let src = child_path(&ctx, &dir, "rename-src.txt");
@@ -302,7 +302,7 @@ fn fs_rename(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_metadata(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "metadata");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "metadata-test.txt");
@@ -337,7 +337,7 @@ fn fs_metadata(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn spawn(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let output = ctx
         .new_std_cmd(["spawn"])
@@ -368,7 +368,7 @@ fn spawn(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn system_info(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let output = ctx
         .new_std_cmd(["system-info"])
@@ -394,7 +394,7 @@ fn system_info(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn version(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let output = ctx
         .new_std_cmd(["version"])
@@ -424,7 +424,7 @@ fn version(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_read_dir(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "readdir");
     cli_mkdir(&ctx, &dir);
     cli_write(&ctx, &child_path(&ctx, &dir, "aaa.txt"), "a");
@@ -460,7 +460,7 @@ fn fs_read_dir(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_set_permissions(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "perms");
     cli_mkdir(&ctx, &dir);
     let path = child_path(&ctx, &dir, "perms-test.txt");
@@ -488,7 +488,7 @@ fn fs_set_permissions(#[case] backend: Backend) {
 #[case(Backend::Docker)]
 #[test_log::test]
 fn fs_search(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let dir = unique_dir(&ctx, "search");
     cli_mkdir(&ctx, &dir);
     cli_write(
@@ -537,7 +537,7 @@ fn fs_watch(#[case] backend: Backend) {
 
     use assert_fs::prelude::*;
 
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 
     // Start watching the temp directory for create events.
@@ -590,7 +590,7 @@ fn fs_watch(#[case] backend: Backend) {
 #[case(Backend::Host)]
 #[tokio::test]
 async fn spawn_with_pty(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(ctx_for_backend(backend));
+    let ctx = skip_if_no_backend!(backend);
 
     let (bin, mut args) = match &ctx {
         BackendCtx::Host(c) => c.cmd_parts(["spawn"]),

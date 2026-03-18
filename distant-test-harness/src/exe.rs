@@ -7,64 +7,16 @@ use crate::manager::build_dir;
 
 /// Build the `tcp-to-stdio` binary and return its path.
 ///
-/// Runs `cargo build -p distant-test-harness --bin tcp-to-stdio` and then
-/// returns the path inside the workspace target directory.
+/// Delegates to [`build_harness_bin`] with `"tcp-to-stdio"`.
 pub async fn build_tcp_to_stdio() -> io::Result<PathBuf> {
-    let status = tokio::process::Command::new(env!("CARGO"))
-        .args([
-            "build",
-            "-p",
-            "distant-test-harness",
-            "--bin",
-            "tcp-to-stdio",
-        ])
-        .status()
-        .await?;
-
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "cargo build tcp-to-stdio failed with {status}"
-        )));
-    }
-
-    let name = if cfg!(windows) {
-        "tcp-to-stdio.exe"
-    } else {
-        "tcp-to-stdio"
-    };
-
-    Ok(build_dir().join(name))
+    build_harness_bin("tcp-to-stdio").await
 }
 
 /// Build the `tcp-echo-server` binary and return its path.
 ///
-/// Runs `cargo build -p distant-test-harness --bin tcp-echo-server` and then
-/// returns the path inside the workspace target directory.
+/// Delegates to [`build_harness_bin`] with `"tcp-echo-server"`.
 pub async fn build_tcp_echo_server() -> io::Result<PathBuf> {
-    let status = tokio::process::Command::new(env!("CARGO"))
-        .args([
-            "build",
-            "-p",
-            "distant-test-harness",
-            "--bin",
-            "tcp-echo-server",
-        ])
-        .status()
-        .await?;
-
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "cargo build tcp-echo-server failed with {status}"
-        )));
-    }
-
-    let name = if cfg!(windows) {
-        "tcp-echo-server.exe"
-    } else {
-        "tcp-echo-server"
-    };
-
-    Ok(build_dir().join(name))
+    build_harness_bin("tcp-echo-server").await
 }
 
 /// Build the `pty-echo` binary and return its path.

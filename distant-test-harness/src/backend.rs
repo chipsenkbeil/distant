@@ -125,21 +125,21 @@ fn ctx_for_docker() -> Option<BackendCtx> {
     None
 }
 
-/// Unwraps an `Option`, skipping the test if the value is `None`.
+/// Creates a [`BackendCtx`] for the given [`Backend`], skipping the test if
+/// the backend's prerequisites are unavailable.
 ///
-/// Call at the beginning of a test body with a value returned by
-/// [`ctx_for_backend`]. If the backend is unavailable, the test prints a
-/// skip message and returns successfully instead of panicking.
+/// Calls [`ctx_for_backend`] internally — callers only need to pass the
+/// [`Backend`] variant.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let ctx = skip_if_no_backend!(ctx_for_backend(Backend::Docker));
+/// let ctx = skip_if_no_backend!(Backend::Docker);
 /// ```
 #[macro_export]
 macro_rules! skip_if_no_backend {
-    ($expr:expr) => {
-        match $expr {
+    ($backend:expr) => {
+        match $crate::backend::ctx_for_backend($backend) {
             Some(val) => val,
             None => {
                 eprintln!("Backend not available — skipping test");

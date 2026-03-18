@@ -170,7 +170,7 @@ impl HostManagerCtx {
             for host in [
                 Host::Ipv4(Ipv4Addr::LOCALHOST),
                 Host::Ipv6(Ipv6Addr::LOCALHOST),
-                Host::Name("localhost".to_string()),
+                Host::Name("127.0.0.1".to_string()),
             ] {
                 credentials.host = host.clone();
                 // Connect manager to server
@@ -727,7 +727,7 @@ impl SshManagerCtx {
             "identity_files={},user_known_hosts_files={},identities_only=true",
             identity_file, known_hosts,
         );
-        let destination = format!("ssh://{}@localhost:{}", *sshd::USERNAME, sshd.port);
+        let destination = format!("ssh://{}@127.0.0.1:{}", *sshd::USERNAME, sshd.port);
 
         // Connect manager to sshd via SSH with retry logic
         for i in 1..=MAX_RETRY_ATTEMPTS {
@@ -967,7 +967,7 @@ impl SshLaunchCtx {
             "identity_files={},user_known_hosts_files={},identities_only=true",
             identity_file, known_hosts,
         );
-        let destination = format!("ssh://{}@localhost:{}", *sshd::USERNAME, sshd.port);
+        let destination = format!("ssh://{}@127.0.0.1:{}", *sshd::USERNAME, sshd.port);
 
         // Launch distant server on the remote host via SSH with retry logic
         for i in 1..=MAX_RETRY_ATTEMPTS {
