@@ -101,7 +101,7 @@ distant processes (manager, server, connections):
 |-------------|---------|----------------|
 | `HostManagerCtx` | Host (local) | `distant connect distant://...` |
 | `ManagerOnlyCtx` | None (manager only) | No connection — for testing error paths |
-| `SshManagerCtx` | SSH plugin | `distant connect ssh://localhost:{port}` via per-test sshd |
+| `SshManagerCtx` | SSH plugin | `distant connect ssh://127.0.0.1:{port}` via per-test sshd |
 | `SshLaunchCtx` | SSH plugin | `distant launch ssh://127.0.0.1:{port}` via per-test sshd |
 | `DockerManagerCtx` | Docker plugin | `distant connect docker://...` via ephemeral container |
 
@@ -112,18 +112,19 @@ All context types expose `new_assert_cmd()`, `new_std_cmd()`, and `cmd_parts()`
 to build commands pre-configured with the correct socket, log file, and
 connection ID.
 
-### Cross-Plugin Parity Testing (`tests/cli/parity.rs`)
+### Cross-Plugin Parity Testing (`tests/cli/client/`)
 
 The `BackendCtx` enum (`distant-test-harness/src/backend.rs`) wraps all context
-types behind a single interface. Tests use rstest `#[case]` to run the same
-assertion across Host, SSH, and Docker backends:
+types behind a single interface. Tests in `tests/cli/client/` use rstest
+`#[case]` with named cases to run the same assertion across Host, SSH, and
+Docker backends:
 
 ```rust
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
-fn fs_read_file(#[case] backend: Backend) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+fn should_read_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     // ...test logic using ctx.new_assert_cmd(["fs", "read"])...
 }
@@ -139,10 +140,11 @@ Tunnel tests use a custom `tcp-echo-server` binary
 `nc`/netcat. The server binds to `127.0.0.1:0`, prints its port to stdout,
 accepts one connection, echoes all data back, and exits on EOF or timeout.
 
-### PTY / Predictive Echo Testing (`tests/cli/pty.rs`)
+### PTY / Predictive Echo Testing
 
-PTY tests are cross-platform and use `portable-pty` (`PtySession` in
-`tests/cli/pty.rs`) to interact with `distant shell`, `distant spawn --pty`,
+PTY tests live in `tests/cli/client/shell.rs` and `tests/cli/client/spawn.rs`,
+with the `PtySession` helper in `tests/cli/pty.rs`. They are cross-platform
+and use `portable-pty` to interact with `distant shell`, `distant spawn --pty`,
 and `distant ssh` (which also allocates a PTY). All PTY tests use rstest
 multi-backend (Host, SSH, Docker) via `BackendCtx`. On Windows, `PtySession`
 automatically handles ConPTY cursor position queries (`\x1b[6n`) to prevent
@@ -171,7 +173,7 @@ To prevent resource exhaustion, certain test categories have thread limits:
 | `ssh-integration-windows` | `distant-ssh` lib (Windows) | 1 | Windows sshd is fragile |
 | `docker-integration` | `distant-docker` lib | 2 | Prevents Docker API contention |
 | `tunnel-tests` | `test(tunnel_)` | 4 | Prevents port exhaustion |
-| `service-tests` | `test(service_)` | 1 | Service install/uninstall is sequential |
+| `pty-tests` | `test(shell::) \| test(spawn::)` | 4 | PTY tests need careful concurrency |
 
 ### CI Profile
 

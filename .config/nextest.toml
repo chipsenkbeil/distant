@@ -10,9 +10,6 @@ max-threads = 2
 [test-groups.tunnel-tests]
 max-threads = 4
 
-[test-groups.service-tests]
-max-threads = 1
-
 [test-groups.pty-tests]
 max-threads = 4
 
@@ -39,10 +36,6 @@ test-group = 'docker-integration'
 filter = 'test(tunnel_)'
 test-group = 'tunnel-tests'
 
-[[profile.default.overrides]]
-filter = 'test(service_)'
-test-group = 'service-tests'
-
 # SSH CLI tests spawn real sshd processes per test
 [[profile.default.overrides]]
 filter = 'test(ssh_) | test(connect_ssh) | test(launch_ssh)'
@@ -50,7 +43,7 @@ test-group = 'ssh-integration'
 
 # Multi-backend tests with SSH cases also spawn sshd
 [[profile.default.overrides]]
-filter = 'test(case_2_ssh)'
+filter = 'test(_ssh)'
 test-group = 'ssh-integration'
 
 # PTY tests use portable-pty which needs careful concurrency
