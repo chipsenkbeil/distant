@@ -465,10 +465,10 @@ fn fs_set_permissions(#[case] backend: Backend) {
         .stdout("perms content");
 }
 
-/// Search is not supported over the SSH plugin (returns an error).
-/// Only Host and Docker backends are tested.
+/// Verifies that `distant fs search` finds files matching a pattern.
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_search(#[case] backend: Backend) {
@@ -503,12 +503,10 @@ fn fs_search(#[case] backend: Backend) {
     );
 }
 
-/// Watch is only tested on Host backend because it requires host-level
-/// filesystem events (inotify/FSEvents/ReadDirectoryChanges). Docker
-/// containers use overlayfs which may not propagate inotify events
-/// reliably. SSH-connected backends also use the host filesystem but
-/// adding watch tests for SSH would be redundant given that the same
-/// code path is exercised.
+/// Watch is only tested on Host backend. SSH and Docker backends return
+/// `Unsupported` for watch operations — SSH lacks a remote filesystem
+/// event mechanism, and Docker's overlayfs doesn't propagate inotify
+/// events reliably.
 #[rstest]
 #[case::host(Backend::Host)]
 #[test_log::test]
@@ -559,18 +557,16 @@ fn fs_watch(#[case] backend: Backend) {
 
 /// Verifies that `distant spawn --pty` works by running a simple echo command
 /// through a PTY-allocated remote process. Uses `PtySession` (portable-pty)
-/// because `--pty` requires a real terminal (raw mode). Only tested on Host
-/// backend; SSH and Docker PTY tests live in their respective modules.
+/// because `--pty` requires a real terminal (raw mode).
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn spawn_with_pty(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (bin, mut args) = match &ctx {
-        BackendCtx::Host(c) => c.cmd_parts(["spawn"]),
-        _ => unreachable!("spawn_with_pty only tests Host backend"),
-    };
+    let (bin, mut args) = ctx.cmd_parts(["spawn"]);
 
     args.push("--pty".to_string());
     args.push("--".to_string());

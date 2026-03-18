@@ -9,8 +9,8 @@ use distant_core::constants::{TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE}
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
-    Response, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo,
-    TunnelDirection, TunnelId, TunnelInfo, Version,
+    Response, SearchId, SearchQuery, SearchQueryTarget, SetPermissionsOptions, StatusInfo,
+    SystemInfo, TunnelDirection, TunnelId, TunnelInfo, Version,
 };
 use distant_core::{Api, Ctx};
 use log::*;
@@ -21,6 +21,7 @@ use tokio::task::JoinHandle;
 use crate::SshFamily;
 use crate::pool::{ChannelPool, PooledSftp};
 use crate::process::Process;
+use crate::search;
 use crate::utils;
 use crate::utils::SftpPathBuf;
 
@@ -85,6 +86,9 @@ pub struct SshApi {
     /// Username for the remote connection.
     username: String,
 
+    /// Detected search tools available on the remote host.
+    search_tools: search::SearchTools,
+
     /// Cached current working directory.
     cached_current_dir: OnceCell<String>,
 
@@ -98,6 +102,7 @@ impl SshApi {
         family: SshFamily,
         username: String,
         tunnel_state: Arc<SshTunnelSharedState>,
+        search_tools: search::SearchTools,
     ) -> Self {
         let tunnels = Arc::clone(&tunnel_state.tunnels);
         Self {
@@ -107,6 +112,7 @@ impl SshApi {
             tunnel_state,
             family,
             username,
+            search_tools,
             cached_current_dir: OnceCell::new(),
             cached_shell: OnceCell::new(),
         }
@@ -895,17 +901,57 @@ impl Api for SshApi {
         }
     }
 
-    #[allow(unused_variables)]
     fn search(
         &self,
-        _ctx: Ctx,
-        _query: SearchQuery,
+        ctx: Ctx,
+        query: SearchQuery,
     ) -> impl Future<Output = io::Result<SearchId>> + Send {
-        async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Search is not supported over SSH. Use proc_spawn with find/grep commands instead.",
-            ))
+        let pool = Arc::clone(&self.pool);
+        let search_tools = self.search_tools.clone();
+
+        async move {
+            if !search_tools.has_any() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "No search tools available on the remote host. \
+                     Install ripgrep, grep, or find for search support.",
+                ));
+            }
+
+            let search_cmd = search::build_search_command(&query, &search_tools)?;
+            let search_id: SearchId = rand::random();
+
+            let (channel, _permit) = pool.open_exec().await?.take();
+            let output =
+                utils::execute_output_on_channel(channel, &search_cmd.command, None).await?;
+
+            // For grep/rg, exit code 1 means "no matches" (not an error), but the
+            // SSH ExecOutput only stores a bool. Distinguish real errors by checking
+            // for stderr content: a true error (exit >= 2) produces diagnostic output.
+            if !output.success && !output.stderr.is_empty() {
+                let stderr_str = String::from_utf8_lossy(&output.stderr);
+                return Err(io::Error::other(format!(
+                    "Search command failed: {stderr_str}",
+                )));
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            let matches = match query.target {
+                SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
+                SearchQueryTarget::Path => search::parse_path_matches(&stdout),
+            };
+
+            if !matches.is_empty() {
+                let _ = ctx.reply.send(Response::SearchResults {
+                    id: search_id,
+                    matches,
+                });
+            }
+
+            let _ = ctx.reply.send(Response::SearchDone { id: search_id });
+
+            Ok(search_id)
         }
     }
 
@@ -913,13 +959,11 @@ impl Api for SshApi {
     fn cancel_search(
         &self,
         _ctx: Ctx,
-        _id: SearchId,
+        id: SearchId,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Search is not supported over SSH",
-            ))
+        async move {
+            // Search runs synchronously in our implementation, so cancel is a no-op
+            Ok(())
         }
     }
 
@@ -1331,13 +1375,18 @@ impl Api for SshApi {
         async move {
             debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
-            let capabilities = vec![
+            let mut capabilities = vec![
                 Version::CAP_EXEC.to_string(),
                 Version::CAP_FS_IO.to_string(),
                 Version::CAP_SYS_INFO.to_string(),
                 Version::CAP_TCP_TUNNEL.to_string(),
                 Version::CAP_TCP_REV_TUNNEL.to_string(),
             ];
+
+            // Only advertise search if we have tools
+            if self.search_tools.has_any() {
+                capabilities.push(Version::CAP_FS_SEARCH.to_string());
+            }
 
             use distant_core::protocol::semver;
 

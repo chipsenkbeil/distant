@@ -4,6 +4,7 @@
 //! for obtaining [`Client`] instances connected to Docker containers.
 
 use std::io;
+use std::path::PathBuf;
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::Duration;
 
@@ -342,6 +343,33 @@ impl DockerManagerCtx {
         }
 
         cmd
+    }
+
+    /// Returns the binary path and argument list for running a distant
+    /// subcommand through this context's manager.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        let mut args: Vec<String> = Vec::new();
+
+        for subcommand in subcommands {
+            args.push(subcommand.to_string());
+        }
+
+        args.push("--log-file".to_string());
+        args.push(random_log_file("client").to_string_lossy().to_string());
+        args.push("--log-level".to_string());
+        args.push("trace".to_string());
+
+        if cfg!(windows) {
+            args.push("--windows-pipe".to_string());
+        } else {
+            args.push("--unix-socket".to_string());
+        }
+        args.push(self.socket_or_pipe.clone());
+
+        (bin_path(), args)
     }
 
     /// Produces a new [`StdCommand`] configured with subcommands.

@@ -6,6 +6,7 @@
 //! interface. Tests can use rstest `#[case]` parameters to run the same
 //! assertion against multiple backends.
 
+use std::path::PathBuf;
 use std::process::Command as StdCommand;
 
 use assert_cmd::Command;
@@ -76,6 +77,23 @@ impl BackendCtx {
             Self::Ssh(ctx) => ctx.new_std_cmd(subcommands),
             #[cfg(feature = "docker")]
             Self::Docker(ctx) => ctx.new_std_cmd(subcommands),
+        }
+    }
+
+    /// Returns the binary path and argument list for running a distant
+    /// subcommand through this context's manager.
+    ///
+    /// Useful when spawning commands through non-standard mechanisms
+    /// (e.g., `portable-pty` for PTY tests) that need raw `(PathBuf, Vec<String>)`.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        match self {
+            Self::Host(ctx) => ctx.cmd_parts(subcommands),
+            Self::Ssh(ctx) => ctx.cmd_parts(subcommands),
+            #[cfg(feature = "docker")]
+            Self::Docker(ctx) => ctx.cmd_parts(subcommands),
         }
     }
 }
