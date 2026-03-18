@@ -102,8 +102,11 @@ distant processes (manager, server, connections):
 | `HostManagerCtx` | Host (local) | `distant connect distant://...` |
 | `ManagerOnlyCtx` | None (manager only) | No connection — for testing error paths |
 | `SshManagerCtx` | SSH plugin | `distant connect ssh://localhost:{port}` via per-test sshd |
-| `SshLaunchCtx` | SSH plugin | `distant launch ssh://localhost:{port}` via per-test sshd |
+| `SshLaunchCtx` | SSH plugin | `distant launch ssh://127.0.0.1:{port}` via per-test sshd |
 | `DockerManagerCtx` | Docker plugin | `distant connect docker://...` via ephemeral container |
+
+> **Note:** There is no `DockerLaunchCtx` because Docker does not support the
+> `distant launch` workflow — containers are connected to directly.
 
 All context types expose `new_assert_cmd()`, `new_std_cmd()`, and `cmd_parts()`
 to build commands pre-configured with the correct socket, log file, and
@@ -139,10 +142,11 @@ accepts one connection, echoes all data back, and exits on EOF or timeout.
 ### PTY / Predictive Echo Testing (`tests/cli/pty.rs`)
 
 PTY tests are cross-platform and use `portable-pty` (`PtySession` in
-`tests/cli/pty.rs`) to interact with `distant shell` and `distant spawn --pty`.
-On Windows, `PtySession` automatically handles ConPTY cursor position queries
-(`\x1b[6n`) to prevent I/O deadlocks. Purpose-built binaries exercise different
-PTY scenarios:
+`tests/cli/pty.rs`) to interact with `distant shell`, `distant spawn --pty`,
+and `distant ssh` (which also allocates a PTY). All PTY tests use rstest
+multi-backend (Host, SSH, Docker) via `BackendCtx`. On Windows, `PtySession`
+automatically handles ConPTY cursor position queries (`\x1b[6n`) to prevent
+I/O deadlocks. Purpose-built binaries exercise different PTY scenarios:
 
 - `pty-echo`: byte-by-byte stdin→stdout echo loop
 - `pty-interactive`: mini-shell with `$ ` prompt, `exit`, `passwd`, Ctrl+C handling
@@ -152,16 +156,6 @@ Tests verify `--predict off` and `--predict on` modes work end-to-end. Platform-
 specific commands (e.g., `sh -c` vs `cmd /c`, `stty size` vs `mode con`, `tput`
 vs PowerShell ANSI sequences) use `#[cfg]` for behavioral dispatch — the same
 test runs on all platforms with appropriate command variants.
-
-### Service Tests (opt-in)
-
-Service tests (`distant manager service install/start/stop/uninstall`) require
-system privileges and service manager interaction. They are not run in standard
-CI. To run them locally:
-
-```bash
-DISTANT_TEST_SERVICE=1 cargo test --test cli_tests -- service_
-```
 
 ## Nextest Configuration
 

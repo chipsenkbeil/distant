@@ -6,8 +6,6 @@
 mod api;
 mod client;
 mod config;
-#[cfg(feature = "docker")]
-mod docker;
 mod errors;
 mod format;
 mod generate;
