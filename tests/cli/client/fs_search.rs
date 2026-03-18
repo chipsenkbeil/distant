@@ -176,7 +176,11 @@ fn should_support_max_depth_option(#[case] backend: Backend) {
         .output()
         .expect("Failed to run fs search");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "fs search with max-depth should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("top.txt"),
