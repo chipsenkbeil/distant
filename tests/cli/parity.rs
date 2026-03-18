@@ -105,14 +105,10 @@ fn cli_mkdir(ctx: &BackendCtx, path: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Filesystem operations
-// ---------------------------------------------------------------------------
-
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_read_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -129,9 +125,9 @@ fn fs_read_file(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_write_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -167,9 +163,9 @@ fn fs_write_file(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_copy(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -190,9 +186,9 @@ fn fs_copy(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_exists(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -220,9 +216,9 @@ fn fs_exists(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_make_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -242,9 +238,9 @@ fn fs_make_dir(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_remove(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -266,9 +262,9 @@ fn fs_remove(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_rename(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -297,9 +293,9 @@ fn fs_rename(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_metadata(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -327,14 +323,10 @@ fn fs_metadata(#[case] backend: Backend) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Process operations
-// ---------------------------------------------------------------------------
-
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn spawn(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -358,14 +350,10 @@ fn spawn(#[case] backend: Backend) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// System operations
-// ---------------------------------------------------------------------------
-
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn system_info(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -389,9 +377,9 @@ fn system_info(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn version(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -414,14 +402,10 @@ fn version(#[case] backend: Backend) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Additional filesystem operations
-// ---------------------------------------------------------------------------
-
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_read_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -455,9 +439,9 @@ fn fs_read_dir(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Ssh)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_set_permissions(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -484,8 +468,8 @@ fn fs_set_permissions(#[case] backend: Backend) {
 /// Search is not supported over the SSH plugin (returns an error).
 /// Only Host and Docker backends are tested.
 #[rstest]
-#[case(Backend::Host)]
-#[case(Backend::Docker)]
+#[case::host(Backend::Host)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn fs_search(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -519,10 +503,6 @@ fn fs_search(#[case] backend: Backend) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Watch operations
-// ---------------------------------------------------------------------------
-
 /// Watch is only tested on Host backend because it requires host-level
 /// filesystem events (inotify/FSEvents/ReadDirectoryChanges). Docker
 /// containers use overlayfs which may not propagate inotify events
@@ -530,7 +510,7 @@ fn fs_search(#[case] backend: Backend) {
 /// adding watch tests for SSH would be redundant given that the same
 /// code path is exercised.
 #[rstest]
-#[case(Backend::Host)]
+#[case::host(Backend::Host)]
 #[test_log::test]
 fn fs_watch(#[case] backend: Backend) {
     use std::time::Duration;
@@ -577,17 +557,12 @@ fn fs_watch(#[case] backend: Backend) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// PTY spawn operations
-// ---------------------------------------------------------------------------
-
 /// Verifies that `distant spawn --pty` works by running a simple echo command
 /// through a PTY-allocated remote process. Uses `PtySession` (portable-pty)
 /// because `--pty` requires a real terminal (raw mode). Only tested on Host
-/// backend since PTY through SSH and Docker is covered by Phase 3
-/// (`ssh_shell_interactive`) and Phase 4 (`spawn_pty_flag`).
+/// backend; SSH and Docker PTY tests live in their respective modules.
 #[rstest]
-#[case(Backend::Host)]
+#[case::host(Backend::Host)]
 #[tokio::test]
 async fn spawn_with_pty(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -612,10 +587,6 @@ async fn spawn_with_pty(#[case] backend: Backend) {
     let mut session = super::pty::PtySession::spawn(&bin, &args);
     session.expect("pty-spawn-parity");
 }
-
-// ---------------------------------------------------------------------------
-// Kill operations
-// ---------------------------------------------------------------------------
 
 /// Tests `distant kill` by killing the active connection and verifying that
 /// subsequent commands fail. Uses HostManagerCtx directly (not BackendCtx)

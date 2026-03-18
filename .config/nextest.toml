@@ -50,7 +50,7 @@ test-group = 'ssh-integration'
 
 # Parity tests with SSH backend also spawn sshd
 [[profile.default.overrides]]
-filter = 'test(parity::) & test(case_2)'
+filter = 'test(parity::) & test(_ssh)'
 test-group = 'ssh-integration'
 
 # PTY tests use portable-pty which needs careful concurrency

@@ -1,7 +1,7 @@
-//! Smoke test for the `tcp-echo-server` test-harness binary.
+//! Smoke tests for `distant-test-harness` helper binaries.
 //!
-//! Verifies that the server starts, listens on a port, and echoes data back
-//! over a TCP connection.
+//! These tests verify the test infrastructure itself rather than the distant
+//! CLI. Currently covers the `tcp-echo-server` binary.
 
 use std::process::Stdio;
 use std::time::Duration;

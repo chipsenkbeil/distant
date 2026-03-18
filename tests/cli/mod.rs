@@ -18,5 +18,5 @@ mod parity;
 mod pty;
 mod server;
 mod ssh;
-mod tcp_echo_server;
+mod test_harness;
 mod tunnel;

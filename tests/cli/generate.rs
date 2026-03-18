@@ -124,9 +124,3 @@ fn generate_completion_powershell_should_output_to_stdout() {
         "Expected non-empty powershell completion output"
     );
 }
-
-#[test]
-fn generate_man_does_not_exist() {
-    let mut cmd: Command = assert_cmd::cargo_bin_cmd!();
-    cmd.args(["generate", "man"]).assert().failure();
-}

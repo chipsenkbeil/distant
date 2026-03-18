@@ -1,17 +1,16 @@
-//! E2E tests for global CLI options: `--log-level`, `--log-file`,
-//! `--unix-socket` / `--windows-pipe`.
+//! E2E tests for global CLI options: `--log-level` and `--log-file`.
 //!
 //! `--config` is tested in `config.rs`.
 
 use std::process::Command;
 
-use assert_fs::prelude::*;
+use assert_fs::prelude::PathChild as _;
 
 use distant_test_harness::manager::{self, HostManagerCtx};
 
-/// Build a command with custom log settings, bypassing the default
-/// `--log-file` / `--log-level` injected by `new_std_cmd`.
-fn build_cmd_with_log(ctx: &HostManagerCtx, log_level: &str, log_file: &str) -> Command {
+/// Build a `distant version` command with custom log settings, bypassing the
+/// default `--log-file` / `--log-level` injected by `new_std_cmd`.
+fn build_version_cmd_with_log(ctx: &HostManagerCtx, log_level: &str, log_file: &str) -> Command {
     let mut cmd = Command::new(manager::bin_path());
     cmd.arg("version")
         .arg("--log-file")
@@ -34,7 +33,7 @@ async fn log_level_trace_produces_verbose_log() {
     let temp = assert_fs::TempDir::new().unwrap();
     let log_file = temp.child("trace.log");
 
-    let output = build_cmd_with_log(&ctx, "trace", log_file.to_str().unwrap())
+    let output = build_version_cmd_with_log(&ctx, "trace", log_file.to_str().unwrap())
         .output()
         .expect("Failed to run version with trace logging");
 
@@ -50,6 +49,10 @@ async fn log_level_trace_produces_verbose_log() {
         !log_contents.is_empty(),
         "Trace log file should contain output"
     );
+    assert!(
+        log_contents.contains("TRACE"),
+        "Trace log should contain at least one TRACE-level entry"
+    );
 }
 
 #[tokio::test]
@@ -60,12 +63,12 @@ async fn log_level_error_produces_minimal_log() {
     let error_log = temp.child("error.log");
 
     // Run with trace level
-    build_cmd_with_log(&ctx, "trace", trace_log.to_str().unwrap())
+    build_version_cmd_with_log(&ctx, "trace", trace_log.to_str().unwrap())
         .output()
         .expect("Failed to run version with trace logging");
 
     // Run with error level
-    build_cmd_with_log(&ctx, "error", error_log.to_str().unwrap())
+    build_version_cmd_with_log(&ctx, "error", error_log.to_str().unwrap())
         .output()
         .expect("Failed to run version with error logging");
 
@@ -80,6 +83,14 @@ async fn log_level_error_produces_minimal_log() {
         trace_len > error_len,
         "Trace log ({trace_len} bytes) should be larger than error log ({error_len} bytes)"
     );
+
+    let error_contents = std::fs::read_to_string(error_log.path()).unwrap_or_default();
+    for excluded_level in ["INFO", "WARN", "DEBUG", "TRACE"] {
+        assert!(
+            !error_contents.contains(excluded_level),
+            "Error-level log should not contain {excluded_level} entries"
+        );
+    }
 }
 
 #[tokio::test]
@@ -93,7 +104,7 @@ async fn log_file_is_created_at_specified_path() {
         "Log file should not exist before running command"
     );
 
-    let output = build_cmd_with_log(&ctx, "info", log_file.to_str().unwrap())
+    let output = build_version_cmd_with_log(&ctx, "info", log_file.to_str().unwrap())
         .output()
         .expect("Failed to run version with custom log file");
 
@@ -106,23 +117,5 @@ async fn log_file_is_created_at_specified_path() {
     assert!(
         log_file.path().exists(),
         "Log file should be created at the specified path"
-    );
-}
-
-#[tokio::test]
-async fn unix_socket_custom_path() {
-    // The test harness already uses --unix-socket for isolation. A
-    // successful version command proves the custom socket works.
-    let ctx = HostManagerCtx::start();
-
-    let output = ctx
-        .new_std_cmd(["version"])
-        .output()
-        .expect("Failed to run version");
-
-    assert!(
-        output.status.success(),
-        "version via custom unix socket should succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
     );
 }
