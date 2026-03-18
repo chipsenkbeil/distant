@@ -306,16 +306,28 @@ fn build_contents_search_command(
             tool: SearchTool::Rg,
         })
     } else if tools.has_grep {
-        let mut cmd = "grep -rn".to_string();
+        // BSD grep (macOS) does not support --max-depth. When max_depth is set,
+        // use find with -maxdepth to enumerate files, then grep each one.
+        // /dev/null is included so grep always prints file paths even for a
+        // single match. Exit code follows find semantics (0 = ok, else error).
         if let Some(depth) = max_depth {
-            cmd.push_str(&format!(" --max-depth={depth}"));
+            let mut cmd = format!(
+                "find {quoted_path} -maxdepth {depth} -type f \
+                 -exec grep -n {quoted_pattern} {{}} /dev/null \\;"
+            );
+            append_path_filters(&mut cmd, include, exclude);
+            Ok(SearchCommand {
+                command: cmd,
+                tool: SearchTool::Find,
+            })
+        } else {
+            let mut cmd = format!("grep -rn {quoted_pattern} {quoted_path}");
+            append_path_filters(&mut cmd, include, exclude);
+            Ok(SearchCommand {
+                command: cmd,
+                tool: SearchTool::Grep,
+            })
         }
-        cmd.push_str(&format!(" {quoted_pattern} {quoted_path}"));
-        append_path_filters(&mut cmd, include, exclude);
-        Ok(SearchCommand {
-            command: cmd,
-            tool: SearchTool::Grep,
-        })
     } else {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
