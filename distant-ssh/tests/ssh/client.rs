@@ -7,9 +7,11 @@ use std::time::Duration;
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use distant_core::protocol::{
-    ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, RemotePath, SearchQuery,
-    SearchQueryCondition, SearchQueryTarget, SetPermissionsOptions,
+    ChangeKindSet, Environment, FileType, Metadata, Permissions, PtySize, RemotePath,
+    SetPermissionsOptions,
 };
+#[cfg(unix)]
+use distant_core::protocol::{SearchQuery, SearchQueryCondition, SearchQueryTarget};
 use std::sync::LazyLock;
 
 use distant_core::{ChannelExt, Client};
