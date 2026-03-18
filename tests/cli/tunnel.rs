@@ -2,6 +2,7 @@
 //!
 //! Tests forward tunnel creation, data forwarding through tunnels, tunnel
 //! listing, closing, and error handling for missing connections and invalid IDs.
+//! Most tests run against Host, SSH, and Docker backends via rstest.
 
 use std::net::TcpListener;
 use std::process::Stdio;
@@ -25,6 +26,9 @@ const TCP_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Brief pause to let data propagate through the tunnel before signaling EOF.
 const PROPAGATION_DELAY: Duration = Duration::from_millis(200);
+
+/// Lifetime in seconds for echo server processes spawned in tunnel tests.
+const ECHO_SERVER_LIFETIME_SECS: &str = "30";
 
 /// Parses the tunnel ID and actual port from a "Tunnel N started: ..." output line.
 ///
@@ -70,16 +74,14 @@ fn parse_tunnel_started(output: &str) -> (u32, u16) {
     (id, port)
 }
 
-#[tokio::test]
-async fn tunnel_open_prints_local_port() {
-    let ctx = HostManagerCtx::start();
-
+/// Spawns the tcp-echo-server and returns its child process and listening port.
+async fn spawn_echo_server() -> (tokio::process::Child, u16) {
     let echo_bin = exe::build_tcp_echo_server()
         .await
         .expect("failed to build tcp-echo-server");
 
     let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("15")
+        .arg(ECHO_SERVER_LIFETIME_SECS)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
@@ -103,6 +105,19 @@ async fn tunnel_open_prints_local_port() {
         .parse()
         .expect("echo server stdout should be a port number");
 
+    (echo_child, echo_port)
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn tunnel_open_should_print_local_port(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let (_echo, echo_port) = spawn_echo_server().await;
+
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx
         .new_std_cmd(["tunnel", "open"])
@@ -112,7 +127,7 @@ async fn tunnel_open_prints_local_port() {
 
     assert!(
         output.status.success(),
-        "tunnel open should succeed, stderr: {}",
+        "tunnel open should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -133,7 +148,7 @@ async fn tunnel_open_prints_local_port() {
 
 #[rstest]
 #[test_log::test]
-fn tunnel_open_no_connection(manager_only_ctx: ManagerOnlyCtx) {
+fn tunnel_open_should_fail_without_connection(manager_only_ctx: ManagerOnlyCtx) {
     let output = manager_only_ctx
         .new_std_cmd(["tunnel", "open"])
         .arg("0:127.0.0.1:9999")
@@ -147,8 +162,13 @@ fn tunnel_open_no_connection(manager_only_ctx: ManagerOnlyCtx) {
 }
 
 #[rstest]
-#[test_log::test]
-fn tunnel_list_empty(ctx: HostManagerCtx) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn tunnel_list_should_show_no_active_tunnels_when_empty(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_std_cmd(["tunnel", "list"])
         .output()
@@ -156,7 +176,7 @@ fn tunnel_list_empty(ctx: HostManagerCtx) {
 
     assert!(
         output.status.success(),
-        "tunnel list should succeed, stderr: {}",
+        "tunnel list should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -167,38 +187,15 @@ fn tunnel_list_empty(ctx: HostManagerCtx) {
     );
 }
 
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn tunnel_list_shows_active_tunnels() {
-    let ctx = HostManagerCtx::start();
+async fn tunnel_list_should_show_active_tunnels(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("15")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let open_output = ctx
@@ -209,7 +206,7 @@ async fn tunnel_list_shows_active_tunnels() {
 
     assert!(
         open_output.status.success(),
-        "tunnel open should succeed, stderr: {}",
+        "tunnel open should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&open_output.stderr)
     );
 
@@ -239,38 +236,15 @@ async fn tunnel_list_shows_active_tunnels() {
     );
 }
 
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn tunnel_close_by_id() {
-    let ctx = HostManagerCtx::start();
+async fn tunnel_close_should_succeed_by_id(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("15")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let open_output = ctx
@@ -281,7 +255,7 @@ async fn tunnel_close_by_id() {
 
     assert!(
         open_output.status.success(),
-        "tunnel open should succeed, stderr: {}",
+        "tunnel open should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&open_output.stderr)
     );
 
@@ -309,8 +283,13 @@ async fn tunnel_close_by_id() {
 }
 
 #[rstest]
-#[test_log::test]
-fn tunnel_close_invalid_id(ctx: HostManagerCtx) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn tunnel_close_should_fail_with_invalid_id(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_std_cmd(["tunnel", "close"])
         .arg("99999")
@@ -319,42 +298,19 @@ fn tunnel_close_invalid_id(ctx: HostManagerCtx) {
 
     assert!(
         !output.status.success(),
-        "tunnel close with invalid ID should fail"
+        "tunnel close with invalid ID should fail via {backend:?}"
     );
 }
 
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn tunnel_open_specific_local_port() {
-    let ctx = HostManagerCtx::start();
+async fn tunnel_open_should_bind_to_specific_local_port(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("15")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     // Find a free port by binding to port 0, recording the assigned port, then dropping
     // the listener so the tunnel can bind to it.
@@ -374,7 +330,7 @@ async fn tunnel_open_specific_local_port() {
 
     assert!(
         output.status.success(),
-        "tunnel open with specific port should succeed, stderr: {}",
+        "tunnel open with specific port should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -387,9 +343,13 @@ async fn tunnel_open_specific_local_port() {
     );
 }
 
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn tunnel_open_invalid_address() {
-    let ctx = HostManagerCtx::start();
+async fn tunnel_open_should_handle_invalid_address(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
     // 192.0.2.1 is TEST-NET-1 (RFC 5737), unreachable by design.
     // The tunnel is created lazily — it binds locally but only connects to the remote
@@ -420,38 +380,16 @@ async fn tunnel_open_invalid_address() {
     }
 }
 
+/// Docker is excluded because the Docker backend does not support
+/// `tunnel_listen` (returns "tunnel_listen is not supported for Docker backends").
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
 #[tokio::test]
-async fn tunnel_listen_prints_remote_port() {
-    let ctx = HostManagerCtx::start();
+async fn tunnel_listen_should_print_remote_port(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("15")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx
@@ -462,7 +400,7 @@ async fn tunnel_listen_prints_remote_port() {
 
     assert!(
         output.status.success(),
-        "tunnel listen should succeed, stderr: {}",
+        "tunnel listen should succeed via {backend:?}, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -483,7 +421,7 @@ async fn tunnel_listen_prints_remote_port() {
 
 #[rstest]
 #[test_log::test]
-fn tunnel_listen_no_connection(manager_only_ctx: ManagerOnlyCtx) {
+fn tunnel_listen_should_fail_without_connection(manager_only_ctx: ManagerOnlyCtx) {
     let output = manager_only_ctx
         .new_std_cmd(["tunnel", "listen"])
         .arg("0:127.0.0.1:9999")
@@ -496,9 +434,15 @@ fn tunnel_listen_no_connection(manager_only_ctx: ManagerOnlyCtx) {
     );
 }
 
+/// Docker is excluded because the Docker backend does not support
+/// `tunnel_listen` (returns "tunnel_listen is not supported for Docker backends").
 #[rstest]
-#[test_log::test]
-fn tunnel_listen_invalid_address(ctx: HostManagerCtx) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[tokio::test]
+async fn tunnel_listen_should_fail_with_privileged_port(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     // Attempt to listen on a privileged port (port 1) which should fail
     let output = ctx
         .new_std_cmd(["tunnel", "listen"])
@@ -527,37 +471,10 @@ fn tunnel_listen_invalid_address(ctx: HostManagerCtx) {
 #[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
 #[tokio::test]
-async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
+async fn tunnel_open_should_forward_data(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("30")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx
@@ -615,37 +532,10 @@ async fn tunnel_open_data_cross_backend(#[case] backend: Backend) {
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
 #[tokio::test]
-async fn tunnel_listen_data_cross_backend(#[case] backend: Backend) {
+async fn tunnel_listen_should_forward_data(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let echo_bin = exe::build_tcp_echo_server()
-        .await
-        .expect("failed to build tcp-echo-server");
-
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
-        .arg("30")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server");
-
-    let stdout = echo_child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port")
-    .expect("failed to read echo server port");
-
-    let echo_port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server stdout should be a port number");
+    let (_echo, echo_port) = spawn_echo_server().await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx

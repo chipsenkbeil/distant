@@ -1,10 +1,10 @@
 //! E2E CLI tests for `distant connect ssh://`, `distant launch ssh://`, and
 //! `distant ssh` workflows.
 //!
-//! Filesystem and process operation coverage lives in `parity.rs` (which
-//! parameterizes each operation over Host, SSH, and Docker backends). This
-//! file focuses on SSH-specific connection/launch error paths and the
-//! interactive `distant ssh` command.
+//! Filesystem and process operation coverage lives in `cli/client/` modules
+//! (parameterized over Host, SSH, and Docker backends via rstest). This file
+//! focuses on SSH-specific connection/launch error paths and the interactive
+//! `distant ssh` command.
 
 use std::process::Stdio;
 use std::time::Duration;
