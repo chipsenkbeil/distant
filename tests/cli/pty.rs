@@ -13,10 +13,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{
+    Child as PortablePtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system,
+};
 
 use distant_test_harness::exe;
 use distant_test_harness::manager::HostManagerCtx;
+
+/// Default timeout for `expect()` calls waiting for PTY output.
+const EXPECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum time to wait for a child process to exit.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Default PTY column count.
+const PTY_COLS: u16 = 120;
+
+/// Default PTY row count.
+const PTY_ROWS: u16 = 40;
+
+/// Delay (in seconds) used in resize tests to give time for PTY resize before
+/// the child command queries terminal dimensions.
+const RESIZE_DELAY_SECS: u8 = 2;
 
 /// Cross-platform PTY session for testing.
 ///
@@ -25,9 +43,9 @@ use distant_test_harness::manager::HostManagerCtx;
 /// `expect()` calls with configurable timeout.
 pub(super) struct PtySession {
     #[allow(dead_code)]
-    master: Box<dyn portable_pty::MasterPty + Send>,
+    master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
+    child: Box<dyn PortablePtyChild + Send + Sync>,
     buffer: Arc<Mutex<Vec<u8>>>,
     timeout: Duration,
     last_match_end: usize,
@@ -39,8 +57,8 @@ impl PtySession {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: 24,
-                cols: 80,
+                rows: PTY_ROWS,
+                cols: PTY_COLS,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -116,7 +134,7 @@ impl PtySession {
             writer,
             child,
             buffer,
-            timeout: Duration::from_secs(30),
+            timeout: EXPECT_TIMEOUT,
             last_match_end: 0,
         }
     }
@@ -169,14 +187,18 @@ impl PtySession {
     }
 
     pub fn wait_for_exit(&mut self) -> u32 {
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = Instant::now() + EXIT_TIMEOUT;
         loop {
             match self.child.try_wait() {
                 Ok(Some(status)) => return status.exit_code(),
                 Ok(None) => {}
                 Err(e) => panic!("Error waiting for process: {e}"),
             }
-            assert!(Instant::now() < deadline, "Process did not exit within 60s");
+            assert!(
+                Instant::now() < deadline,
+                "Process did not exit within {}s",
+                EXIT_TIMEOUT.as_secs()
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -222,8 +244,11 @@ fn spawn_cmd_args(ctx: &HostManagerCtx, extra_args: &[&str]) -> (PathBuf, Vec<St
     (bin, args)
 }
 
+/// Verifies that `distant shell -- pty-echo` echoes input back through the
+/// PTY channel. Sends "abc" and expects to receive "abc" within the timeout.
+/// A timeout failure indicates the PTY relay is not passing data through.
 #[tokio::test]
-async fn shell_pty_echo_roundtrip() {
+async fn shell_should_echo_input_through_pty() {
     let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
@@ -237,8 +262,11 @@ async fn shell_pty_echo_roundtrip() {
     session.expect("abc");
 }
 
+/// Verifies that `distant shell -- pty-interactive` displays a prompt.
+/// Spawns the interactive helper and expects the `$ ` prompt string within
+/// the timeout. Failure indicates the PTY is not relaying server output.
 #[tokio::test]
-async fn shell_pty_interactive_prompt() {
+async fn shell_should_display_interactive_prompt() {
     let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
@@ -253,8 +281,11 @@ async fn shell_pty_interactive_prompt() {
     session.expect("$ ");
 }
 
+/// Verifies that sending EOF (Ctrl+D on Unix, "exit" command on Windows)
+/// causes `pty-interactive` to exit cleanly with code 0. On Unix, retries
+/// Ctrl+D up to 5 times to handle line-discipline buffering edge cases.
 #[tokio::test]
-async fn shell_pty_interactive_exit() {
+async fn shell_should_exit_on_eof_signal() {
     let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
@@ -290,8 +321,11 @@ async fn shell_pty_interactive_exit() {
     assert_eq!(exit_code, 0, "Expected exit code 0");
 }
 
+/// Verifies that `distant spawn --pty -- pty-echo` allocates a PTY for the
+/// spawned process. Sends "hello" and expects the echo back, confirming that
+/// the `--pty` flag enables PTY allocation in the spawn subcommand.
 #[tokio::test]
-async fn spawn_pty_flag() {
+async fn spawn_should_support_pty_flag() {
     let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
@@ -305,8 +339,11 @@ async fn spawn_pty_flag() {
     session.expect("hello");
 }
 
+/// Verifies that `distant shell --predict off` runs a simple echo command
+/// and exits with code 0. Uses platform-specific echo invocations (`echo`
+/// on Unix, `cmd /c echo` on Windows).
 #[tokio::test]
-async fn predict_off_runs_command() {
+async fn shell_should_run_command_with_predict_off() {
     let ctx = HostManagerCtx::start();
 
     // On Windows, `echo` is a cmd.exe built-in (no echo.exe), so we wrap it.
@@ -331,8 +368,12 @@ async fn predict_off_runs_command() {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict off");
 }
 
+/// Verifies that Ctrl+C (ETX byte 0x03) is forwarded through the PTY relay
+/// to the server-side process. Sends Ctrl+C to `pty-interactive`, then
+/// confirms the shell re-displays a fresh prompt, indicating the interrupt
+/// was handled without crashing.
 #[tokio::test]
-async fn shell_pty_ctrl_c() {
+async fn shell_should_handle_ctrl_c_interrupt() {
     let ctx = HostManagerCtx::start();
     let pty_interactive = exe::build_pty_interactive()
         .await
@@ -356,8 +397,12 @@ async fn shell_pty_ctrl_c() {
     session.expect("$ ");
 }
 
+/// Verifies that password prompts are not echoed when prediction is enabled.
+/// Runs `pty-password` with `--predict on`, types a password, and confirms
+/// authentication succeeds. The prediction engine should detect the echo
+/// suppression and not locally echo the password characters.
 #[tokio::test]
-async fn predict_on_password_suppressed() {
+async fn shell_should_suppress_predicted_password_echo() {
     let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
@@ -374,8 +419,11 @@ async fn predict_on_password_suppressed() {
     session.expect("Authenticated.");
 }
 
+/// Verifies that `distant shell --predict on` runs a simple echo command
+/// and exits with code 0. Uses platform-specific echo invocations (`echo`
+/// on Unix, `cmd /c echo` on Windows).
 #[tokio::test]
-async fn predict_on_runs_command() {
+async fn shell_should_run_command_with_predict_on() {
     let ctx = HostManagerCtx::start();
 
     #[cfg(unix)]
@@ -399,8 +447,11 @@ async fn predict_on_runs_command() {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict on");
 }
 
+/// Verifies that password entry works correctly with prediction disabled.
+/// Runs `pty-password` with `--predict off` and confirms authentication
+/// succeeds, ensuring no prediction interference with echo suppression.
 #[tokio::test]
-async fn predict_off_no_local_echo() {
+async fn shell_should_not_echo_locally_with_predict_off() {
     let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
@@ -420,8 +471,12 @@ async fn predict_off_no_local_echo() {
     session.expect("Authenticated.");
 }
 
+/// Verifies that with `--predict off`, all echo comes from the server, not
+/// from local prediction. Sends characters one at a time through `pty-echo`
+/// and confirms each is echoed back, proving the server relay path works
+/// without local prediction.
 #[tokio::test]
-async fn predict_off_server_echo_only() {
+async fn shell_should_echo_from_server_only_with_predict_off() {
     let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
@@ -431,7 +486,7 @@ async fn predict_off_server_echo_only() {
     // With --predict off, all echo must come from the server.
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", pty_echo_str]);
     let mut session = PtySession::spawn(&bin, &args);
-    session.set_timeout(Duration::from_secs(60));
+    session.set_timeout(EXIT_TIMEOUT);
 
     // Wait for the distant shell to fully connect and enter raw mode before
     // sending input. Using a fixed sleep is insufficient under heavy load —
@@ -450,8 +505,11 @@ async fn predict_off_server_echo_only() {
     session.expect("z");
 }
 
+/// Verifies that with `--predict on`, characters are echoed immediately
+/// (locally predicted) before server confirmation. Sends a string through
+/// `pty-echo` and expects it back within the timeout.
 #[tokio::test]
-async fn predict_on_immediate_echo() {
+async fn shell_should_echo_immediately_with_predict_on() {
     let ctx = HostManagerCtx::start();
     let pty_echo = exe::build_pty_echo()
         .await
@@ -467,8 +525,13 @@ async fn predict_on_immediate_echo() {
     session.expect("predict-immediate");
 }
 
+/// Verifies the prediction mismatch detection and correction cycle. With
+/// `--predict on`, the password prompt disables server echo, causing a
+/// mismatch between predicted and actual output. The engine should detect
+/// this, suppress further predictions, transmit the password, and resume
+/// normal operation after authentication.
 #[tokio::test]
-async fn predict_on_mismatch_correction() {
+async fn shell_should_correct_prediction_mismatch() {
     let ctx = HostManagerCtx::start();
     let pty_password = exe::build_pty_password()
         .await
@@ -488,19 +551,27 @@ async fn predict_on_mismatch_correction() {
     session.expect("Authenticated.");
 }
 
+/// Verifies that PTY resize events propagate from the local terminal through
+/// `distant shell` to the remote process. Resizes the PTY to 50x132, then
+/// checks that the remote command (`stty size` on Unix, `mode con` on
+/// Windows) reports 50 rows after a delay.
 #[tokio::test]
-async fn spawn_pty_resize() {
+async fn spawn_should_propagate_pty_resize() {
     let ctx = HostManagerCtx::start();
+
+    let delay_str = RESIZE_DELAY_SECS.to_string();
 
     // Platform-specific commands to check terminal size after a delay.
     // The delay gives us time to resize the PTY before the command checks.
     #[cfg(unix)]
-    let extra_args: &[&str] = &["--predict", "off", "--", "sh", "-c", "'sleep 2; stty size'"];
+    let sleep_cmd = format!("'sleep {delay_str}; stty size'");
+    #[cfg(unix)]
+    let extra_args: Vec<&str> = vec!["--predict", "off", "--", "sh", "-c", &sleep_cmd];
 
     // On Windows, `mode con` reports console dimensions including "Lines:" and "Columns:".
     // Each token is a separate arg so cmd.exe interprets `&` and `>` as operators.
     #[cfg(windows)]
-    let extra_args: &[&str] = &[
+    let extra_args: Vec<&str> = vec![
         "--predict",
         "off",
         "--",
@@ -508,7 +579,7 @@ async fn spawn_pty_resize() {
         "/c",
         "timeout",
         "/t",
-        "2",
+        &delay_str,
         "/nobreak",
         ">nul",
         "2>nul",
@@ -517,7 +588,7 @@ async fn spawn_pty_resize() {
         "con",
     ];
 
-    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let (bin, args) = shell_cmd_args(&ctx, &extra_args);
     let mut session = PtySession::spawn(&bin, &args);
 
     // Resize PTY to 50 rows x 132 cols before the delay expires.
@@ -527,8 +598,12 @@ async fn spawn_pty_resize() {
     session.expect("50");
 }
 
+/// Verifies that alternate screen mode entry and exit work through
+/// `distant shell`. Enters alternate screen (smcup), exits it (rmcup),
+/// then prints a marker. The marker appearing confirms the PTY relay
+/// handles mode-switching escape sequences correctly.
 #[tokio::test]
-async fn shell_alternate_screen_entry() {
+async fn shell_should_enter_alternate_screen() {
     let ctx = HostManagerCtx::start();
 
     // Verify that alternate screen mode entry/exit works through distant shell.
@@ -563,8 +638,12 @@ async fn shell_alternate_screen_entry() {
     session.expect("ALT_ENTRY_OK");
 }
 
+/// Verifies that content printed inside the alternate screen buffer is
+/// discarded when returning to the main buffer. Enters alternate screen,
+/// prints "IN_ALT", exits alternate screen, then prints "RESTORED".
+/// Expects "RESTORED" to confirm the main buffer is restored correctly.
 #[tokio::test]
-async fn shell_alternate_screen_exit() {
+async fn shell_should_exit_alternate_screen() {
     let ctx = HostManagerCtx::start();
 
     // Enter alt screen, print content (discarded on rmcup), exit alt screen,
