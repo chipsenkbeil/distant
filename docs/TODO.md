@@ -45,7 +45,20 @@ VM performance variance on `windows-latest` — mitigated with nextest retries
 - **Test read deadlines**: proc_spawn tests had 5–15 second deadlines for
   reading stdout/stderr, too aggressive for slow Windows VMs. Increased to 30s.
 
-### TD-3: Windows SSH copy cyclic-copy edge case
+### TD-3: `spawn --current-dir` flaky under parallel load
+
+**(Bug)** `should_support_current_dir_option` test intermittently gets empty
+stdout when running under parallel load. Root cause: `ProcDone` can arrive in
+a separate transport frame before `ProcStdout`, causing
+`process_incoming_responses` (in `distant-core/src/client/process.rs`) to
+return immediately and drop `stdout_tx` before the stdout data is received.
+
+- **Crate:** `distant-core`
+- **File:** `distant-core/src/client/process.rs` (`process_incoming_responses`)
+- **Fix:** After receiving `ProcDone`, continue draining the mailbox briefly
+  to collect any remaining `ProcStdout`/`ProcStderr` data before returning.
+
+### TD-4: Windows SSH copy cyclic-copy edge case
 
 **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
 (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
@@ -56,7 +69,7 @@ sibling files in the same directory.
 - **Crate:** `distant-ssh`
 - **File:** `distant-ssh/src/utils.rs`
 
-### TD-4: Docker image pull has no CLI-visible progress
+### TD-5: Docker image pull has no CLI-visible progress
 
 **(Limitation)** Docker image pull has no CLI-visible progress — `info!` logs
 require `--log-level info` and go to the log file. Need a progress callback
@@ -65,7 +78,7 @@ during long plugin operations like image pulls.
 
 - **Crate:** `distant-docker`
 
-### TD-5: Terminal programs hang after termwiz removal
+### TD-6: Terminal programs hang after termwiz removal
 
 **(Bug)** Running `distant ssh` or `distant shell` after removing termwiz has
 resulted in programs like `nvim` (neovim) hanging and not displaying anything
@@ -78,7 +91,7 @@ visual display of the processes (no refresh, no time tick displayed).
   applications that use alternate screen buffers or rely on specific terminal
   capabilities.
 
-### TD-6: SSH config HostName not respected
+### TD-7: SSH config HostName not respected
 
 **(Bug)** Performing `distant ssh windows-vm` fails to connect to
 `ssh://windows-vm` with "failed to lookup address information: nodename nor

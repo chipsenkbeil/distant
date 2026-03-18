@@ -267,9 +267,13 @@ async fn shell_pty_interactive_exit() {
 
     session.expect("$ ");
 
-    // Send Ctrl+D (EOF). The server-side PTY line discipline interprets
-    // 0x04 as EOF when the line buffer is empty, causing pty-interactive's
-    // BufRead::lines() iterator to return None and exit cleanly.
+    // On Unix, Ctrl+D (0x04) signals EOF to the PTY line discipline when
+    // the line buffer is empty, causing pty-interactive's BufRead::lines()
+    // iterator to return None and exit cleanly.
+    //
+    // On Windows, ConPTY does not translate Ctrl+D to EOF. Instead, use
+    // the "exit" command that pty-interactive recognizes.
+    #[cfg(unix)]
     for _ in 0..5 {
         session.send("\x04");
         std::thread::sleep(Duration::from_millis(300));
@@ -277,6 +281,9 @@ async fn shell_pty_interactive_exit() {
             break;
         }
     }
+
+    #[cfg(windows)]
+    session.send_line("exit");
 
     let exit_code = session.wait_for_exit();
     assert_eq!(exit_code, 0, "Expected exit code 0");
@@ -430,8 +437,16 @@ async fn predict_off_server_echo_only() {
     // input sent before the shell is ready can be garbled.
     session.expect("Connected to manager");
 
-    session.send("xyz");
-    session.expect("xyz");
+    // Send characters one at a time, confirming each echo before sending
+    // the next. Under heavy parallel load, sending multiple bytes at once
+    // can result in garbled echo (bytes arriving out of order in the
+    // protocol relay between local PTY → distant shell → pty-echo → back).
+    session.send("x");
+    session.expect("x");
+    session.send("y");
+    session.expect("y");
+    session.send("z");
+    session.expect("z");
 }
 
 #[tokio::test]

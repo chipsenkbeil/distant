@@ -9,6 +9,7 @@
 //! filesystem (Host, SSH) or inside a container (Docker).
 
 use std::io::Write as _;
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use rstest::*;
@@ -23,12 +24,22 @@ use distant_test_harness::skip_if_no_backend;
 fn unique_dir(ctx: &BackendCtx, label: &str) -> String {
     let id: u64 = rand::random();
     let base = match ctx.backend() {
-        Backend::Docker => std::path::PathBuf::from("/tmp"),
+        Backend::Docker => PathBuf::from("/tmp"),
         _ => std::env::temp_dir(),
     };
     base.join(format!("distant-parity-{label}-{id}"))
         .to_string_lossy()
         .to_string()
+}
+
+/// Joins a child filename to a parent directory, using the correct
+/// path separator for the backend. Docker always uses `/` (Linux).
+/// Host and SSH use the platform separator.
+fn child_path(ctx: &BackendCtx, dir: &str, name: &str) -> String {
+    match ctx.backend() {
+        Backend::Docker => format!("{dir}/{name}"),
+        _ => PathBuf::from(dir).join(name).to_string_lossy().to_string(),
+    }
 }
 
 /// Creates a file through the distant CLI, works for all backends.
@@ -107,7 +118,7 @@ fn fs_read_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "read");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/read-test.txt");
+    let path = child_path(&ctx, &dir, "read-test.txt");
     cli_write(&ctx, &path, "parity read content");
 
     ctx.new_assert_cmd(["fs", "read"])
@@ -126,7 +137,7 @@ fn fs_write_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "write");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/write-test.txt");
+    let path = child_path(&ctx, &dir, "write-test.txt");
 
     // This is the operation under test
     let mut child = ctx
@@ -164,8 +175,8 @@ fn fs_copy(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "copy");
     cli_mkdir(&ctx, &dir);
-    let src = format!("{dir}/copy-src.txt");
-    let dst = format!("{dir}/copy-dst.txt");
+    let src = child_path(&ctx, &dir, "copy-src.txt");
+    let dst = child_path(&ctx, &dir, "copy-dst.txt");
     cli_write(&ctx, &src, "parity copy content");
 
     ctx.new_assert_cmd(["fs", "copy"])
@@ -187,7 +198,7 @@ fn fs_exists(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "exists");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/exists-test.txt");
+    let path = child_path(&ctx, &dir, "exists-test.txt");
     cli_write(&ctx, &path, "exists");
 
     let output = ctx
@@ -217,7 +228,7 @@ fn fs_make_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "mkdir");
     cli_mkdir(&ctx, &dir);
-    let new_dir = format!("{dir}/new-dir");
+    let new_dir = child_path(&ctx, &dir, "new-dir");
 
     ctx.new_assert_cmd(["fs", "make-dir"])
         .arg(&new_dir)
@@ -239,7 +250,7 @@ fn fs_remove(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "remove");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/remove-test.txt");
+    let path = child_path(&ctx, &dir, "remove-test.txt");
     cli_write(&ctx, &path, "to be removed");
     assert!(cli_exists(&ctx, &path), "File should exist before removal");
 
@@ -263,8 +274,8 @@ fn fs_rename(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "rename");
     cli_mkdir(&ctx, &dir);
-    let src = format!("{dir}/rename-src.txt");
-    let dst = format!("{dir}/rename-dst.txt");
+    let src = child_path(&ctx, &dir, "rename-src.txt");
+    let dst = child_path(&ctx, &dir, "rename-dst.txt");
     cli_write(&ctx, &src, "rename content");
 
     ctx.new_assert_cmd(["fs", "rename"])
@@ -294,7 +305,7 @@ fn fs_metadata(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "metadata");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/metadata-test.txt");
+    let path = child_path(&ctx, &dir, "metadata-test.txt");
     cli_write(&ctx, &path, "metadata content");
 
     let output = ctx
@@ -416,8 +427,8 @@ fn fs_read_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "readdir");
     cli_mkdir(&ctx, &dir);
-    cli_write(&ctx, &format!("{dir}/aaa.txt"), "a");
-    cli_write(&ctx, &format!("{dir}/bbb.txt"), "b");
+    cli_write(&ctx, &child_path(&ctx, &dir, "aaa.txt"), "a");
+    cli_write(&ctx, &child_path(&ctx, &dir, "bbb.txt"), "b");
 
     // `distant fs read <dir>` returns directory entries when given a directory
     let output = ctx
@@ -452,7 +463,7 @@ fn fs_set_permissions(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(ctx_for_backend(backend));
     let dir = unique_dir(&ctx, "perms");
     cli_mkdir(&ctx, &dir);
-    let path = format!("{dir}/perms-test.txt");
+    let path = child_path(&ctx, &dir, "perms-test.txt");
     cli_write(&ctx, &path, "perms content");
 
     // Set file to readonly using chmod-style mode
@@ -482,10 +493,10 @@ fn fs_search(#[case] backend: Backend) {
     cli_mkdir(&ctx, &dir);
     cli_write(
         &ctx,
-        &format!("{dir}/needle.txt"),
+        &child_path(&ctx, &dir, "needle.txt"),
         "haystack needle haystack",
     );
-    cli_write(&ctx, &format!("{dir}/other.txt"), "no match here");
+    cli_write(&ctx, &child_path(&ctx, &dir, "other.txt"), "no match here");
 
     // `distant fs search <pattern> [PATHS]...` — pattern is the first positional arg
     let output = ctx
