@@ -136,16 +136,8 @@ pub fn build_search_command(query: &SearchQuery, tools: &SearchTools) -> io::Res
     let pattern = build_unix_pattern(&query.condition);
 
     // Build include/exclude filter patterns from query options
-    let include_pattern = query
-        .options
-        .include
-        .as_ref()
-        .map(build_unix_pattern);
-    let exclude_pattern = query
-        .options
-        .exclude
-        .as_ref()
-        .map(build_unix_pattern);
+    let include_pattern = query.options.include.as_ref().map(build_unix_pattern);
+    let exclude_pattern = query.options.exclude.as_ref().map(build_unix_pattern);
     let max_depth = query.options.max_depth;
 
     match query.target {
@@ -220,7 +212,10 @@ fn shell_quote(s: &str) -> String {
 fn append_path_filters(cmd: &mut String, include: Option<&str>, exclude: Option<&str>) {
     if let Some(inc) = include {
         let escaped = awk_escape_regex(inc);
-        cmd.push_str(&format!(" | awk -F: -v pat={} '$1 ~ pat'", shell_quote(&escaped)));
+        cmd.push_str(&format!(
+            " | awk -F: -v pat={} '$1 ~ pat'",
+            shell_quote(&escaped)
+        ));
     }
     if let Some(exc) = exclude {
         let escaped = awk_escape_regex(exc);
