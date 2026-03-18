@@ -461,15 +461,11 @@ async fn tunnel_listen_should_fail_with_privileged_port(#[case] backend: Backend
     }
 }
 
-/// The echo server runs on the host, so `tunnel open` forwarding to `127.0.0.1`
-/// works for Host and SSH (where the remote side is still the local machine).
-/// Docker is included because the tunnel forwards from the local side through
-/// the manager to the backend — for the Host-based echo server, the connection
-/// target (`127.0.0.1:<port>`) is resolved on the host, not inside the container.
+/// Docker is excluded because the tunnel resolves `127.0.0.1` on the remote
+/// (container) side, which cannot reach the echo server running on the host.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn tunnel_open_should_forward_data(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);

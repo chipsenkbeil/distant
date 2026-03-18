@@ -1975,6 +1975,10 @@ async fn version_should_return_server_version_and_capabilities(#[future] client:
     );
 }
 
+/// SSH search requires Unix tools (rg/grep/find) on the remote host.
+/// On Windows, the remote sshd runs in a Windows environment where these
+/// tools are unavailable, so search is correctly unsupported.
+#[cfg(unix)]
 #[rstest]
 #[test(tokio::test)]
 async fn search_should_find_matching_paths(#[future] client: Ctx<Client>) {

@@ -62,9 +62,18 @@ pub async fn probe_search_tools(pool: &Arc<pool::ChannelPool>) -> SearchTools {
     tools
 }
 
-/// Check whether a single tool is available on the remote host.
+/// Check whether a Unix-compatible search tool is available on the remote host.
+///
+/// Uses `--version` probes instead of `which` to avoid false positives from
+/// incompatible Windows binaries (e.g., Windows `find.exe` is not Unix `find`).
+/// For `find`, tests `-maxdepth` support since `--version` is not portable.
 async fn probe_tool(pool: &Arc<pool::ChannelPool>, tool: &str) -> io::Result<utils::ExecOutput> {
-    let cmd = format!("which {tool}");
+    let cmd = match tool {
+        // Unix find may not support --version (BSD find doesn't), so test a
+        // Unix-specific flag. Windows find.exe will fail on this syntax.
+        "find" => "find /dev/null -maxdepth 0 2>/dev/null".to_string(),
+        _ => format!("{tool} --version 2>/dev/null"),
+    };
     let (channel, _permit) = pool.open_exec().await?.take();
     utils::execute_output_on_channel(channel, &cmd, None).await
 }

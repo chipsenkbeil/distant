@@ -14,6 +14,9 @@ use distant_test_harness::skip_if_no_backend;
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_find_matching_content(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search");
     ctx.cli_mkdir(&dir);
@@ -49,6 +52,9 @@ fn should_find_matching_content(#[case] backend: Backend) {
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_target_path(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search-path");
     ctx.cli_mkdir(&dir);
@@ -80,6 +86,9 @@ fn should_support_target_path(#[case] backend: Backend) {
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_return_no_results_for_nonmatching_pattern(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search-nomatch");
     ctx.cli_mkdir(&dir);
@@ -93,12 +102,16 @@ fn should_return_no_results_for_nonmatching_pattern(#[case] backend: Backend) {
         .stdout("");
 }
 
+/// Docker is excluded because its search implementation does not support
+/// include/exclude filters.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_include_filter(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search-include");
     ctx.cli_mkdir(&dir);
@@ -124,12 +137,16 @@ fn should_support_include_filter(#[case] backend: Backend) {
     );
 }
 
+/// Docker is excluded because its search implementation does not support
+/// include/exclude filters.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_exclude_filter(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search-exclude");
     ctx.cli_mkdir(&dir);
@@ -155,12 +172,16 @@ fn should_support_exclude_filter(#[case] backend: Backend) {
     );
 }
 
+/// Docker is excluded because its search implementation does not support
+/// the max-depth option.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_max_depth_option(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
     let ctx = skip_if_no_backend!(backend);
     let dir = ctx.unique_dir("search-depth");
     ctx.cli_mkdir(&dir);

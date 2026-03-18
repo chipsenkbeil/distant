@@ -22,10 +22,11 @@ fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String
     (bin, args)
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_input_through_pty(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -41,10 +42,11 @@ async fn should_echo_input_through_pty(#[case] backend: Backend) {
     session.expect("abc");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_display_interactive_prompt(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -61,10 +63,11 @@ async fn should_display_interactive_prompt(#[case] backend: Backend) {
     session.expect("$ ");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_exit_on_eof_signal(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -125,10 +128,11 @@ async fn should_run_command_with_predict_off(#[case] backend: Backend) {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict off");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -149,10 +153,11 @@ async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
     session.expect("$ ");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_suppress_predicted_password_echo(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -200,10 +205,11 @@ async fn should_run_command_with_predict_on(#[case] backend: Backend) {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict on");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -222,10 +228,11 @@ async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
     session.expect("Authenticated.");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -248,10 +255,11 @@ async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend)
     session.expect("z");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -267,10 +275,11 @@ async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
     session.expect("predict-immediate");
 }
 
+/// Docker is excluded because pty-* test binaries are compiled on the host
+/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_correct_prediction_mismatch(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);

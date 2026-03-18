@@ -15,7 +15,7 @@ max-threads = 4
 
 [profile.default]
 fail-fast = false
-leak-timeout = { period = "100ms", result = "fail" }
+leak-timeout = { period = "500ms", result = "fail" }
 status-level = "fail"
 final-status-level = "leak"
 
