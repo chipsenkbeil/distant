@@ -1977,32 +1977,36 @@ async fn version_should_return_server_version_and_capabilities(#[future] client:
 
 #[rstest]
 #[test(tokio::test)]
-async fn search_should_fail_as_unsupported(#[future] client: Ctx<Client>) {
+async fn search_should_find_matching_paths(#[future] client: Ctx<Client>) {
+    use assert_fs::prelude::*;
+
     let mut client = client.await;
     let temp = assert_fs::TempDir::new().unwrap();
+    temp.child("needle.txt").write_str("content").unwrap();
+    temp.child("other.txt").write_str("content").unwrap();
 
-    let result = client
+    let _searcher = client
         .search(SearchQuery {
             target: SearchQueryTarget::Path,
             condition: SearchQueryCondition::Contains {
-                value: "test".to_string(),
+                value: "needle".to_string(),
             },
             paths: vec![RemotePath::from(temp.path().to_path_buf())],
             options: Default::default(),
         })
-        .await;
-
-    assert!(result.is_err(), "Search should fail as unsupported");
+        .await
+        .expect("Search should succeed");
 }
 
 #[rstest]
 #[test(tokio::test)]
-async fn cancel_search_should_fail_as_unsupported(#[future] client: Ctx<Client>) {
+async fn cancel_search_should_succeed(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
+    // cancel_search is a no-op since search completes synchronously,
+    // but it should not return an error.
     let result = client.cancel_search(0).await;
-
-    assert!(result.is_err(), "Cancel search should fail as unsupported");
+    assert!(result.is_ok(), "Cancel search should succeed: {result:?}");
 }
 
 #[rstest]
