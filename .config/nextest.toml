@@ -48,14 +48,14 @@ test-group = 'service-tests'
 filter = 'test(ssh_) | test(connect_ssh) | test(launch_ssh)'
 test-group = 'ssh-integration'
 
-# Parity tests with SSH backend also spawn sshd
+# Multi-backend tests with SSH cases also spawn sshd
 [[profile.default.overrides]]
-filter = 'test(parity::) & test(_ssh)'
+filter = 'test(case_2_ssh)'
 test-group = 'ssh-integration'
 
 # PTY tests use portable-pty which needs careful concurrency
 [[profile.default.overrides]]
-filter = 'test(pty::)'
+filter = 'test(shell::) | test(spawn::)'
 test-group = 'pty-tests'
 
 [profile.ci]

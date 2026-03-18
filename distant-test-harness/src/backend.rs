@@ -6,8 +6,9 @@
 //! interface. Tests can use rstest `#[case]` parameters to run the same
 //! assertion against multiple backends.
 
+use std::io::Write as _;
 use std::path::PathBuf;
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Stdio};
 
 use assert_cmd::Command;
 
@@ -95,6 +96,113 @@ impl BackendCtx {
             #[cfg(feature = "docker")]
             Self::Docker(ctx) => ctx.cmd_parts(subcommands),
         }
+    }
+
+    /// Produces a new [`assert_cmd::Command`] configured with a single subcommand.
+    #[inline]
+    pub fn cmd(&self, subcommand: &'static str) -> Command {
+        self.new_assert_cmd(vec![subcommand])
+    }
+
+    /// Returns a unique temp directory path valid for the backend's filesystem.
+    ///
+    /// Docker containers always use `/tmp/` (Linux). Host and SSH use the
+    /// platform's temp directory (also `/tmp/` on Unix, `%TEMP%` on Windows).
+    pub fn unique_dir(&self, label: &str) -> String {
+        let id: u64 = rand::random();
+        let base = match self.backend() {
+            Backend::Docker => PathBuf::from("/tmp"),
+            _ => std::env::temp_dir(),
+        };
+        base.join(format!("distant-test-{label}-{id}"))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// Joins a child filename to a parent directory, using the correct
+    /// path separator for the backend.
+    ///
+    /// Docker always uses `/` (Linux). Host and SSH use the platform separator.
+    pub fn child_path(&self, dir: &str, name: &str) -> String {
+        match self.backend() {
+            Backend::Docker => format!("{dir}/{name}"),
+            _ => PathBuf::from(dir).join(name).to_string_lossy().to_string(),
+        }
+    }
+
+    /// Creates a file through the distant CLI, working across all backends.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the write command fails.
+    pub fn cli_write(&self, path: &str, content: &str) {
+        let mut child = self
+            .new_std_cmd(["fs", "write"])
+            .arg(path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn fs write");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "fs write setup failed for {path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Reads a file through the distant CLI, working across all backends.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the read command fails.
+    pub fn cli_read(&self, path: &str) -> String {
+        let output = self
+            .new_std_cmd(["fs", "read"])
+            .arg(path)
+            .output()
+            .expect("failed to run fs read");
+        assert!(
+            output.status.success(),
+            "fs read failed for {path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Checks if a path exists through the distant CLI, working across all backends.
+    pub fn cli_exists(&self, path: &str) -> bool {
+        let output = self
+            .new_std_cmd(["fs", "exists"])
+            .arg(path)
+            .output()
+            .expect("failed to run fs exists");
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("true")
+    }
+
+    /// Creates a directory through the distant CLI, working across all backends.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the make-dir command fails.
+    pub fn cli_mkdir(&self, path: &str) {
+        let output = self
+            .new_std_cmd(["fs", "make-dir"])
+            .arg(path)
+            .output()
+            .expect("failed to run fs make-dir");
+        assert!(
+            output.status.success(),
+            "fs make-dir failed for {path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 

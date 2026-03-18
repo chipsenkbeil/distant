@@ -1,23 +1,51 @@
 //! Integration tests for the `distant version` CLI subcommand.
 //!
-//! Tests displaying client/server version information, protocol version,
-//! and capability support.
+//! Tests displaying version information. Runs against Host, SSH, and Docker backends.
 
-use std::process::Stdio;
-
-use distant_core::protocol::{PROTOCOL_VERSION, semver};
 use rstest::*;
 
-use distant_test_harness::manager::*;
-use distant_test_harness::utils::predicates_ext::TrimmedLinesMatchPredicate;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_capabilities(ctx: HostManagerCtx) {
-    // Because all of our crates have the same version, we can expect it to match
+fn should_output_version(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["version"])
+        .output()
+        .expect("Failed to run version");
+
+    assert!(
+        output.status.success(),
+        "version should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.trim().is_empty(),
+        "Expected version output, got empty"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[test_log::test]
+fn should_output_capabilities(#[case] backend: Backend) {
+    use distant_core::protocol::{PROTOCOL_VERSION, semver};
+
+    use distant_test_harness::utils::predicates_ext::TrimmedLinesMatchPredicate;
+
+    let ctx = skip_if_no_backend!(backend);
+
+    // Safety: CARGO_PKG_VERSION is always set during build
     let version: semver::Version = env!("CARGO_PKG_VERSION").parse().unwrap();
 
-    // Add the package name to the client version information
     let client_version = if version.build.is_empty() {
         let mut version = version.clone();
         version.build = semver::BuildMetadata::new(env!("CARGO_PKG_NAME")).unwrap();
@@ -29,7 +57,6 @@ fn should_output_capabilities(ctx: HostManagerCtx) {
         version
     };
 
-    // Add the distant-host to the server version information
     let server_version = if version.build.is_empty() {
         let mut version = version;
         version.build = semver::BuildMetadata::new("distant-host").unwrap();
@@ -41,8 +68,6 @@ fn should_output_capabilities(ctx: HostManagerCtx) {
         version
     };
 
-    // Since our client and server are built the same, all capabilities should be listed with +
-    // and using 4 columns since we are not using a tty
     let expected = indoc::formatdoc! {"
         Client: {client_version} (Protocol {PROTOCOL_VERSION})
         Server: {server_version} (Protocol {PROTOCOL_VERSION})
@@ -58,8 +83,15 @@ fn should_output_capabilities(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_json_format_flag(ctx: HostManagerCtx) {
+fn should_support_json_format_flag(#[case] backend: Backend) {
+    use std::process::Stdio;
+
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_std_cmd(["version", "--format", "json"])
         .stdin(Stdio::null())
@@ -76,7 +108,6 @@ fn should_support_json_format_flag(ctx: HostManagerCtx) {
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
         .expect("version --format json should produce valid JSON");
 
-    // Verify the JSON contains the Version struct fields
     assert!(parsed.is_object(), "Expected JSON object, got: {parsed}");
     let obj = parsed.as_object().unwrap();
     assert!(

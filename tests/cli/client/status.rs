@@ -1,15 +1,20 @@
 //! Integration tests for the `distant status` CLI subcommand.
 //!
 //! Tests displaying active connections in JSON format and querying detail
-//! for a specific connection by ID.
+//! for a specific connection by ID. Host-only since status queries the
+//! manager's connection list.
 
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_output_connections_in_json_mode(ctx: HostManagerCtx) {
+fn should_output_connections_in_json_mode(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
         .assert()
@@ -19,7 +24,6 @@ fn should_output_connections_in_json_mode(ctx: HostManagerCtx) {
     let parsed: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("stdout should be valid JSON");
 
-    // The JSON output should be a map of connection id -> destination
     assert!(parsed.is_object(), "Expected JSON object, got: {parsed}");
     assert!(
         !parsed.as_object().unwrap().is_empty(),
@@ -28,9 +32,11 @@ fn should_output_connections_in_json_mode(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_output_detail_for_specific_connection(ctx: HostManagerCtx) {
-    // First get the connection ID from JSON status
+fn should_output_detail_for_specific_connection(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
         .assert()
@@ -46,8 +52,6 @@ fn should_output_detail_for_specific_connection(ctx: HostManagerCtx) {
         .expect("Should have at least one connection")
         .clone();
 
-    // Now get detail for that specific connection — need to use new_std_cmd
-    // since new_assert_cmd only accepts &'static str
     let detail_output = ctx
         .new_std_cmd(vec!["status"])
         .arg(&id)

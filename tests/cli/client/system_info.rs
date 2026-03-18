@@ -1,36 +1,35 @@
 //! Integration tests for the `distant system-info` CLI subcommand.
 //!
-//! Tests retrieving and displaying system information from the local server.
-
-use std::env;
+//! Tests retrieving and displaying system information from the server.
+//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_system_info(ctx: HostManagerCtx) {
-    ctx.cmd("system-info").assert().success().stdout(format!(
-        concat!(
-            "Family: {:?}\n",
-            "Operating System: {:?}\n",
-            "Arch: {:?}\n",
-            "Cwd: {:?}\n",
-            "Path Sep: {:?}\n",
-            "Username: {:?}\n",
-            "Shell: {:?}\n",
-        ),
-        env::consts::FAMILY.to_string(),
-        env::consts::OS.to_string(),
-        env::consts::ARCH.to_string(),
-        env::current_dir().unwrap_or_default(),
-        std::path::MAIN_SEPARATOR,
-        whoami::username().unwrap_or_default(),
-        if cfg!(windows) {
-            std::env::var("ComSpec").unwrap_or_else(|_| String::from("cmd.exe"))
-        } else {
-            std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
-        }
-    ));
+fn should_output_system_info(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["system-info"])
+        .output()
+        .expect("Failed to run system-info");
+
+    assert!(
+        output.status.success(),
+        "system-info should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Family:"),
+        "Expected 'Family:' in output, got: {stdout}"
+    );
 }

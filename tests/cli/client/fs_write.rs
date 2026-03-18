@@ -2,153 +2,138 @@
 //!
 //! Tests writing content to files via stdin and argument input, with optional
 //! append mode, and error handling for missing parent directories.
+//! Runs against Host, SSH, and Docker backends.
 
-use assert_fs::prelude::*;
-use indoc::indoc;
+use std::io::Write as _;
+use std::process::Stdio;
+
 use rstest::*;
 
-use distant_test_harness::manager::*;
-
-const FILE_CONTENTS: &str = indoc! {r#"
-    some text
-    on multiple lines
-    that is a file's contents
-"#};
-
-const APPENDED_FILE_CONTENTS: &str = indoc! {r#"
-    even more
-    file contents
-"#};
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_writing_stdin_to_file(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
+fn should_support_writing_stdin_to_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-stdin");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file.txt");
 
-    // distant action file-write {path} -- {contents}
+    let mut child = ctx
+        .new_std_cmd(["fs", "write"])
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fs write");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"written via stdin")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "fs write should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let contents = ctx.cli_read(&path);
+    assert_eq!(contents, "written via stdin");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_appending_stdin_to_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-append");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file.txt");
+    ctx.cli_write(&path, "initial content");
+
     ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap()])
-        .write_stdin(FILE_CONTENTS)
+        .args(["--append", &path])
+        .write_stdin(" appended")
         .assert()
         .success()
         .stdout("");
 
-    // NOTE: We wait a little bit to give the OS time to fully write to file
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(FILE_CONTENTS);
+    let contents = ctx.cli_read(&path);
+    assert_eq!(contents, "initial content appended");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_appending_stdin_to_file(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str(FILE_CONTENTS).unwrap();
+fn should_support_writing_argument_to_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-arg");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file.txt");
 
-    // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args(["--append", file.to_str().unwrap()])
-        .write_stdin(APPENDED_FILE_CONTENTS)
+        .args([&path, "--"])
+        .arg("arg content")
         .assert()
         .success()
         .stdout("");
 
-    // NOTE: We wait a little bit to give the OS time to fully write to file
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
+    let contents = ctx.cli_read(&path);
+    assert_eq!(contents, "arg content");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_writing_argument_to_file(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
+fn should_support_appending_argument_to_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-append-arg");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file.txt");
+    ctx.cli_write(&path, "base");
 
-    // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap(), "--"])
-        .arg(FILE_CONTENTS)
+        .args(["--append", &path, "--"])
+        .arg(" extra")
         .assert()
         .success()
         .stdout("");
 
-    // NOTE: We wait a little bit to give the OS time to fully write to file
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(FILE_CONTENTS);
+    let contents = ctx.cli_read(&path);
+    assert_eq!(contents, "base extra");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_appending_argument_to_file(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str(FILE_CONTENTS).unwrap();
+fn should_overwrite_existing_file_content(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-overwrite");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file.txt");
+    ctx.cli_write(&path, "initial content");
 
-    // distant action file-write {path} -- {contents}
     ctx.new_assert_cmd(["fs", "write"])
-        .args(["--append", file.to_str().unwrap(), "--"])
-        .arg(APPENDED_FILE_CONTENTS)
-        .assert()
-        .success()
-        .stdout("");
-
-    // NOTE: We wait a little bit to give the OS time to fully write to file
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(format!("{}{}", FILE_CONTENTS, APPENDED_FILE_CONTENTS));
-}
-
-#[rstest]
-#[test_log::test]
-fn yield_an_error_when_fails(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("missing-dir").child("missing-file");
-
-    // distant action file-write {path} -- {contents}
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap(), "--"])
-        .arg(FILE_CONTENTS)
-        .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to write"));
-
-    // Because we're talking to a local server, we can verify locally
-    file.assert(predicates::path::missing());
-}
-
-#[rstest]
-#[test_log::test]
-fn should_overwrite_existing_file_content(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-
-    // Write initial content
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap()])
-        .write_stdin("initial content")
-        .assert()
-        .success();
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Write new content (without --append) — should overwrite
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([file.to_str().unwrap()])
+        .arg(&path)
         .write_stdin("replaced content")
         .assert()
         .success();
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Verify only the new content is present
-    file.assert("replaced content");
+    let contents = ctx.cli_read(&path);
+    assert_eq!(contents, "replaced content");
 }

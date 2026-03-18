@@ -12,7 +12,6 @@ mod generate;
 mod global_opts;
 mod help;
 mod manager;
-mod parity;
 mod pty;
 mod server;
 mod ssh;

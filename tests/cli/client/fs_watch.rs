@@ -1,25 +1,18 @@
 //! Integration tests for the `distant fs watch` CLI subcommand.
 //!
-//! Tests watching a single file for changes, watching a directory recursively,
-//! and error handling when watching a non-existent path.
+//! Tests watching files and directories for changes. Watch is only supported
+//! on the Host backend (SSH and Docker return Unsupported).
 
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use assert_fs::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 use distant_test_harness::utils::reader::ThreadedReader;
 
-fn wait_a_bit() {
-    wait_millis(250);
-}
-
-fn wait_millis(millis: u64) {
-    std::thread::sleep(Duration::from_millis(millis));
-}
-
-/// Read stderr lines until one containing "Watching" appears, or panic after timeout.
 fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -37,28 +30,26 @@ fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_support_watching_a_single_file(ctx: HostManagerCtx) {
+fn should_support_watching_a_single_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let file = temp.child("file");
     file.touch().unwrap();
 
-    // distant fs watch {path}
     let mut child = ctx
         .new_std_cmd(["fs", "watch"])
         .arg(file.to_str().unwrap())
         .spawn()
         .expect("Failed to execute");
 
-    // Wait for watcher to be ready by reading stderr until "Watching" appears
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
     wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
 
-    // Now manipulate the file (watcher is guaranteed ready)
     file.write_str("some text").unwrap();
 
-    // Read stdout with generous timeout
     let mut stdout_data = String::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -68,7 +59,6 @@ fn should_support_watching_a_single_file(ctx: HostManagerCtx) {
         }
     }
 
-    // Close out the process
     child.kill().expect("Failed to terminate process");
     let _ = child.wait();
 
@@ -80,7 +70,6 @@ fn should_support_watching_a_single_file(ctx: HostManagerCtx) {
         .unwrap()
         .to_string();
 
-    // Verify we get information printed out about the change
     assert!(
         stdout_data.contains(&path),
         "\"{}\" missing {}",
@@ -90,8 +79,10 @@ fn should_support_watching_a_single_file(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
+fn should_support_watching_a_directory_recursively(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 
     let dir = temp.child("dir");
@@ -100,19 +91,16 @@ fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
     let file = dir.child("file");
     file.touch().unwrap();
 
-    // distant fs watch {path}
     let mut child = ctx
         .new_std_cmd(["fs", "watch"])
         .args(["--recursive", temp.to_str().unwrap()])
         .spawn()
         .expect("Failed to execute");
 
-    // Wait for watcher to be ready by reading stderr until "Watching" appears
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
     wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
 
-    // Now manipulate the file (watcher is guaranteed ready)
     file.write_str("some text").unwrap();
 
     let path = file
@@ -123,8 +111,6 @@ fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
         .unwrap()
         .to_string();
 
-    // Read stdout with generous timeout, collecting lines until we see the file path
-    // (on Windows, a recursive watch may report parent directory changes before the file)
     let mut stdout_data = String::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -136,11 +122,9 @@ fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
         }
     }
 
-    // Close out the process
     child.kill().expect("Failed to terminate process");
     let _ = child.wait();
 
-    // Verify we get information printed out about the change
     assert!(
         stdout_data.contains(&path),
         "\"{}\" missing {}",
@@ -150,26 +134,25 @@ fn should_support_watching_a_directory_recursively(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: HostManagerCtx) {
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let invalid_path = temp.to_path_buf().join("missing");
 
-    // distant fs watch {path}
     let child = ctx
         .new_std_cmd(["fs", "watch"])
         .arg(invalid_path.to_str().unwrap())
         .spawn()
         .expect("Failed to execute");
 
-    // Pause a bit to ensure that the process started and failed
-    wait_a_bit();
+    std::thread::sleep(Duration::from_millis(250));
 
     let output = child
         .wait_with_output()
         .expect("Failed to wait for child to complete");
 
-    // Verify we get information printed out about the change
     assert!(!output.status.success(), "Child unexpectedly succeeded");
     assert!(output.stdout.is_empty(), "Unexpectedly got stdout");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -180,14 +163,14 @@ fn yield_an_error_when_fails(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_support_only_filter(ctx: HostManagerCtx) {
+fn should_support_only_filter(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("watched");
     dir.create_dir_all().unwrap();
 
-    // Use --only create on a directory and create a file to trigger the event
-    // distant fs watch --recursive --only create {path}
     let mut child = ctx
         .new_std_cmd(["fs", "watch"])
         .args(["--recursive", "--only", "create"])
@@ -199,7 +182,6 @@ fn should_support_only_filter(ctx: HostManagerCtx) {
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
     wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
 
-    // Create a new file — should trigger a create event
     dir.child("newfile.txt").write_str("hello").unwrap();
 
     let mut stdout_data = String::new();
@@ -214,7 +196,6 @@ fn should_support_only_filter(ctx: HostManagerCtx) {
     child.kill().expect("Failed to terminate process");
     let _ = child.wait();
 
-    // We should get output (the create event was reported)
     assert!(
         !stdout_data.is_empty(),
         "Expected create event to be reported with --only create"
@@ -222,13 +203,14 @@ fn should_support_only_filter(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_support_except_filter(ctx: HostManagerCtx) {
+fn should_support_except_filter(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("dir");
     dir.create_dir_all().unwrap();
 
-    // distant fs watch --recursive --except access {path}
     let mut child = ctx
         .new_std_cmd(["fs", "watch"])
         .args(["--recursive", "--except", "access"])
@@ -240,7 +222,6 @@ fn should_support_except_filter(ctx: HostManagerCtx) {
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
     wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
 
-    // Create a new file — should trigger create/modify events (not filtered)
     dir.child("newfile.txt").write_str("hello").unwrap();
 
     let mut stdout_data = String::new();
@@ -255,7 +236,6 @@ fn should_support_except_filter(ctx: HostManagerCtx) {
     child.kill().expect("Failed to terminate process");
     let _ = child.wait();
 
-    // We should still see non-access events
     assert!(
         !stdout_data.is_empty(),
         "Expected non-access events to still be reported with --except access"
@@ -263,13 +243,14 @@ fn should_support_except_filter(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_report_file_creation_in_watched_directory(ctx: HostManagerCtx) {
+fn should_report_file_creation_in_watched_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let dir = temp.child("watched");
     dir.create_dir_all().unwrap();
 
-    // distant fs watch --recursive {path}
     let mut child = ctx
         .new_std_cmd(["fs", "watch"])
         .args(["--recursive", dir.to_str().unwrap()])
@@ -280,7 +261,6 @@ fn should_report_file_creation_in_watched_directory(ctx: HostManagerCtx) {
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
     wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
 
-    // Create a new file in the watched directory
     let new_file = dir.child("created.txt");
     new_file.write_str("new content").unwrap();
 
@@ -292,7 +272,6 @@ fn should_report_file_creation_in_watched_directory(ctx: HostManagerCtx) {
         .unwrap()
         .to_string();
 
-    // Read stdout lines until we see our file or timeout
     let mut stdout_data = String::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -310,5 +289,43 @@ fn should_report_file_creation_in_watched_directory(ctx: HostManagerCtx) {
     assert!(
         stdout_data.contains(&new_file_path),
         "Expected creation event for {new_file_path}, got: {stdout_data}"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[test_log::test]
+fn should_watch_for_create_events_via_parity(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let temp = assert_fs::TempDir::new().unwrap();
+
+    let mut child = ctx
+        .new_std_cmd(["fs", "watch"])
+        .arg(temp.to_str().unwrap())
+        .arg("--recursive")
+        .arg("--only")
+        .arg("create")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn fs watch");
+
+    std::thread::sleep(Duration::from_secs(1));
+
+    temp.child("watched-file.txt")
+        .write_str("watch content")
+        .unwrap();
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    child.kill().expect("Failed to kill watch process");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for watch process");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("watched-file.txt"),
+        "Expected 'watched-file.txt' in watch output, got: {stdout}"
     );
 }

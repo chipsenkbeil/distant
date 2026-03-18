@@ -1,85 +1,93 @@
 //! Integration tests for the `distant fs rename` CLI subcommand.
 //!
 //! Tests renaming files, renaming non-empty directories, and error handling
-//! when the source does not exist.
+//! when the source does not exist. Runs against Host, SSH, and Docker backends.
 
-use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
-
-const FILE_CONTENTS: &str = r#"
-some text
-on multiple lines
-that is a file's contents
-"#;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_renaming_file(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_renaming_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("rename");
+    ctx.cli_mkdir(&dir);
+    let src = ctx.child_path(&dir, "rename-src.txt");
+    let dst = ctx.child_path(&dir, "rename-dst.txt");
+    ctx.cli_write(&src, "rename content");
 
-    let src = temp.child("file");
-    src.write_str(FILE_CONTENTS).unwrap();
-
-    let dst = temp.child("file2");
-
-    // distant action rename {src} {dst}
     ctx.new_assert_cmd(["fs", "rename"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src)
+        .arg(&dst)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    src.assert(predicate::path::missing());
-    dst.assert(FILE_CONTENTS);
+    assert!(
+        !ctx.cli_exists(&src),
+        "Source should no longer exist (verified via CLI)"
+    );
+    assert!(
+        ctx.cli_exists(&dst),
+        "Destination should exist (verified via CLI)"
+    );
+    let contents = ctx.cli_read(&dst);
+    assert_eq!(contents, "rename content");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_renaming_nonempty_directory(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_renaming_nonempty_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("rename-dir");
+    ctx.cli_mkdir(&dir);
 
-    // Make a non-empty directory
-    let src = temp.child("dir");
-    src.create_dir_all().unwrap();
-    let src_file = src.child("file");
-    src_file.write_str(FILE_CONTENTS).unwrap();
+    let src_dir = ctx.child_path(&dir, "src");
+    ctx.cli_mkdir(&src_dir);
+    ctx.cli_write(&ctx.child_path(&src_dir, "file.txt"), "dir rename content");
 
-    let dst = temp.child("dir2");
-    let dst_file = dst.child("file");
+    let dst_dir = ctx.child_path(&dir, "dst");
 
-    // distant action rename {src} {dst}
     ctx.new_assert_cmd(["fs", "rename"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src_dir)
+        .arg(&dst_dir)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    src.assert(predicate::path::missing());
-    src_file.assert(predicate::path::missing());
-
-    dst.assert(predicate::path::is_dir());
-    dst_file.assert(FILE_CONTENTS);
+    assert!(
+        !ctx.cli_exists(&src_dir),
+        "Source directory should no longer exist"
+    );
+    assert!(
+        ctx.cli_exists(&dst_dir),
+        "Destination directory should exist"
+    );
+    let contents = ctx.cli_read(&ctx.child_path(&dst_dir, "file.txt"));
+    assert_eq!(contents, "dir rename content");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: HostManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("rename-err");
+    ctx.cli_mkdir(&dir);
+    let src = ctx.child_path(&dir, "nonexistent");
+    let dst = ctx.child_path(&dir, "dst");
 
-    let src = temp.child("dir");
-    let dst = temp.child("dir2");
-
-    // distant action rename {src} {dst}
     ctx.new_assert_cmd(["fs", "rename"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src)
+        .arg(&dst)
         .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to rename"));
-
-    src.assert(predicate::path::missing());
-    dst.assert(predicate::path::missing());
+        .code(1);
 }

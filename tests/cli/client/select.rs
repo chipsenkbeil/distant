@@ -1,16 +1,21 @@
 //! Integration tests for the `distant select` CLI subcommand.
 //!
 //! Tests selecting/switching the active connection by its ID.
+//! Host-only since select operates on the manager's connection list.
 
 use rstest::*;
 use serde_json::json;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::manager::{ApiProcess, TIMEOUT, handle_cli_auth};
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_select_connection_by_id(ctx: HostManagerCtx) {
-    // Get the connection ID from JSON status
+fn should_select_connection_by_id(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let output = ctx
         .new_assert_cmd(vec!["status", "--format", "json"])
         .assert()
@@ -26,7 +31,6 @@ fn should_select_connection_by_id(ctx: HostManagerCtx) {
         .expect("Should have at least one connection")
         .clone();
 
-    // Select it — need to use new_std_cmd for dynamic args
     let select_output = ctx
         .new_std_cmd(vec!["select"])
         .arg(&id)
@@ -40,9 +44,11 @@ fn should_select_connection_by_id(ctx: HostManagerCtx) {
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
 #[test_log::test]
-fn should_select_in_json_format(ctx: HostManagerCtx) {
-    // Spawn select --format json (without an ID, so it prompts via JSON)
+fn should_select_in_json_format(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     let child = ctx
         .new_std_cmd(vec!["select", "--format", "json"])
         .spawn()
@@ -52,10 +58,8 @@ fn should_select_in_json_format(ctx: HostManagerCtx) {
     rt.block_on(async {
         let mut proc = ApiProcess::new(child, TIMEOUT);
 
-        // Auth handshake: manager auth
         handle_cli_auth(&mut proc).await;
 
-        // Read the select prompt from stdout
         let select_msg: serde_json::Value = proc
             .read_json_from_stdout()
             .await
@@ -72,7 +76,6 @@ fn should_select_in_json_format(ctx: HostManagerCtx) {
             "Expected numeric current, got: {select_msg}"
         );
 
-        // Send selection response (pick the first choice)
         proc.write_json_to_stdin(json!({"type": "selected", "choice": 0}))
             .await
             .expect("Failed to write selection response");
