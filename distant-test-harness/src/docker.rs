@@ -91,6 +91,107 @@ impl DockerContainer {
     pub async fn exec(&self, cmd: &[&str]) -> io::Result<()> {
         self.client.exec_cmd(&self.name, cmd).await
     }
+
+    /// Detect the Rust target triple for binaries that will run inside this container.
+    ///
+    /// Runs `uname -m` inside the container and maps the architecture to a
+    /// `*-unknown-linux-musl` triple (musl for maximum portability).
+    pub async fn detect_target_triple(&self) -> io::Result<String> {
+        let output = tokio::process::Command::new("docker")
+            .args(["exec", &self.name, "uname", "-m"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(io::Error::other("Failed to detect container architecture"));
+        }
+
+        let arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let triple = match arch.as_str() {
+            "x86_64" => "x86_64-unknown-linux-musl",
+            "aarch64" => "aarch64-unknown-linux-musl",
+            other => {
+                return Err(io::Error::other(format!(
+                    "Unsupported container architecture: {other}"
+                )));
+            }
+        };
+        Ok(triple.to_string())
+    }
+
+    /// Returns `true` if the host can produce binaries for this container natively
+    /// (same OS and architecture, no cross-compilation needed).
+    pub async fn host_matches_container(&self) -> bool {
+        if cfg!(not(target_os = "linux")) {
+            return false;
+        }
+
+        let Ok(triple) = self.detect_target_triple().await else {
+            return false;
+        };
+
+        if cfg!(target_arch = "x86_64") {
+            triple.starts_with("x86_64")
+        } else if cfg!(target_arch = "aarch64") {
+            triple.starts_with("aarch64")
+        } else {
+            false
+        }
+    }
+
+    /// Upload a local file into the container and make it executable.
+    ///
+    /// Uses `docker cp` to copy the file and `chmod +x` to set the executable bit.
+    pub async fn upload_binary(
+        &self,
+        local_path: &std::path::Path,
+        remote_path: &str,
+    ) -> io::Result<()> {
+        // Ensure the parent directory exists
+        if let Some(parent) = std::path::Path::new(remote_path).parent() {
+            let parent_str = parent.to_string_lossy();
+            if !parent_str.is_empty() && parent_str != "/" {
+                let _ = self.exec(&["mkdir", "-p", &parent_str]).await;
+            }
+        }
+
+        let dest = format!("{}:{}", self.name, remote_path);
+        let status = tokio::process::Command::new("docker")
+            .args(["cp", &local_path.to_string_lossy(), &dest])
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(io::Error::other(format!(
+                "docker cp to {} failed",
+                remote_path
+            )));
+        }
+
+        self.exec(&["chmod", "+x", remote_path]).await
+    }
+
+    /// Build a test harness binary for this container and upload it.
+    ///
+    /// If the host OS/arch matches the container, uses the native build.
+    /// Otherwise, cross-compiles for the container's target triple.
+    ///
+    /// Returns the remote path where the binary was placed (`/usr/local/bin/<name>`).
+    pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
+        let local_path = if self.host_matches_container().await {
+            // Native build works — use the standard builder
+            crate::exe::build_harness_bin_for_target(bin_name, &self.detect_target_triple().await?)
+                .await?
+        } else {
+            // Cross-compile for the container's architecture
+            let triple = self.detect_target_triple().await?;
+            crate::exe::build_harness_bin_for_target(bin_name, &triple).await?
+        };
+
+        let remote_path = format!("/usr/local/bin/{bin_name}");
+        self.upload_binary(&local_path, &remote_path).await?;
+        Ok(remote_path)
+    }
 }
 
 impl Drop for DockerContainer {

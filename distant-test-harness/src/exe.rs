@@ -51,3 +51,38 @@ async fn build_harness_bin(bin_name: &str) -> io::Result<PathBuf> {
 
     Ok(build_dir().join(name))
 }
+
+/// Builds a named binary from the test harness crate for a specific target triple.
+///
+/// The binary is placed under `target/<triple>/debug/` instead of the default
+/// build directory. This is used for cross-compiling test binaries that need to
+/// run inside Docker containers (e.g., Linux binaries built from macOS).
+pub async fn build_harness_bin_for_target(bin_name: &str, target: &str) -> io::Result<PathBuf> {
+    let status = tokio::process::Command::new(env!("CARGO"))
+        .args([
+            "build",
+            "-p",
+            "distant-test-harness",
+            "--bin",
+            bin_name,
+            "--target",
+            target,
+        ])
+        .status()
+        .await?;
+
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "cargo build {bin_name} --target {target} failed with {status}"
+        )));
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().expect("workspace root");
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join("target"));
+
+    // Cross-compiled binaries are always ELF (no .exe) since Docker containers are Linux
+    Ok(target_dir.join(target).join("debug").join(bin_name))
+}
