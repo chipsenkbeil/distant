@@ -1,7 +1,6 @@
 //! Integration tests for the `distant system-info` CLI subcommand.
 //!
 //! Tests retrieving and displaying system information from the server.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

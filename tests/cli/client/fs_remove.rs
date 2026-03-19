@@ -2,7 +2,6 @@
 //!
 //! Tests removing files, empty directories, non-empty directories with `--force`,
 //! and error handling when force is not specified for non-empty directories.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

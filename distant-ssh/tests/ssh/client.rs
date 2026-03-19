@@ -1983,7 +1983,7 @@ async fn version_should_return_server_version_and_capabilities(#[future] client:
 #[cfg(unix)]
 #[rstest]
 #[test(tokio::test)]
-async fn search_should_find_matching_paths(#[future] client: Ctx<Client>) {
+async fn search_should_find_matching_paths_on_unix(#[future] client: Ctx<Client>) {
     use assert_fs::prelude::*;
 
     let mut client = client.await;

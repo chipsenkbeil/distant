@@ -2,7 +2,6 @@
 //!
 //! Tests forward tunnel creation, data forwarding through tunnels, tunnel
 //! listing, closing, and error handling for missing connections and invalid IDs.
-//! Most tests run against Host, SSH, and Docker backends via rstest.
 
 use std::net::TcpListener;
 use std::process::Stdio;

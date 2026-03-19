@@ -49,6 +49,9 @@ use auth::{expand_tilde, format_methods};
 use config::ResolvedConfig;
 use pool::ChannelPool;
 
+/// Buffer capacity for the in-memory transport connecting the client and server halves.
+const INMEMORY_TRANSPORT_BUFFER_SIZE: usize = 100;
+
 /// Represents the family of the remote machine connected over SSH
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1099,7 +1102,7 @@ impl Ssh {
             search_tools,
         );
 
-        let (t1, t2) = InmemoryTransport::pair(100);
+        let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
             .handler(ApiServerHandler::new(api))
@@ -1132,7 +1135,7 @@ impl Ssh {
             search_tools,
         );
 
-        let (t1, t2) = InmemoryTransport::pair(100);
+        let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
             .handler(ApiServerHandler::new(api))

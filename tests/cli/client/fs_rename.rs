@@ -1,7 +1,7 @@
 //! Integration tests for the `distant fs rename` CLI subcommand.
 //!
 //! Tests renaming files, renaming non-empty directories, and error handling
-//! when the source does not exist. Runs against Host, SSH, and Docker backends.
+//! when the source does not exist.
 
 use rstest::*;
 

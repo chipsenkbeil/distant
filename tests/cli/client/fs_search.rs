@@ -1,7 +1,6 @@
 //! Integration tests for the `distant fs search` CLI subcommand.
 //!
 //! Tests searching file contents using regex patterns.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

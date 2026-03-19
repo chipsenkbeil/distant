@@ -1,9 +1,8 @@
 //! Integration tests for the `distant shell` CLI subcommand.
 //!
 //! Uses `portable-pty` for cross-platform PTY session management via
-//! [`PtySession`](super::super::pty::PtySession). Tests shell execution,
+//! [`PtySession`](crate::cli::pty::PtySession). Tests shell execution,
 //! exit code forwarding, prediction modes, and alternate screen handling.
-//! Runs against Host, SSH, and Docker backends.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -36,7 +35,7 @@ async fn should_echo_input_through_pty(#[case] backend: Backend) {
     let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", pty_echo_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.send("abc");
     session.expect("abc");
@@ -58,7 +57,7 @@ async fn should_display_interactive_prompt(#[case] backend: Backend) {
         .expect("pty-interactive path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
 }
@@ -79,10 +78,11 @@ async fn should_exit_on_eof_signal(#[case] backend: Backend) {
         .expect("pty-interactive path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
 
+    // On Unix, Ctrl-D sends EOF to the PTY which closes the shell cleanly.
     #[cfg(unix)]
     for _ in 0..5 {
         session.send("\x04");
@@ -92,6 +92,7 @@ async fn should_exit_on_eof_signal(#[case] backend: Backend) {
         }
     }
 
+    // On Windows, we send "exit" because ConPTY doesn't support Ctrl-D (EOF signal).
     #[cfg(windows)]
     session.send_line("exit");
 
@@ -121,7 +122,7 @@ async fn should_run_command_with_predict_off(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("predict-off-ok");
     let exit_code = session.wait_for_exit();
@@ -144,7 +145,7 @@ async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
         .expect("pty-interactive path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
     session.send("\x03");
@@ -169,7 +170,7 @@ async fn should_suppress_predicted_password_echo(#[case] backend: Backend) {
         .expect("pty-password path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_password_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -198,7 +199,7 @@ async fn should_run_command_with_predict_on(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("predict-on-ok");
     let exit_code = session.wait_for_exit();
@@ -221,7 +222,7 @@ async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
         .expect("pty-password path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", pty_password_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -242,7 +243,7 @@ async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend)
     let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", pty_echo_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
     session.set_timeout(Duration::from_secs(60));
 
     session.expect("Connected to manager");
@@ -269,7 +270,7 @@ async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
     let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_echo_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.send("predict-immediate");
     session.expect("predict-immediate");
@@ -291,7 +292,7 @@ async fn should_correct_prediction_mismatch(#[case] backend: Backend) {
         .expect("pty-password path is not valid UTF-8");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_password_str]);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -328,7 +329,7 @@ async fn should_enter_alternate_screen(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("ALT_ENTRY_OK");
 }
@@ -363,7 +364,7 @@ async fn should_exit_alternate_screen(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = super::super::pty::PtySession::spawn(&bin, &args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("RESTORED");
 }

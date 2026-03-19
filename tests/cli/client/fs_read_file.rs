@@ -1,7 +1,6 @@
 //! Integration tests for the `distant fs read` CLI subcommand when used on files.
 //!
 //! Tests reading file contents to stdout and error handling for missing files.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

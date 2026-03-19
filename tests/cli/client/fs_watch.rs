@@ -13,6 +13,15 @@ use distant_test_harness::backend::Backend;
 use distant_test_harness::skip_if_no_backend;
 use distant_test_harness::utils::reader::ThreadedReader;
 
+/// Timeout for waiting on watch events to appear.
+const WATCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between polls when checking for watch output.
+const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Delay to allow a watch process to initialize before triggering events.
+const WATCH_SETUP_DELAY: Duration = Duration::from_millis(250);
+
 fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -20,7 +29,7 @@ fn wait_for_watching_ready(stderr: &mut ThreadedReader, timeout: Duration) {
         if remaining.is_zero() {
             break;
         }
-        if let Some(line) = stderr.try_read_line_timeout(remaining.min(Duration::from_millis(500)))
+        if let Some(line) = stderr.try_read_line_timeout(remaining.min(WATCH_POLL_INTERVAL))
             && line.contains("Watching")
         {
             return;
@@ -46,14 +55,14 @@ fn should_support_watching_a_single_file(#[case] backend: Backend) {
 
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
-    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+    wait_for_watching_ready(&mut stderr, WATCH_TIMEOUT);
 
     file.write_str("some text").unwrap();
 
     let mut stdout_data = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + WATCH_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+        if let Some(line) = stdout.try_read_line_timeout(WATCH_POLL_INTERVAL) {
             stdout_data.push_str(&line);
             break;
         }
@@ -99,7 +108,7 @@ fn should_support_watching_a_directory_recursively(#[case] backend: Backend) {
 
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
-    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+    wait_for_watching_ready(&mut stderr, WATCH_TIMEOUT);
 
     file.write_str("some text").unwrap();
 
@@ -112,9 +121,9 @@ fn should_support_watching_a_directory_recursively(#[case] backend: Backend) {
         .to_string();
 
     let mut stdout_data = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + WATCH_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+        if let Some(line) = stdout.try_read_line_timeout(WATCH_POLL_INTERVAL) {
             stdout_data.push_str(&line);
             if stdout_data.contains(&path) {
                 break;
@@ -147,7 +156,7 @@ fn yield_an_error_when_fails(#[case] backend: Backend) {
         .spawn()
         .expect("Failed to execute");
 
-    std::thread::sleep(Duration::from_millis(250));
+    std::thread::sleep(WATCH_SETUP_DELAY);
 
     let output = child
         .wait_with_output()
@@ -180,14 +189,14 @@ fn should_support_only_filter(#[case] backend: Backend) {
 
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
-    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+    wait_for_watching_ready(&mut stderr, WATCH_TIMEOUT);
 
     dir.child("newfile.txt").write_str("hello").unwrap();
 
     let mut stdout_data = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + WATCH_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+        if let Some(line) = stdout.try_read_line_timeout(WATCH_POLL_INTERVAL) {
             stdout_data.push_str(&line);
             break;
         }
@@ -220,14 +229,14 @@ fn should_support_except_filter(#[case] backend: Backend) {
 
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
-    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+    wait_for_watching_ready(&mut stderr, WATCH_TIMEOUT);
 
     dir.child("newfile.txt").write_str("hello").unwrap();
 
     let mut stdout_data = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + WATCH_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+        if let Some(line) = stdout.try_read_line_timeout(WATCH_POLL_INTERVAL) {
             stdout_data.push_str(&line);
             break;
         }
@@ -259,7 +268,7 @@ fn should_report_file_creation_in_watched_directory(#[case] backend: Backend) {
 
     let mut stderr = ThreadedReader::new(child.stderr.take().unwrap());
     let mut stdout = ThreadedReader::new(child.stdout.take().unwrap());
-    wait_for_watching_ready(&mut stderr, Duration::from_secs(5));
+    wait_for_watching_ready(&mut stderr, WATCH_TIMEOUT);
 
     let new_file = dir.child("created.txt");
     new_file.write_str("new content").unwrap();
@@ -273,9 +282,9 @@ fn should_report_file_creation_in_watched_directory(#[case] backend: Backend) {
         .to_string();
 
     let mut stdout_data = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + WATCH_TIMEOUT;
     while Instant::now() < deadline {
-        if let Some(line) = stdout.try_read_line_timeout(Duration::from_millis(500)) {
+        if let Some(line) = stdout.try_read_line_timeout(WATCH_POLL_INTERVAL) {
             stdout_data.push_str(&line);
             if stdout_data.contains(&new_file_path) {
                 break;
@@ -295,7 +304,7 @@ fn should_report_file_creation_in_watched_directory(#[case] backend: Backend) {
 #[rstest]
 #[case::host(Backend::Host)]
 #[test_log::test]
-fn should_watch_for_create_events_via_parity(#[case] backend: Backend) {
+fn should_watch_for_create_events(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 

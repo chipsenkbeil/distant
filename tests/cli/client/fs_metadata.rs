@@ -1,7 +1,6 @@
 //! Integration tests for the `distant fs metadata` CLI subcommand.
 //!
 //! Tests retrieving metadata for files and directories.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

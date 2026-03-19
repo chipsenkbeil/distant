@@ -1,7 +1,7 @@
 //! Integration tests for the `distant fs set-permissions` CLI subcommand.
 //!
 //! Tests setting file permissions with readonly keyword and error handling
-//! for non-existent paths. Runs against Host, SSH, and Docker backends.
+//! for non-existent paths.
 
 use rstest::*;
 

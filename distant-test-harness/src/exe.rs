@@ -6,15 +6,11 @@ use std::path::PathBuf;
 use crate::manager::build_dir;
 
 /// Build the `tcp-to-stdio` binary and return its path.
-///
-/// Delegates to [`build_harness_bin`] with `"tcp-to-stdio"`.
 pub async fn build_tcp_to_stdio() -> io::Result<PathBuf> {
     build_harness_bin("tcp-to-stdio").await
 }
 
 /// Build the `tcp-echo-server` binary and return its path.
-///
-/// Delegates to [`build_harness_bin`] with `"tcp-echo-server"`.
 pub async fn build_tcp_echo_server() -> io::Result<PathBuf> {
     build_harness_bin("tcp-echo-server").await
 }

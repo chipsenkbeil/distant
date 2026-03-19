@@ -2,7 +2,6 @@
 //!
 //! Tests writing content to files via stdin and argument input, with optional
 //! append mode, and error handling for missing parent directories.
-//! Runs against Host, SSH, and Docker backends.
 
 use std::io::Write as _;
 use std::process::Stdio;

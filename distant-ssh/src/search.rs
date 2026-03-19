@@ -81,11 +81,8 @@ async fn probe_tool(pool: &Arc<pool::ChannelPool>, tool: &str) -> io::Result<uti
 /// Indicates which search tool backs a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchTool {
-    /// ripgrep (rg).
     Rg,
-    /// GNU grep.
     Grep,
-    /// find.
     Find,
 }
 

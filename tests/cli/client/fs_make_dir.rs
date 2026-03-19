@@ -2,7 +2,6 @@
 //!
 //! Tests creating directories, creating nested directories with `--all`,
 //! and error handling when the parent directory is missing.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

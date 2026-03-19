@@ -1,6 +1,6 @@
 //! Integration tests for the `distant fs read` CLI subcommand when used on directories.
 //!
-//! Tests listing directory contents. Runs against Host, SSH, and Docker backends.
+//! Tests listing directory contents.
 
 use rstest::*;
 

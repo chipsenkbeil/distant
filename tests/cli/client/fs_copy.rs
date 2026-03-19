@@ -1,7 +1,7 @@
 //! Integration tests for the `distant fs copy` CLI subcommand.
 //!
 //! Tests copying files, copying non-empty directories, and error handling
-//! when the source does not exist. Runs against Host, SSH, and Docker backends.
+//! when the source does not exist.
 
 use rstest::*;
 

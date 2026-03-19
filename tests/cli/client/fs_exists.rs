@@ -1,7 +1,6 @@
 //! Integration tests for the `distant fs exists` CLI subcommand.
 //!
 //! Tests checking whether a path exists on the filesystem.
-//! Runs against Host, SSH, and Docker backends.
 
 use rstest::*;
 

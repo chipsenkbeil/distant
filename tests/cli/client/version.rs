@@ -1,6 +1,6 @@
 //! Integration tests for the `distant version` CLI subcommand.
 //!
-//! Tests displaying version information. Runs against Host, SSH, and Docker backends.
+//! Tests displaying version information.
 
 use rstest::*;
 
