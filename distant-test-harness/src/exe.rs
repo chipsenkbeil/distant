@@ -31,7 +31,7 @@ pub async fn build_pty_password() -> io::Result<PathBuf> {
 }
 
 /// Builds a named binary from the test harness crate and returns its path.
-async fn build_harness_bin(bin_name: &str) -> io::Result<PathBuf> {
+pub async fn build_harness_bin(bin_name: &str) -> io::Result<PathBuf> {
     let status = tokio::process::Command::new(env!("CARGO"))
         .args(["build", "-p", "distant-test-harness", "--bin", bin_name])
         .status()

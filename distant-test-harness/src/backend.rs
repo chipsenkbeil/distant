@@ -6,6 +6,7 @@
 //! interface. Tests can use rstest `#[case]` parameters to run the same
 //! assertion against multiple backends.
 
+use std::io;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command as StdCommand, Stdio};
@@ -185,6 +186,22 @@ impl BackendCtx {
             .output()
             .expect("failed to run fs exists");
         output.status.success() && String::from_utf8_lossy(&output.stdout).contains("true")
+    }
+
+    /// Builds a test harness binary and returns a path usable by the backend.
+    ///
+    /// For Host and SSH backends, the binary is built natively and the local
+    /// path is returned. For Docker, the binary is cross-compiled, uploaded
+    /// to the container, and the remote path is returned.
+    pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
+        match self {
+            #[cfg(feature = "docker")]
+            Self::Docker(ctx) => ctx.container().prepare_binary(bin_name).await,
+            _ => {
+                let path = crate::exe::build_harness_bin(bin_name).await?;
+                Ok(path.to_string_lossy().to_string())
+            }
+        }
     }
 
     /// Creates a directory through the distant CLI, working across all backends.

@@ -10,7 +10,6 @@ use std::time::Duration;
 use rstest::*;
 
 use distant_test_harness::backend::{Backend, BackendCtx};
-use distant_test_harness::exe;
 use distant_test_harness::skip_if_no_backend;
 
 fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
@@ -21,63 +20,77 @@ fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String
     (bin, args)
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_run_individual_command(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    #[cfg(unix)]
+    let extra_args: &[&str] = &["--", "echo", "hello"];
+    #[cfg(windows)]
+    let extra_args: &[&str] = &["--", "cmd", "/c", "echo", "hello"];
+
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
+
+    session.expect("hello");
+    let exit_code = session.wait_for_exit();
+    assert_eq!(exit_code, 0, "Expected exit code 0");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_input_through_pty(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_echo = exe::build_pty_echo()
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
         .await
         .expect("Failed to build pty-echo");
-    let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--", pty_echo_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_echo_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.send("abc");
     session.expect("abc");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_display_interactive_prompt(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_interactive = exe::build_pty_interactive()
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
         .await
         .expect("Failed to build pty-interactive");
-    let pty_interactive_str = pty_interactive
-        .to_str()
-        .expect("pty-interactive path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_exit_on_eof_signal(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_interactive = exe::build_pty_interactive()
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
         .await
         .expect("Failed to build pty-interactive");
-    let pty_interactive_str = pty_interactive
-        .to_str()
-        .expect("pty-interactive path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
@@ -129,22 +142,19 @@ async fn should_run_command_with_predict_off(#[case] backend: Backend) {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict off");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_interactive = exe::build_pty_interactive()
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
         .await
         .expect("Failed to build pty-interactive");
-    let pty_interactive_str = pty_interactive
-        .to_str()
-        .expect("pty-interactive path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--", pty_interactive_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
@@ -154,22 +164,19 @@ async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
     session.expect("$ ");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_suppress_predicted_password_echo(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_password = exe::build_pty_password()
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
         .await
         .expect("Failed to build pty-password");
-    let pty_password_str = pty_password
-        .to_str()
-        .expect("pty-password path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_password_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
@@ -206,22 +213,19 @@ async fn should_run_command_with_predict_on(#[case] backend: Backend) {
     assert_eq!(exit_code, 0, "Expected exit code 0 with predict on");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_password = exe::build_pty_password()
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
         .await
         .expect("Failed to build pty-password");
-    let pty_password_str = pty_password
-        .to_str()
-        .expect("pty-password path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", pty_password_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_password_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
@@ -229,20 +233,19 @@ async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
     session.expect("Authenticated.");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_echo = exe::build_pty_echo()
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
         .await
         .expect("Failed to build pty-echo");
-    let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", pty_echo_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_echo_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
     session.set_timeout(Duration::from_secs(60));
 
@@ -256,42 +259,38 @@ async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend)
     session.expect("z");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_echo = exe::build_pty_echo()
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
         .await
         .expect("Failed to build pty-echo");
-    let pty_echo_str = pty_echo.to_str().expect("pty-echo path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_echo_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_echo_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.send("predict-immediate");
     session.expect("predict-immediate");
 }
 
-/// Docker is excluded because pty-* test binaries are compiled on the host
-/// and cannot be executed inside Docker containers.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn should_correct_prediction_mismatch(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-    let pty_password = exe::build_pty_password()
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
         .await
         .expect("Failed to build pty-password");
-    let pty_password_str = pty_password
-        .to_str()
-        .expect("pty-password path is not valid UTF-8");
 
-    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", pty_password_str]);
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
     let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");

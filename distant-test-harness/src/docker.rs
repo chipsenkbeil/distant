@@ -425,6 +425,11 @@ impl DockerManagerCtx {
         &self.container.name
     }
 
+    /// Returns a reference to the underlying [`DockerContainer`].
+    pub fn container(&self) -> &DockerContainer {
+        &self.container
+    }
+
     /// Produces a new test command configured with subcommands.
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
         let mut cmd = Command::new(bin_path());
