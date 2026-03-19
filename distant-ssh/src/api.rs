@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
@@ -89,6 +89,9 @@ pub struct SshApi {
     /// Detected search tools available on the remote host.
     search_tools: search::SearchTools,
 
+    /// Active search cancellation flags, keyed by search ID.
+    searches: Arc<RwLock<HashMap<SearchId, Arc<AtomicBool>>>>,
+
     /// Cached current working directory.
     cached_current_dir: OnceCell<String>,
 
@@ -113,6 +116,7 @@ impl SshApi {
             family,
             username,
             search_tools,
+            searches: Arc::new(RwLock::new(HashMap::new())),
             cached_current_dir: OnceCell::new(),
             cached_shell: OnceCell::new(),
         }
@@ -908,6 +912,7 @@ impl Api for SshApi {
     ) -> impl Future<Output = io::Result<SearchId>> + Send {
         let pool = Arc::clone(&self.pool);
         let search_tools = self.search_tools.clone();
+        let searches = Arc::clone(&self.searches);
 
         async move {
             if !search_tools.has_any() {
@@ -921,48 +926,82 @@ impl Api for SshApi {
             let search_cmd = search::build_search_command(&query, &search_tools)?;
             let search_id: SearchId = rand::random();
 
-            let (channel, _permit) = pool.open_exec().await?.take();
-            let output =
-                utils::execute_output_on_channel(channel, &search_cmd.command, None).await?;
+            // Register cancellation flag before spawning the search task.
+            let cancelled = Arc::new(AtomicBool::new(false));
+            searches
+                .write()
+                .await
+                .insert(search_id, Arc::clone(&cancelled));
 
-            // For grep/rg, exit code 1 means "no matches" (not an error), but the
-            // SSH ExecOutput only stores a bool. Distinguish real errors by checking
-            // for stderr content: a true error (exit >= 2) produces diagnostic output.
-            if !output.success && !output.stderr.is_empty() {
-                let stderr_str = String::from_utf8_lossy(&output.stderr);
-                return Err(io::Error::other(format!(
-                    "Search command failed: {stderr_str}",
-                )));
-            }
+            let searches_cleanup = Arc::clone(&searches);
+            tokio::spawn(async move {
+                let result = async {
+                    let (channel, _permit) = pool.open_exec().await?.take();
+                    let output =
+                        utils::execute_output_on_channel(channel, &search_cmd.command, None)
+                            .await?;
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
+                    // Check cancellation after the command completes.
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
 
-            let matches = match query.target {
-                SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
-                SearchQueryTarget::Path => search::parse_path_matches(&stdout),
-            };
+                    // For grep/rg, exit code 1 means "no matches" (not an error), while
+                    // exit >= 2 is a real error. For find, any non-zero exit is an error.
+                    // Use the exit code directly rather than relying on stderr heuristics.
+                    if search_cmd.is_error_exit(output.exit_code.unwrap_or(0)) {
+                        let stderr_str = String::from_utf8_lossy(&output.stderr);
+                        return Err(io::Error::other(format!(
+                            "Search command failed: {stderr_str}",
+                        )));
+                    }
 
-            if !matches.is_empty() {
-                let _ = ctx.reply.send(Response::SearchResults {
-                    id: search_id,
-                    matches,
-                });
-            }
+                    let stdout = String::from_utf8_lossy(&output.stdout);
 
-            let _ = ctx.reply.send(Response::SearchDone { id: search_id });
+                    let matches = match query.target {
+                        SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
+                        SearchQueryTarget::Path => search::parse_path_matches(&stdout),
+                    };
+
+                    if !matches.is_empty() && !cancelled.load(Ordering::Relaxed) {
+                        let _ = ctx.reply.send(Response::SearchResults {
+                            id: search_id,
+                            matches,
+                        });
+                    }
+
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = result {
+                    error!("Search {search_id} failed: {e}");
+                }
+
+                // Always send SearchDone unless cancelled, then clean up.
+                if !cancelled.load(Ordering::Relaxed) {
+                    let _ = ctx.reply.send(Response::SearchDone { id: search_id });
+                }
+
+                searches_cleanup.write().await.remove(&search_id);
+            });
 
             Ok(search_id)
         }
     }
 
-    #[allow(unused_variables)]
     fn cancel_search(
         &self,
         _ctx: Ctx,
         id: SearchId,
     ) -> impl Future<Output = io::Result<()>> + Send {
+        let searches = Arc::clone(&self.searches);
+
         async move {
-            // Search runs synchronously in our implementation, so cancel is a no-op
+            if let Some(cancelled) = searches.read().await.get(&id).cloned() {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+            // Return Ok even if search not found — it may have already completed
             Ok(())
         }
     }
