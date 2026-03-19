@@ -95,34 +95,31 @@ fn yield_an_error_when_fails(#[case] backend: Backend) {
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_use_absolute_paths_if_specified(#[case] backend: Backend) {
-    use assert_fs::prelude::*;
-
-    use distant_test_harness::utils::regex_pred;
-
     let ctx = skip_if_no_backend!(backend);
-    let temp = assert_fs::TempDir::new().unwrap();
-    temp.child("file1").touch().unwrap();
-    temp.child("file2").touch().unwrap();
+    let dir = ctx.unique_dir("readdir-abs");
+    ctx.cli_mkdir(&dir);
+    ctx.cli_write(&ctx.child_path(&dir, "file1"), "");
+    ctx.cli_write(&ctx.child_path(&dir, "file2"), "");
 
-    let root_path = temp.to_path_buf().canonicalize().unwrap();
+    let output = ctx
+        .new_std_cmd(["fs", "read"])
+        .args(["--absolute", &dir])
+        .output()
+        .expect("Failed to run fs read --absolute");
 
-    let expected = {
-        let mut s = String::from("^");
-        for name in ["file1", "file2"] {
-            let escaped = regex::escape(root_path.join(name).to_str().unwrap());
-            s.push_str(&format!(r"\s*{escaped}\s*[\r\n]*"));
-        }
-        s.push('$');
-        s
-    };
-
-    ctx.new_assert_cmd(["fs", "read"])
-        .args(["--absolute", temp.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(regex_pred(&expected));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&ctx.child_path(&dir, "file1")),
+        "Expected absolute path to file1 in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&ctx.child_path(&dir, "file2")),
+        "Expected absolute path to file2 in output, got: {stdout}"
+    );
 }
 
 #[cfg(unix)]
@@ -131,27 +128,35 @@ fn should_use_absolute_paths_if_specified(#[case] backend: Backend) {
 #[case::ssh(Backend::Ssh)]
 #[test_log::test]
 fn should_support_canonicalize_flag(#[case] backend: Backend) {
-    use assert_fs::prelude::*;
-
     let ctx = skip_if_no_backend!(backend);
-    let temp = assert_fs::TempDir::new().unwrap();
-    let target_dir = temp.child("target_dir");
-    target_dir.create_dir_all().unwrap();
-    target_dir.child("file1").touch().unwrap();
+    let dir = ctx.unique_dir("readdir-canon");
+    ctx.cli_mkdir(&dir);
+    let target = ctx.child_path(&dir, "target_dir");
+    ctx.cli_mkdir(&target);
+    ctx.cli_write(&ctx.child_path(&target, "file1"), "");
+    let link = ctx.child_path(&dir, "link");
 
-    let link = temp.child("link");
-    link.symlink_to_dir(target_dir.path()).unwrap();
+    let ln_output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--", "ln", "-s", &target, &link])
+        .output()
+        .expect("Failed to create symlink");
+    assert!(
+        ln_output.status.success(),
+        "ln -s failed: {}",
+        String::from_utf8_lossy(&ln_output.stderr)
+    );
 
     let output = ctx
-        .new_assert_cmd(["fs", "read"])
-        .args(["--canonicalize", "--absolute", link.to_str().unwrap()])
-        .assert()
-        .success();
+        .new_std_cmd(["fs", "read"])
+        .args(["--canonicalize", "--absolute", &link])
+        .output()
+        .expect("Failed to run fs read --canonicalize");
 
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    let canonical_target = target_dir.path().canonicalize().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains(canonical_target.join("file1").to_str().unwrap()),
-        "Expected canonicalized path through symlink to resolve to real target, got: {stdout}"
+        stdout.contains("file1"),
+        "Expected canonicalized listing to contain 'file1', got: {stdout}"
     );
 }

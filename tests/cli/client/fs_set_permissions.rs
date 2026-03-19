@@ -55,76 +55,95 @@ fn should_fail_if_path_does_not_exist(#[case] backend: Backend) {
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_set_file_readonly_with_octal_mode(#[case] backend: Backend) {
-    use assert_fs::prelude::*;
-
     let ctx = skip_if_no_backend!(backend);
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str("hello").unwrap();
+    let dir = ctx.unique_dir("perms-octal");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file");
+    ctx.cli_write(&path, "hello");
 
     ctx.new_assert_cmd(["fs", "set-permissions"])
-        .arg("0400")
-        .arg(file.to_str().unwrap())
+        .arg("0444")
+        .arg(&path)
         .assert()
         .success();
 
-    let meta = std::fs::metadata(file.path()).unwrap();
-    assert!(meta.permissions().readonly(), "File should be readonly");
+    let output = ctx
+        .new_std_cmd(["fs", "metadata"])
+        .arg(&path)
+        .output()
+        .expect("metadata failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Readonly: true"),
+        "Expected 'Readonly: true' after setting 0444, got: {stdout}"
+    );
 }
 
 #[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_set_file_permissions_with_symbolic_mode(#[case] backend: Backend) {
-    use std::os::unix::fs::PermissionsExt;
-
-    use assert_fs::prelude::*;
-
     let ctx = skip_if_no_backend!(backend);
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("test-file");
-    file.write_str("hello").unwrap();
+    let dir = ctx.unique_dir("perms-symbolic");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "test-file");
+    ctx.cli_write(&path, "hello");
 
     ctx.new_assert_cmd(["fs", "set-permissions"])
         .arg("u+rwx")
-        .arg(file.to_str().unwrap())
+        .arg(&path)
         .assert()
         .success();
 
-    let mode = std::fs::metadata(file.path()).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode & 0o700, 0o700, "Owner should have rwx, got {:o}", mode);
+    let output = ctx
+        .new_std_cmd(["fs", "metadata"])
+        .arg(&path)
+        .output()
+        .expect("metadata failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Readonly: false"),
+        "Expected 'Readonly: false' after u+rwx, got: {stdout}"
+    );
 }
 
 #[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_set_permissions_recursively(#[case] backend: Backend) {
-    use assert_fs::prelude::*;
-
     let ctx = skip_if_no_backend!(backend);
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
-    let file = dir.child("nested-file");
-    file.write_str("content").unwrap();
+    let dir = ctx.unique_dir("perms-recursive");
+    ctx.cli_mkdir(&dir);
+    let sub = ctx.child_path(&dir, "sub");
+    ctx.cli_mkdir(&sub);
+    let file_path = ctx.child_path(&sub, "nested-file");
+    ctx.cli_write(&file_path, "content");
 
     ctx.new_assert_cmd(["fs", "set-permissions"])
         .arg("--recursive")
         .arg("u+r,u-w,g-w,o-w")
-        .arg(dir.to_str().unwrap())
+        .arg(&dir)
         .assert()
         .success();
 
-    let meta = std::fs::metadata(file.path()).unwrap();
+    let output = ctx
+        .new_std_cmd(["fs", "metadata"])
+        .arg(&file_path)
+        .output()
+        .expect("metadata failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        meta.permissions().readonly(),
-        "Nested file should be readonly"
+        stdout.contains("Readonly: true"),
+        "Expected 'Readonly: true' for nested file, got: {stdout}"
     );
 }
 

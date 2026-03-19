@@ -31,4 +31,42 @@ fn should_output_system_info(#[case] backend: Backend) {
         stdout.contains("Family:"),
         "Expected 'Family:' in output, got: {stdout}"
     );
+    assert!(
+        stdout.contains("Operating System:"),
+        "Expected 'Operating System:' in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Arch:"),
+        "Expected 'Arch:' in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Cwd:"),
+        "Expected 'Cwd:' in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Path Sep:"),
+        "Expected 'Path Sep:' in output, got: {stdout}"
+    );
+
+    match backend {
+        Backend::Docker => {
+            assert!(
+                stdout.contains("\"unix\""),
+                "Docker container should report unix family, got: {stdout}"
+            );
+        }
+        _ => {
+            if cfg!(unix) {
+                assert!(
+                    stdout.contains("\"unix\""),
+                    "Unix host should report unix family, got: {stdout}"
+                );
+            } else {
+                assert!(
+                    stdout.contains("\"windows\""),
+                    "Windows host should report windows family, got: {stdout}"
+                );
+            }
+        }
+    }
 }

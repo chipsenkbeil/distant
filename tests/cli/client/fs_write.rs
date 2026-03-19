@@ -136,3 +136,21 @@ fn should_overwrite_existing_file_content(#[case] backend: Backend) {
     let contents = ctx.cli_read(&path);
     assert_eq!(contents, "replaced content");
 }
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_fail_when_parent_directory_missing(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("write-err");
+    let missing_parent = ctx.child_path(&dir, "nonexistent");
+    let path = ctx.child_path(&missing_parent, "file.txt");
+
+    ctx.new_assert_cmd(["fs", "write"])
+        .arg(&path)
+        .write_stdin("content")
+        .assert()
+        .failure();
+}

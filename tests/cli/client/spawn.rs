@@ -1,7 +1,7 @@
 //! Integration tests for the `distant spawn` CLI subcommand.
 //!
 //! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
-//! exit code reflection, PTY support, and error handling.
+//! PTY support, and error handling.
 
 use rstest::*;
 
@@ -89,6 +89,80 @@ fn should_support_dash_c_flag(#[case] backend: Backend) {
         .assert()
         .success()
         .stdout(predicates::str::contains("hello"));
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_fail_for_nonexistent_command(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--", "nonexistent-command-xyz"])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        !output.status.success(),
+        "spawn of nonexistent command should fail"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_current_dir(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("spawn-cwd");
+    ctx.cli_mkdir(&dir);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--current-dir", &dir, "--", "pwd"])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        output.status.success(),
+        "spawn --current-dir should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let dir_basename = dir.rsplit('/').next().unwrap_or(&dir);
+    assert!(
+        stdout.contains(dir_basename),
+        "Expected working directory to contain '{dir_basename}', got: {stdout}"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_shell_flag(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--shell", "--", "echo", "shell-flag-ok"])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        output.status.success(),
+        "spawn --shell should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shell-flag-ok"),
+        "Expected 'shell-flag-ok' in stdout, got: {stdout}"
+    );
 }
 
 #[rstest]
