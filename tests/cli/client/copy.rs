@@ -3,9 +3,7 @@
 //! Tests local-to-remote and remote-to-local file transfers including single
 //! files, directories, error cases, and edge cases like empty files and binary
 //! content. This is distinct from `distant fs copy` which copies within the
-//! remote filesystem. Host-only since it requires local filesystem access.
-
-use std::time::Duration;
+//! remote filesystem.
 
 use assert_fs::prelude::*;
 use predicates::prelude::*;
@@ -15,10 +13,11 @@ use distant_test_harness::backend::Backend;
 use distant_test_harness::skip_if_no_backend;
 
 const FILE_CONTENTS: &str = "some text\non multiple lines\nthat is a file's contents\n";
-const WRITE_DELAY: Duration = Duration::from_millis(100);
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_upload_single_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -27,35 +26,36 @@ fn should_upload_single_file(#[case] backend: Backend) {
     let local_src = temp.child("local.txt");
     local_src.write_str(FILE_CONTENTS).unwrap();
 
-    let remote_dst = temp.child("remote.txt");
-    let remote_path = format!(":{}", remote_dst.to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-upload-single");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_dst = ctx.child_path(&remote_dir, "remote.txt");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_src.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_dst.assert(FILE_CONTENTS);
+    let content = ctx.cli_read(&remote_dst);
+    assert_eq!(content, FILE_CONTENTS);
 }
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_download_single_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 
-    let remote_src = temp.child("remote.txt");
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([remote_src.to_str().unwrap()])
-        .write_stdin(FILE_CONTENTS)
-        .assert()
-        .success();
-
-    std::thread::sleep(WRITE_DELAY);
+    let remote_dir = ctx.unique_dir("copy-download-single");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_src = ctx.child_path(&remote_dir, "remote.txt");
+    ctx.cli_write(&remote_src, FILE_CONTENTS);
 
     let local_dst = temp.child("local.txt");
-    let remote_path = format!(":{}", remote_src.to_str().unwrap());
+    let remote_path = format!(":{remote_src}");
 
     ctx.new_assert_cmd(["copy"])
         .args([&remote_path, local_dst.to_str().unwrap()])
@@ -67,6 +67,8 @@ fn should_download_single_file(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_upload_directory_recursively(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -81,55 +83,46 @@ fn should_upload_directory_recursively(#[case] backend: Backend) {
     let file_b = sub_dir.child("b.txt");
     file_b.write_str("content b").unwrap();
 
-    let remote_dir = temp.child("dst_dir");
-    let remote_path = format!(":{}", remote_dir.to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-upload-dir");
+    let remote_dst = ctx.child_path(&remote_dir, "dst_dir");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args(["-r", local_dir.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_dir.child("a.txt").assert("content a");
-    remote_dir.child("sub").child("b.txt").assert("content b");
+    let a_path = ctx.child_path(&remote_dst, "a.txt");
+    assert_eq!(ctx.cli_read(&a_path), "content a");
+
+    let sub_path = ctx.child_path(&remote_dst, "sub");
+    let b_path = ctx.child_path(&sub_path, "b.txt");
+    assert_eq!(ctx.cli_read(&b_path), "content b");
 }
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_download_directory_recursively(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 
-    let remote_dir = temp.child("remote_dir");
-    ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([remote_dir.to_str().unwrap()])
-        .assert()
-        .success();
+    let remote_dir = ctx.unique_dir("copy-download-dir");
+    ctx.cli_mkdir(&remote_dir);
 
-    let remote_sub = remote_dir.child("sub");
-    ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([remote_sub.to_str().unwrap()])
-        .assert()
-        .success();
+    let remote_sub = ctx.child_path(&remote_dir, "sub");
+    ctx.cli_mkdir(&remote_sub);
 
-    let remote_file_a = remote_dir.child("a.txt");
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([remote_file_a.to_str().unwrap()])
-        .write_stdin("content a")
-        .assert()
-        .success();
+    let remote_file_a = ctx.child_path(&remote_dir, "a.txt");
+    ctx.cli_write(&remote_file_a, "content a");
 
-    let remote_file_b = remote_sub.child("b.txt");
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([remote_file_b.to_str().unwrap()])
-        .write_stdin("content b")
-        .assert()
-        .success();
-
-    std::thread::sleep(WRITE_DELAY);
+    let remote_file_b = ctx.child_path(&remote_sub, "b.txt");
+    ctx.cli_write(&remote_file_b, "content b");
 
     let local_dir = temp.child("local_dir");
-    let remote_path = format!(":{}", remote_dir.to_str().unwrap());
+    let remote_path = format!(":{remote_dir}");
 
     ctx.new_assert_cmd(["copy"])
         .args(["-r", &remote_path, local_dir.to_str().unwrap()])
@@ -142,6 +135,8 @@ fn should_download_directory_recursively(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_error_when_both_paths_are_local(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -155,6 +150,8 @@ fn should_error_when_both_paths_are_local(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_error_when_both_paths_are_remote(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -168,6 +165,8 @@ fn should_error_when_both_paths_are_remote(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_error_when_directory_without_recursive_flag(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -176,7 +175,9 @@ fn should_error_when_directory_without_recursive_flag(#[case] backend: Backend) 
     let local_dir = temp.child("a_dir");
     local_dir.create_dir_all().unwrap();
 
-    let remote_path = format!(":{}", temp.child("dst").to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-no-recursive");
+    let remote_dst = ctx.child_path(&remote_dir, "dst");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_dir.to_str().unwrap(), &remote_path])
@@ -189,12 +190,17 @@ fn should_error_when_directory_without_recursive_flag(#[case] backend: Backend) 
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_error_when_source_not_found(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
     let missing = temp.child("nonexistent.txt");
-    let remote_path = format!(":{}", temp.child("dst.txt").to_str().unwrap());
+
+    let remote_dir = ctx.unique_dir("copy-not-found");
+    let remote_dst = ctx.child_path(&remote_dir, "dst.txt");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([missing.to_str().unwrap(), &remote_path])
@@ -205,6 +211,8 @@ fn should_error_when_source_not_found(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_upload_into_existing_directory(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -213,24 +221,23 @@ fn should_upload_into_existing_directory(#[case] backend: Backend) {
     let local_file = temp.child("myfile.txt");
     local_file.write_str("hello").unwrap();
 
-    let remote_dir = temp.child("existing_dir");
-    ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([remote_dir.to_str().unwrap()])
-        .assert()
-        .success();
-
-    let remote_path = format!(":{}", remote_dir.to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-into-existing");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_path = format!(":{remote_dir}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_file.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_dir.child("myfile.txt").assert("hello");
+    let uploaded = ctx.child_path(&remote_dir, "myfile.txt");
+    assert_eq!(ctx.cli_read(&uploaded), "hello");
 }
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_handle_empty_file(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -239,18 +246,20 @@ fn should_handle_empty_file(#[case] backend: Backend) {
     let local_src = temp.child("empty.txt");
     local_src.write_str("").unwrap();
 
-    let remote_dst = temp.child("remote_empty.txt");
-    let remote_path = format!(":{}", remote_dst.to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-empty");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_dst = ctx.child_path(&remote_dir, "remote_empty.txt");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_src.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_dst.assert("");
+    assert_eq!(ctx.cli_read(&remote_dst), "");
 
     let local_dst = temp.child("downloaded_empty.txt");
-    let remote_path2 = format!(":{}", remote_dst.to_str().unwrap());
+    let remote_path2 = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([&remote_path2, local_dst.to_str().unwrap()])
@@ -262,6 +271,8 @@ fn should_handle_empty_file(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_preserve_binary_content(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -271,18 +282,18 @@ fn should_preserve_binary_content(#[case] backend: Backend) {
     let local_src = temp.child("binary.bin");
     local_src.write_binary(&binary_data).unwrap();
 
-    let remote_dst = temp.child("remote_binary.bin");
-    let remote_path = format!(":{}", remote_dst.to_str().unwrap());
+    let remote_dir = ctx.unique_dir("copy-binary");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_dst = ctx.child_path(&remote_dir, "remote_binary.bin");
+    let remote_path = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_src.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_dst.assert(predicate::path::eq_file(local_src.path()));
-
     let local_roundtrip = temp.child("roundtrip.bin");
-    let remote_path2 = format!(":{}", remote_dst.to_str().unwrap());
+    let remote_path2 = format!(":{remote_dst}");
 
     ctx.new_assert_cmd(["copy"])
         .args([&remote_path2, local_roundtrip.to_str().unwrap()])
@@ -294,31 +305,29 @@ fn should_preserve_binary_content(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_overwrite_existing_destination(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
     let temp = assert_fs::TempDir::new().unwrap();
 
-    let remote_file = temp.child("target.txt");
-    ctx.new_assert_cmd(["fs", "write"])
-        .args([remote_file.to_str().unwrap()])
-        .write_stdin("old content")
-        .assert()
-        .success();
-
-    std::thread::sleep(WRITE_DELAY);
+    let remote_dir = ctx.unique_dir("copy-overwrite");
+    ctx.cli_mkdir(&remote_dir);
+    let remote_file = ctx.child_path(&remote_dir, "target.txt");
+    ctx.cli_write(&remote_file, "old content");
 
     let local_src = temp.child("new.txt");
     local_src.write_str("new content").unwrap();
 
-    let remote_path = format!(":{}", remote_file.to_str().unwrap());
+    let remote_path = format!(":{remote_file}");
 
     ctx.new_assert_cmd(["copy"])
         .args([local_src.to_str().unwrap(), &remote_path])
         .assert()
         .success();
 
-    remote_file.assert("new content");
+    assert_eq!(ctx.cli_read(&remote_file), "new content");
 }
 
 #[rstest]
