@@ -69,11 +69,10 @@ fn yield_an_error_when_fails(#[case] backend: Backend) {
         .code(1);
 }
 
-/// Docker is excluded because its tar-based create_dir implementation
-/// succeeds on existing directories (idempotent behavior).
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_fail_when_already_exists(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);

@@ -213,6 +213,18 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async move {
             let path_str = path.as_str();
+
+            // Verify the file exists before attempting to read it so the error
+            // kind is NotFound rather than a generic Docker API error.
+            if let Ok(output) = self.run_cmd(&["test", "-e", path_str]).await
+                && !output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("File not found: {}", path_str),
+                ));
+            }
+
             utils::tar_read_file(self.client.inner(), &self.container, path_str).await
         }
     }
@@ -316,6 +328,18 @@ impl Api for DockerApi {
             // and strip_prefix work correctly
             let path = self.resolve_path(Path::new(path.as_str())).await?;
             let path_str = path.to_string_lossy().to_string();
+
+            // Verify the directory exists before attempting to list it (consistent
+            // with Host and SSH backends which return NotFound for missing paths).
+            if let Ok(output) = self.run_cmd(&["test", "-d", &path_str]).await
+                && !output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Directory not found: {}", path_str),
+                ));
+            }
+
             let mut entries = Vec::new();
             let mut errors: Vec<io::Error> = Vec::new();
 
@@ -434,6 +458,18 @@ impl Api for DockerApi {
         async move {
             let path_str = path.as_str().to_string();
 
+            // When not using --all, fail if the directory already exists (consistent
+            // with Host and SSH backends which use mkdir without -p).
+            if !all
+                && let Ok(output) = self.run_cmd(&["test", "-d", &path_str]).await
+                && output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("Directory already exists: {}", path_str),
+                ));
+            }
+
             // Try exec-based mkdir first (faster, simpler)
             let cmd: Vec<&str> = if all {
                 vec!["mkdir", "-p", &path_str]
@@ -493,6 +529,24 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
             let path_str = path.as_str();
+
+            // When force is not set, reject non-empty directories (consistent
+            // with Host and SSH backends).
+            if !force {
+                let check = format!(
+                    "test -d {} && ls -A {} | head -1 | grep -q .",
+                    utils::shell_quote(path_str),
+                    utils::shell_quote(path_str),
+                );
+                if let Ok(output) = self.run_shell_cmd(&check).await
+                    && output.success()
+                {
+                    return Err(io::Error::other(format!(
+                        "Directory is not empty: {}",
+                        path_str
+                    )));
+                }
+            }
 
             let cmd: Vec<&str> = if force {
                 vec!["rm", "-rf", path_str]

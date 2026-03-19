@@ -79,11 +79,10 @@ fn should_support_removing_nonempty_directory_if_force_specified(#[case] backend
     );
 }
 
-/// Docker is excluded because its `rm -r` (without --force) is still
-/// recursive and succeeds on non-empty directories with writable files.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn yield_an_error_when_fails(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
