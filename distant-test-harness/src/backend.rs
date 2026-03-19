@@ -188,6 +188,15 @@ impl BackendCtx {
         output.status.success() && String::from_utf8_lossy(&output.stdout).contains("true")
     }
 
+    /// Returns the Docker container name if this is a Docker backend.
+    #[cfg(feature = "docker")]
+    pub fn docker_container_name(&self) -> Option<&str> {
+        match self {
+            Self::Docker(ctx) => Some(ctx.container_name()),
+            _ => None,
+        }
+    }
+
     /// Builds a test harness binary and returns a path usable by the backend.
     ///
     /// For Host and SSH backends, the binary is built natively and the local

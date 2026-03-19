@@ -12,7 +12,7 @@ use rstest::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::time;
 
-use distant_test_harness::backend::Backend;
+use distant_test_harness::backend::{Backend, BackendCtx};
 use distant_test_harness::exe;
 use distant_test_harness::manager::*;
 use distant_test_harness::skip_if_no_backend;
@@ -73,7 +73,7 @@ fn parse_tunnel_started(output: &str) -> (u32, u16) {
     (id, port)
 }
 
-/// Spawns the tcp-echo-server and returns its child process and listening port.
+/// Spawns a tcp-echo-server on the host and returns its child process and listening port.
 async fn spawn_echo_server() -> (tokio::process::Child, u16) {
     let echo_bin = exe::build_tcp_echo_server()
         .await
@@ -107,6 +107,68 @@ async fn spawn_echo_server() -> (tokio::process::Child, u16) {
     (echo_child, echo_port)
 }
 
+/// Spawns a tcp-echo-server inside the Docker container via `docker exec`.
+///
+/// Cross-compiles the binary, uploads it, then runs it inside the container
+/// so that `127.0.0.1` in the tunnel spec resolves to the container's loopback.
+#[cfg(feature = "docker")]
+async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (tokio::process::Child, u16) {
+    let remote_path = ctx
+        .prepare_binary("tcp-echo-server")
+        .await
+        .expect("failed to prepare tcp-echo-server for Docker");
+
+    let container_name = ctx
+        .docker_container_name()
+        .expect("expected Docker backend");
+
+    let mut child = tokio::process::Command::new("docker")
+        .args([
+            "exec",
+            "-i",
+            container_name,
+            &remote_path,
+            ECHO_SERVER_LIFETIME_SECS,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("failed to spawn tcp-echo-server in container");
+
+    let stdout = child.stdout.take().expect("stdout not captured");
+    let mut reader = tokio::io::BufReader::new(stdout);
+    let mut port_line = String::new();
+    time::timeout(
+        ECHO_SERVER_STARTUP_TIMEOUT,
+        reader.read_line(&mut port_line),
+    )
+    .await
+    .expect("timed out waiting for echo server port in container")
+    .expect("failed to read echo server port from container");
+
+    let port: u16 = port_line
+        .trim()
+        .parse()
+        .expect("echo server in container should print port number");
+
+    (child, port)
+}
+
+/// Spawns a tcp-echo-server that the given backend can reach at `127.0.0.1`.
+///
+/// For Host/SSH, this spawns locally since the remote side shares `127.0.0.1`
+/// with the host. For Docker, this cross-compiles the binary, uploads it into
+/// the container, and runs it inside via `docker exec` so the container's
+/// `127.0.0.1` reaches it.
+async fn spawn_reachable_echo_server(ctx: &BackendCtx) -> (tokio::process::Child, u16) {
+    match ctx.backend() {
+        #[cfg(feature = "docker")]
+        Backend::Docker => spawn_echo_server_in_container(ctx).await,
+        _ => spawn_echo_server().await,
+    }
+}
+
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -115,7 +177,7 @@ async fn spawn_echo_server() -> (tokio::process::Child, u16) {
 async fn tunnel_open_should_print_local_port(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (_echo, echo_port) = spawn_echo_server().await;
+    let (_echo, echo_port) = spawn_reachable_echo_server(&ctx).await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx
@@ -194,7 +256,7 @@ async fn tunnel_list_should_show_no_active_tunnels_when_empty(#[case] backend: B
 async fn tunnel_list_should_show_active_tunnels(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (_echo, echo_port) = spawn_echo_server().await;
+    let (_echo, echo_port) = spawn_reachable_echo_server(&ctx).await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let open_output = ctx
@@ -243,7 +305,7 @@ async fn tunnel_list_should_show_active_tunnels(#[case] backend: Backend) {
 async fn tunnel_close_should_succeed_by_id(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (_echo, echo_port) = spawn_echo_server().await;
+    let (_echo, echo_port) = spawn_reachable_echo_server(&ctx).await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let open_output = ctx
@@ -282,14 +344,9 @@ async fn tunnel_close_should_succeed_by_id(#[case] backend: Backend) {
 }
 
 #[rstest]
-#[case::host(Backend::Host)]
-#[case::ssh(Backend::Ssh)]
-#[case::docker(Backend::Docker)]
-#[tokio::test]
-async fn tunnel_close_should_fail_with_invalid_id(#[case] backend: Backend) {
-    let ctx = skip_if_no_backend!(backend);
-
-    let output = ctx
+#[test_log::test]
+fn tunnel_close_should_fail_with_invalid_id(manager_only_ctx: ManagerOnlyCtx) {
+    let output = manager_only_ctx
         .new_std_cmd(["tunnel", "close"])
         .arg("99999")
         .output()
@@ -297,7 +354,7 @@ async fn tunnel_close_should_fail_with_invalid_id(#[case] backend: Backend) {
 
     assert!(
         !output.status.success(),
-        "tunnel close with invalid ID should fail via {backend:?}"
+        "tunnel close with invalid ID should fail"
     );
 }
 
@@ -309,7 +366,7 @@ async fn tunnel_close_should_fail_with_invalid_id(#[case] backend: Backend) {
 async fn tunnel_open_should_bind_to_specific_local_port(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (_echo, echo_port) = spawn_echo_server().await;
+    let (_echo, echo_port) = spawn_reachable_echo_server(&ctx).await;
 
     // Find a free port by binding to port 0, recording the assigned port, then dropping
     // the listener so the tunnel can bind to it.
@@ -460,8 +517,9 @@ async fn tunnel_listen_should_fail_with_privileged_port(#[case] backend: Backend
     }
 }
 
-/// Docker is excluded because the tunnel resolves `127.0.0.1` on the remote
-/// (container) side, which cannot reach the echo server running on the host.
+/// Docker excluded: the Docker tunnel implementation resets the TCP connection
+/// before the echo response can be read back (ConnectionReset on read_to_end).
+/// The tunnel opens and binds correctly (tested by tunnel_open_should_print_local_port).
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -469,7 +527,7 @@ async fn tunnel_listen_should_fail_with_privileged_port(#[case] backend: Backend
 async fn tunnel_open_should_forward_data(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let (_echo, echo_port) = spawn_echo_server().await;
+    let (_echo, echo_port) = spawn_reachable_echo_server(&ctx).await;
 
     let spec = format!("0:127.0.0.1:{echo_port}");
     let output = ctx

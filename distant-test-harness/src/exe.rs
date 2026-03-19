@@ -55,8 +55,9 @@ pub async fn build_harness_bin(bin_name: &str) -> io::Result<PathBuf> {
 /// Builds a named binary from the test harness crate for a specific target triple.
 ///
 /// The binary is placed under `target/<triple>/debug/` instead of the default
-/// build directory. This is used for cross-compiling test binaries that need to
-/// run inside Docker containers (e.g., Linux binaries built from macOS).
+/// build directory. Used for cross-compiling test binaries that need to run
+/// inside Docker containers (e.g., Linux binaries built from a Linux host with
+/// a matching cross-linker installed).
 pub async fn build_harness_bin_for_target(bin_name: &str, target: &str) -> io::Result<PathBuf> {
     let status = tokio::process::Command::new(env!("CARGO"))
         .args([

@@ -92,53 +92,6 @@ impl DockerContainer {
         self.client.exec_cmd(&self.name, cmd).await
     }
 
-    /// Detect the Rust target triple for binaries that will run inside this container.
-    ///
-    /// Runs `uname -m` inside the container and maps the architecture to a
-    /// `*-unknown-linux-musl` triple (musl for maximum portability).
-    pub async fn detect_target_triple(&self) -> io::Result<String> {
-        let output = tokio::process::Command::new("docker")
-            .args(["exec", &self.name, "uname", "-m"])
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(io::Error::other("Failed to detect container architecture"));
-        }
-
-        let arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let triple = match arch.as_str() {
-            "x86_64" => "x86_64-unknown-linux-musl",
-            "aarch64" => "aarch64-unknown-linux-musl",
-            other => {
-                return Err(io::Error::other(format!(
-                    "Unsupported container architecture: {other}"
-                )));
-            }
-        };
-        Ok(triple.to_string())
-    }
-
-    /// Returns `true` if the host can produce binaries for this container natively
-    /// (same OS and architecture, no cross-compilation needed).
-    pub async fn host_matches_container(&self) -> bool {
-        if cfg!(not(target_os = "linux")) {
-            return false;
-        }
-
-        let Ok(triple) = self.detect_target_triple().await else {
-            return false;
-        };
-
-        if cfg!(target_arch = "x86_64") {
-            triple.starts_with("x86_64")
-        } else if cfg!(target_arch = "aarch64") {
-            triple.starts_with("aarch64")
-        } else {
-            false
-        }
-    }
-
     /// Upload a local file into the container and make it executable.
     ///
     /// Uses `docker cp` to copy the file and `chmod +x` to set the executable bit.
@@ -171,21 +124,53 @@ impl DockerContainer {
         self.exec(&["chmod", "+x", remote_path]).await
     }
 
+    /// Detect the container's architecture via `uname -m`.
+    async fn container_arch(&self) -> io::Result<String> {
+        let output = tokio::process::Command::new("docker")
+            .args(["exec", &self.name, "uname", "-m"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(io::Error::other("Failed to detect container architecture"));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Maps a `uname -m` value to a Rust target triple for cross-compilation.
+    fn target_triple_for_arch(arch: &str) -> io::Result<&'static str> {
+        match arch {
+            "x86_64" => Ok("x86_64-unknown-linux-gnu"),
+            "aarch64" => Ok("aarch64-unknown-linux-gnu"),
+            other => Err(io::Error::other(format!(
+                "Unsupported container architecture: {other}"
+            ))),
+        }
+    }
+
     /// Build a test harness binary for this container and upload it.
     ///
-    /// If the host OS/arch matches the container, uses the native build.
-    /// Otherwise, cross-compiles for the container's target triple.
+    /// Tries cross-compilation with `--target` first (fast if a cross-linker
+    /// is installed or the host already matches). Falls back to building inside
+    /// a `rust:1.88-slim` Docker container with a minimal generated project.
     ///
     /// Returns the remote path where the binary was placed (`/usr/local/bin/<name>`).
     pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
-        let local_path = if self.host_matches_container().await {
-            // Native build works — use the standard builder
-            crate::exe::build_harness_bin_for_target(bin_name, &self.detect_target_triple().await?)
-                .await?
-        } else {
-            // Cross-compile for the container's architecture
-            let triple = self.detect_target_triple().await?;
-            crate::exe::build_harness_bin_for_target(bin_name, &triple).await?
+        let arch = self.container_arch().await?;
+        let triple = Self::target_triple_for_arch(&arch)?;
+
+        // Fast path: try cross-compile (works natively on matching Linux hosts,
+        // or when a cross-linker like `aarch64-linux-gnu-gcc` is installed)
+        let local_path = match crate::exe::build_harness_bin_for_target(bin_name, triple).await {
+            Ok(path) => {
+                log::info!("Cross-compiled {bin_name} for {triple}");
+                path
+            }
+            Err(e) => {
+                log::info!("Cross-compile failed ({e}), falling back to Docker build");
+                build_in_docker(bin_name).await?
+            }
         };
 
         let remote_path = format!("/usr/local/bin/{bin_name}");
@@ -303,6 +288,173 @@ pub async fn client_with_tunnel_tools(
         value: client,
         container,
     })
+}
+
+/// Returns the minimal Cargo.toml content for a standalone binary.
+///
+/// Each test binary only needs a fraction of the dependencies that the full
+/// `distant-test-harness` crate pulls in. Building a minimal project inside
+/// Docker is dramatically faster than compiling the entire workspace.
+fn minimal_cargo_toml(bin_name: &str) -> &'static str {
+    match bin_name {
+        "pty-echo" => {
+            r#"[package]
+name = "pty-echo"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "pty-echo"
+path = "main.rs"
+"#
+        }
+        "pty-password" => {
+            r#"[package]
+name = "pty-password"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+rpassword = "7"
+
+[[bin]]
+name = "pty-password"
+path = "main.rs"
+"#
+        }
+        "pty-interactive" => {
+            r#"[package]
+name = "pty-interactive"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+ctrlc = "3"
+rpassword = "7"
+
+[[bin]]
+name = "pty-interactive"
+path = "main.rs"
+"#
+        }
+        "tcp-echo-server" => {
+            r#"[package]
+name = "tcp-echo-server"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time", "macros", "rt-multi-thread"] }
+
+[[bin]]
+name = "tcp-echo-server"
+path = "main.rs"
+"#
+        }
+        "tcp-to-stdio" => {
+            r#"[package]
+name = "tcp-to-stdio"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "io-std", "macros", "rt-multi-thread"] }
+
+[[bin]]
+name = "tcp-to-stdio"
+path = "main.rs"
+"#
+        }
+        _ => panic!("unknown test binary: {bin_name}"),
+    }
+}
+
+/// Returns the source file path for a test binary (underscore-named in src/bin/).
+fn bin_source_path(bin_name: &str) -> PathBuf {
+    let file_name = format!("{}.rs", bin_name.replace('-', "_"));
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("bin")
+        .join(file_name)
+}
+
+/// Builds a test binary inside Docker using a minimal generated Cargo project.
+///
+/// Instead of compiling the entire distant workspace, this creates a tiny project
+/// with only the dependencies the binary actually needs (e.g., just `tokio` for
+/// tcp-echo-server). The result is cached on disk so subsequent runs are instant.
+async fn build_in_docker(bin_name: &str) -> io::Result<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().expect("workspace root");
+
+    let cache_dir = workspace_root.join("target").join("docker-build");
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let output_path = cache_dir.join(bin_name);
+
+    if output_path.exists() {
+        log::info!(
+            "Using cached Docker-built binary: {}",
+            output_path.display()
+        );
+        return Ok(output_path);
+    }
+
+    log::info!("Building {bin_name} inside Docker (minimal project)...");
+
+    // Create a temp directory with a minimal Cargo project
+    let build_dir = cache_dir.join(format!("{bin_name}-src"));
+    std::fs::create_dir_all(&build_dir)?;
+    std::fs::write(build_dir.join("Cargo.toml"), minimal_cargo_toml(bin_name))?;
+    std::fs::copy(bin_source_path(bin_name), build_dir.join("main.rs"))?;
+
+    let build_dir_str = build_dir.to_string_lossy();
+    let cache_dir_str = cache_dir.to_string_lossy();
+    let target_dir = "/tmp/build";
+    // Copy source to a writable location inside the container (Cargo needs to
+    // write Cargo.lock), then build and copy the result to the output volume.
+    let build_and_copy = format!(
+        "cp -r /src /build && cd /build \
+         && cargo build --release --target-dir {target_dir} \
+         && cp {target_dir}/release/{bin_name} /out/{bin_name}"
+    );
+
+    let status = tokio::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &format!("{build_dir_str}:/src:ro"),
+            "-v",
+            &format!("{cache_dir_str}:/out"),
+            "-v",
+            "distant-docker-cargo-cache:/usr/local/cargo/registry",
+            "-w",
+            "/src",
+            "rust:1.88-slim",
+            "sh",
+            "-c",
+            &build_and_copy,
+        ])
+        .status()
+        .await?;
+
+    let _ = std::fs::remove_dir_all(&build_dir);
+
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "Docker build of {bin_name} failed"
+        )));
+    }
+
+    if !output_path.exists() {
+        return Err(io::Error::other(format!(
+            "Docker build completed but {} not found",
+            output_path.display()
+        )));
+    }
+
+    Ok(output_path)
 }
 
 /// Generate a short random suffix for container names.
