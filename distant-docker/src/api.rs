@@ -686,35 +686,58 @@ impl Api for DockerApi {
                 ));
             }
 
-            let search_cmd = search::build_search_command(&query, &self.search_tools)?;
+            let search_cmds = search::build_search_commands(&query, &self.search_tools)?;
             let search_id: SearchId = rand::random();
 
-            // Run the search command
-            let output = self.run_shell_cmd(&search_cmd.command).await?;
+            // Pre-compute include/exclude patterns for parsers that need them
+            // (rg JSON output cannot use shell-level awk filters).
+            let include_pattern = query
+                .options
+                .include
+                .as_ref()
+                .map(search::build_unix_pattern);
+            let exclude_pattern = query
+                .options
+                .exclude
+                .as_ref()
+                .map(search::build_unix_pattern);
 
-            // Check for real errors (exit code >= 2 for grep/rg, >= 1 for find)
-            if search_cmd.is_error_exit(output.exit_code) {
-                return Err(io::Error::other(format!(
-                    "Search command failed (exit {}): {}",
-                    output.exit_code,
-                    output.stderr_str()
-                )));
+            let mut all_matches = Vec::new();
+
+            for search_cmd in &search_cmds {
+                let output = self.run_shell_cmd(&search_cmd.command).await?;
+
+                // Check for real errors (exit code >= 2 for grep/rg, >= 1 for find)
+                if search_cmd.is_error_exit(output.exit_code) {
+                    return Err(io::Error::other(format!(
+                        "Search command failed (exit {}): {}",
+                        output.exit_code,
+                        output.stderr_str()
+                    )));
+                }
+
+                let stdout = output.stdout_str();
+
+                let matches = match query.target {
+                    SearchQueryTarget::Contents => search::parse_contents_matches(
+                        &stdout,
+                        search_cmd.tool,
+                        include_pattern.as_deref(),
+                        exclude_pattern.as_deref(),
+                    ),
+                    SearchQueryTarget::Path => {
+                        search::parse_path_matches(&stdout, &query.condition)
+                    }
+                };
+                all_matches.extend(matches);
             }
-
-            let stdout = output.stdout_str();
-
-            // Parse results based on search target
-            let matches = match query.target {
-                SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
-                SearchQueryTarget::Path => search::parse_path_matches(&stdout),
-            };
 
             // Send results via reply
             use distant_core::protocol::Response;
-            if !matches.is_empty() {
+            if !all_matches.is_empty() {
                 let _ = ctx.reply.send(Response::SearchResults {
                     id: search_id,
-                    matches,
+                    matches: all_matches,
                 });
             }
 

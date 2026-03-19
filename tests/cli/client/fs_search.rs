@@ -101,11 +101,10 @@ fn should_return_no_results_for_nonmatching_pattern(#[case] backend: Backend) {
         .stdout("");
 }
 
-/// Docker is excluded because its search implementation does not support
-/// include/exclude filters.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_include_filter(#[case] backend: Backend) {
     if cfg!(windows) && matches!(backend, Backend::Ssh) {
@@ -136,11 +135,10 @@ fn should_support_include_filter(#[case] backend: Backend) {
     );
 }
 
-/// Docker is excluded because its search implementation does not support
-/// include/exclude filters.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_exclude_filter(#[case] backend: Backend) {
     if cfg!(windows) && matches!(backend, Backend::Ssh) {
@@ -171,11 +169,10 @@ fn should_support_exclude_filter(#[case] backend: Backend) {
     );
 }
 
-/// Docker is excluded because its search implementation does not support
-/// the max-depth option.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_max_depth_option(#[case] backend: Backend) {
     if cfg!(windows) && matches!(backend, Backend::Ssh) {
@@ -209,5 +206,44 @@ fn should_support_max_depth_option(#[case] backend: Backend) {
     assert!(
         !stdout.contains("deep.txt"),
         "Expected max-depth 1 to skip sub/deep.txt, got: {stdout}"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_upward_search(#[case] backend: Backend) {
+    if cfg!(windows) && matches!(backend, Backend::Ssh) {
+        return; // SSH search requires Unix tools unavailable on Windows
+    }
+    let ctx = skip_if_no_backend!(backend);
+
+    // Create a nested directory structure: base/sub/
+    // Place a file in base/ and search upward from sub/
+    let base = ctx.unique_dir("search-upward");
+    ctx.cli_mkdir(&base);
+    ctx.cli_write(&ctx.child_path(&base, "ancestor.txt"), "findme");
+    let sub = ctx.child_path(&base, "sub");
+    ctx.cli_mkdir(&sub);
+
+    let output = ctx
+        .new_std_cmd(["fs", "search"])
+        .args(["--upward", "findme"])
+        .arg(&sub)
+        .output()
+        .expect("Failed to run fs search");
+
+    assert!(
+        output.status.success(),
+        "fs search --upward should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Upward search from sub/ should find ancestor.txt in parent base/ directory
+    assert!(
+        stdout.contains("ancestor.txt"),
+        "Expected upward search to find ancestor.txt in parent dir, got: {stdout}"
     );
 }

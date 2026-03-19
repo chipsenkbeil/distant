@@ -9,8 +9,8 @@ use distant_core::constants::{TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE}
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
-    Response, SearchId, SearchQuery, SearchQueryTarget, SetPermissionsOptions, StatusInfo,
-    SystemInfo, TunnelDirection, TunnelId, TunnelInfo, Version,
+    Response, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo,
+    TunnelDirection, TunnelId, TunnelInfo, Version,
 };
 use distant_core::{Api, Ctx};
 use log::*;
@@ -923,7 +923,7 @@ impl Api for SshApi {
                 ));
             }
 
-            let search_cmd = search::build_search_command(&query, &search_tools)?;
+            let search_cmds = search::build_search_commands(&query, &search_tools)?;
             let search_id: SearchId = rand::random();
 
             // Register cancellation flag before spawning the search task.
@@ -936,37 +936,63 @@ impl Api for SshApi {
             let searches_cleanup = Arc::clone(&searches);
             tokio::spawn(async move {
                 let result = async {
-                    let (channel, _permit) = pool.open_exec().await?.take();
-                    let output =
-                        utils::execute_output_on_channel(channel, &search_cmd.command, None)
-                            .await?;
+                    let mut all_matches = Vec::new();
 
-                    // Check cancellation after the command completes.
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(());
+                    let is_multi_cmd = search_cmds.len() > 1;
+
+                    for search_cmd in &search_cmds {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return Ok(());
+                        }
+
+                        let exec_result = async {
+                            let (channel, _permit) = pool.open_exec().await?.take();
+                            utils::execute_output_on_channel(channel, &search_cmd.command, None)
+                                .await
+                        }
+                        .await;
+
+                        let output = match exec_result {
+                            Ok(o) => o,
+                            Err(e) => {
+                                // For multi-command searches (upward), log and
+                                // continue — one ancestor failing should not
+                                // abort the entire search.
+                                if is_multi_cmd {
+                                    warn!("Search sub-command failed, continuing: {e}");
+                                    continue;
+                                }
+                                return Err(e);
+                            }
+                        };
+
+                        // For grep/rg, exit code 1 means "no matches" (not an
+                        // error), while exit >= 2 is a real error. For find,
+                        // any non-zero exit is an error. For multi-command
+                        // searches, log the error and continue.
+                        if search_cmd.is_error_exit(output.exit_code.unwrap_or(0)) {
+                            if is_multi_cmd {
+                                let stderr_str = String::from_utf8_lossy(&output.stderr);
+                                warn!(
+                                    "Search sub-command error (continuing): \
+                                     {stderr_str}"
+                                );
+                                continue;
+                            }
+                            let stderr_str = String::from_utf8_lossy(&output.stderr);
+                            return Err(io::Error::other(format!(
+                                "Search command failed: {stderr_str}",
+                            )));
+                        }
+
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        all_matches.extend(search_cmd.parse_output(&stdout));
                     }
 
-                    // For grep/rg, exit code 1 means "no matches" (not an error), while
-                    // exit >= 2 is a real error. For find, any non-zero exit is an error.
-                    // Use the exit code directly rather than relying on stderr heuristics.
-                    if search_cmd.is_error_exit(output.exit_code.unwrap_or(0)) {
-                        let stderr_str = String::from_utf8_lossy(&output.stderr);
-                        return Err(io::Error::other(format!(
-                            "Search command failed: {stderr_str}",
-                        )));
-                    }
-
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-
-                    let matches = match query.target {
-                        SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
-                        SearchQueryTarget::Path => search::parse_path_matches(&stdout),
-                    };
-
-                    if !matches.is_empty() && !cancelled.load(Ordering::Relaxed) {
+                    if !all_matches.is_empty() && !cancelled.load(Ordering::Relaxed) {
                         let _ = ctx.reply.send(Response::SearchResults {
                             id: search_id,
-                            matches,
+                            matches: all_matches,
                         });
                     }
 

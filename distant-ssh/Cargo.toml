@@ -22,9 +22,11 @@ futures = "0.3.32"
 hex = "0.4.3"
 log = "0.4.29"
 rand = "0.8.5"
+regex = "1"
 rpassword = "7.4.0"
 russh = { version = "0.57", default-features = false, features = ["ring", "rsa", "flate2"] }
 russh-sftp = "2.1"
+serde_json = "1"
 shell-words = "1.1.1"
 ssh2-config = "0.7"
 tokio = { version = "1.50.0", features = ["full"] }
