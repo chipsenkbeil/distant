@@ -1,7 +1,6 @@
 //! Smoke tests for `distant-test-harness` helper binaries.
 //!
-//! These tests verify the test infrastructure itself rather than the distant
-//! CLI. Currently covers the `tcp-echo-server` binary.
+//! Verifies the test infrastructure itself rather than the distant CLI.
 
 use std::process::Stdio;
 use std::time::Duration;

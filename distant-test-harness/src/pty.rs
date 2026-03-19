@@ -1,8 +1,8 @@
 //! Cross-platform PTY session management for integration tests.
 //!
 //! Provides [`PtySession`] which wraps `portable-pty` with expect-like matching
-//! for test assertions. Used by `cli/client/shell.rs` and `cli/client/spawn.rs`
-//! for tests that require a real terminal (PTY allocation, raw mode, etc.).
+//! for test assertions. Used by shell and spawn PTY tests that require a real
+//! terminal (PTY allocation, raw mode, etc.).
 //!
 //! On Windows, ConPTY cursor position queries (`\x1b[6n`) are handled
 //! automatically by the reader thread to prevent child I/O deadlocks.
@@ -33,7 +33,7 @@ const PTY_ROWS: u16 = 40;
 /// Wraps `portable-pty` with expect-like matching for test assertions.
 /// Spawns a reader thread to accumulate output, enabling non-blocking
 /// `expect()` calls with configurable timeout.
-pub(super) struct PtySession {
+pub struct PtySession {
     #[allow(dead_code)]
     master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,

@@ -55,7 +55,7 @@ async fn should_support_pty_flag(#[case] backend: Backend) {
     args.push("echo".to_string());
     args.push("pty-spawn-ok".to_string());
 
-    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
+    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
     session.expect("pty-spawn-ok");
 }
 
@@ -202,7 +202,7 @@ async fn should_propagate_pty_resize(#[case] backend: Backend) {
     for arg in &extra_args {
         args.push(arg.to_string());
     }
-    let mut session = crate::cli::pty::PtySession::spawn(&bin, &args);
+    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
 
     session.resize(50, 132);
     session.expect("50");

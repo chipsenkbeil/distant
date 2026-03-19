@@ -143,10 +143,11 @@ accepts one connection, echoes all data back, and exits on EOF or timeout.
 ### PTY / Predictive Echo Testing
 
 PTY tests live in `tests/cli/client/shell.rs` and `tests/cli/client/spawn.rs`,
-with the `PtySession` helper in `tests/cli/pty.rs`. They are cross-platform
-and use `portable-pty` to interact with `distant shell`, `distant spawn --pty`,
-and `distant ssh` (which also allocates a PTY). All PTY tests use rstest
-multi-backend (Host, SSH, Docker) via `BackendCtx`. On Windows, `PtySession`
+with the `PtySession` helper in `distant-test-harness/src/pty.rs`. They are
+cross-platform and use `portable-pty` to interact with `distant shell`,
+`distant spawn --pty`, and `distant ssh` (which also allocates a PTY). All
+PTY tests use rstest multi-backend (Host, SSH, Docker) via `BackendCtx`. On
+Windows, `PtySession`
 automatically handles ConPTY cursor position queries (`\x1b[6n`) to prevent
 I/O deadlocks. Purpose-built binaries exercise different PTY scenarios:
 
