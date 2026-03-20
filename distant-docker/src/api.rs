@@ -45,7 +45,10 @@ struct DockerTunnel {
 /// Translates distant operations to Docker API calls using a combination of the tar archive
 /// API (for file I/O) and container exec (for process and filesystem operations).
 ///
-/// Only Unix containers are supported.
+/// Only Unix containers are supported. The implementation assumes POSIX standard tools
+/// (`test`, `ls`, `head`, `grep`, `find`, `readlink`, `stat`, `rm`, `cp`, `mv`, `chmod`,
+/// `cat`, `mkdir`, `sh`) are available in the container, which is guaranteed by the
+/// ubuntu:22.04 base image used for all containers.
 pub struct DockerApi {
     /// Docker client handle.
     client: DockerClient,
@@ -549,8 +552,7 @@ impl Api for DockerApi {
             // with Host and SSH backends).
             if !force {
                 let check = format!(
-                    "test -d {} && ls -A {} | head -1 | grep -q .",
-                    utils::shell_quote(path_str),
+                    "test -d {0} && test -n \"$(ls -A {0} | head -1)\"",
                     utils::shell_quote(path_str),
                 );
                 if let Ok(output) = self.run_shell_cmd(&check).await

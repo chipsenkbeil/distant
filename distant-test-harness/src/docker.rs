@@ -298,78 +298,41 @@ pub async fn client_with_tunnel_tools(
 /// Each test binary only needs a fraction of the dependencies that the full
 /// `distant-test-harness` crate pulls in. Building a minimal project inside
 /// Docker is dramatically faster than compiling the entire workspace.
-fn minimal_cargo_toml(bin_name: &str) -> &'static str {
-    match bin_name {
-        "pty-echo" => {
-            r#"[package]
-name = "pty-echo"
-version = "0.0.0"
-edition = "2024"
-
-[[bin]]
-name = "pty-echo"
-path = "main.rs"
-"#
-        }
-        "pty-password" => {
-            r#"[package]
-name = "pty-password"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-rpassword = "7"
-
-[[bin]]
-name = "pty-password"
-path = "main.rs"
-"#
-        }
-        "pty-interactive" => {
-            r#"[package]
-name = "pty-interactive"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-ctrlc = "3"
-rpassword = "7"
-
-[[bin]]
-name = "pty-interactive"
-path = "main.rs"
-"#
-        }
+///
+/// Returns a `String` so that templates can be built dynamically.
+fn minimal_cargo_toml(bin_name: &str) -> String {
+    let deps = match bin_name {
+        "pty-echo" => "",
+        "pty-password" => "rpassword = \"7\"\n",
+        "pty-interactive" => "ctrlc = \"3\"\nrpassword = \"7\"\n",
         "tcp-echo-server" => {
-            r#"[package]
-name = "tcp-echo-server"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-tokio = { version = "1", features = ["net", "io-util", "time", "macros", "rt-multi-thread"] }
-
-[[bin]]
-name = "tcp-echo-server"
-path = "main.rs"
-"#
+            "tokio = { version = \"1\", features = [\"net\", \"io-util\", \"time\", \"macros\", \"rt-multi-thread\"] }\n"
         }
         "tcp-to-stdio" => {
-            r#"[package]
-name = "tcp-to-stdio"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-tokio = { version = "1", features = ["net", "io-util", "io-std", "macros", "rt-multi-thread"] }
-
-[[bin]]
-name = "tcp-to-stdio"
-path = "main.rs"
-"#
+            "tokio = { version = \"1\", features = [\"net\", \"io-util\", \"io-std\", \"macros\", \"rt-multi-thread\"] }\n"
         }
         _ => panic!("unknown test binary: {bin_name}"),
+    };
+
+    let mut toml = format!(
+        "\
+[package]
+name = \"{bin_name}\"
+version = \"0.0.0\"
+edition = \"2024\"
+"
+    );
+
+    if !deps.is_empty() {
+        toml.push_str("\n[dependencies]\n");
+        toml.push_str(deps);
     }
+
+    toml.push_str(&format!(
+        "\n[[bin]]\nname = \"{bin_name}\"\npath = \"main.rs\"\n"
+    ));
+
+    toml
 }
 
 /// Returns the source file path for a test binary (underscore-named in src/bin/).
