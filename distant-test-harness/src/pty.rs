@@ -4,6 +4,26 @@
 //! for test assertions. Used by shell and spawn PTY tests that require a real
 //! terminal (PTY allocation, raw mode, etc.).
 //!
+//! # How PTY tests work
+//!
+//! Tests spawn a `distant shell` or `distant spawn --pty` command inside a real
+//! PTY via [`PtySession::spawn`]. A background reader thread accumulates all
+//! output from the PTY master into a shared buffer. Tests then:
+//!
+//! 1. **Send input** via [`PtySession::send`] / [`PtySession::send_line`] —
+//!    bytes are written to the PTY master, which forwards them to the child's
+//!    stdin as if a user typed them.
+//! 2. **Assert output** via [`PtySession::expect`] — polls the accumulated
+//!    buffer for a substring within a configurable timeout. This proves that the
+//!    distant CLI correctly relayed the input to the remote process and returned
+//!    the output through the PTY.
+//! 3. **Verify exit** via [`PtySession::wait_for_exit`] — confirms the child
+//!    exited with the expected status code.
+//!
+//! Helper binaries (`pty-echo`, `pty-interactive`, `pty-password`) run on the
+//! remote side to exercise specific PTY scenarios: raw echo, interactive prompts,
+//! and password input with echo disabled.
+//!
 //! On Windows, ConPTY cursor position queries (`\x1b[6n`) are handled
 //! automatically by the reader thread to prevent child I/O deadlocks.
 
