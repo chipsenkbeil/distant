@@ -7,6 +7,7 @@
 use rstest::*;
 
 use distant_test_harness::backend::Backend;
+use distant_test_harness::manager::{ApiProcess, TIMEOUT, handle_cli_auth};
 use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
@@ -66,6 +67,56 @@ fn should_fail_with_invalid_id(#[case] backend: Backend) {
         .output()
         .expect("Failed to run kill");
     assert!(!output.status.success(), "kill with invalid ID should fail");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[test_log::test]
+fn should_support_json_format(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_assert_cmd(vec!["status", "--format", "json"])
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let id = parsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .expect("Should have at least one connection")
+        .clone();
+
+    let child = ctx
+        .new_std_cmd(vec!["kill", "--format", "json"])
+        .arg(&id)
+        .spawn()
+        .expect("Failed to spawn kill --format json");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut proc = ApiProcess::new(child, TIMEOUT);
+
+        handle_cli_auth(&mut proc).await;
+
+        let json = proc
+            .read_json_from_stdout()
+            .await
+            .expect("Failed to read kill output")
+            .expect("Missing kill output");
+
+        assert_eq!(
+            json["type"], "ok",
+            "Expected type 'ok' in kill JSON output, got: {json}"
+        );
+        assert!(
+            json["id"].is_number(),
+            "Expected numeric id in kill JSON output, got: {json}"
+        );
+    });
 }
 
 #[rstest]
