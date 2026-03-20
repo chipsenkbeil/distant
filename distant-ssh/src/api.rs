@@ -791,9 +791,20 @@ impl Api for SshApi {
 
             use distant_core::protocol::FileType;
 
+            // Windows OpenSSH's SFTP lstat doesn't reliably set the symlink
+            // mode bit, so is_symlink() returns false even for real symlinks.
+            // Fall back to read_link() to detect symlinks on Windows.
+            let is_symlink = if attrs.is_symlink() {
+                true
+            } else if self.family == SshFamily::Windows && !resolve_file_type {
+                sftp.read_link(sftp_path.as_str()).await.is_ok()
+            } else {
+                false
+            };
+
             let file_type = if attrs.is_dir() {
                 FileType::Dir
-            } else if attrs.is_symlink() {
+            } else if is_symlink {
                 FileType::Symlink
             } else {
                 FileType::File
@@ -801,7 +812,7 @@ impl Api for SshApi {
 
             let canonical_path = if canonicalize {
                 // On Windows, SFTP realpath doesn't resolve symlinks
-                let resolved = if self.family == SshFamily::Windows && attrs.is_symlink() {
+                let resolved = if self.family == SshFamily::Windows && is_symlink {
                     match sftp.read_link(sftp_path.as_str()).await {
                         Ok(target) => sftp.canonicalize(&target).await.ok(),
                         Err(_) => sftp.canonicalize(sftp_path.as_str()).await.ok(),
