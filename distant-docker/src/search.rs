@@ -13,6 +13,7 @@ use distant_core::protocol::{
 };
 use regex::Regex;
 use serde_json::Value;
+use typed_path::Utf8UnixPath;
 
 use crate::utils::{SearchTools, shell_quote};
 
@@ -31,14 +32,6 @@ fn shell_escape_pattern(s: &str) -> String {
     escaped
 }
 
-/// Escape backslashes in a regex pattern for safe embedding in awk `-v var=value`.
-///
-/// Awk processes `\` as an escape character in `-v` string assignments,
-/// so literal backslashes must be doubled.
-fn awk_escape_regex(s: &str) -> String {
-    s.replace('\\', "\\\\")
-}
-
 /// Result of building a search command, including the tool used.
 pub struct SearchCommand {
     /// The shell command string to execute.
@@ -51,16 +44,8 @@ pub struct SearchCommand {
 /// Indicates which search tool backs a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchTool {
-    /// ripgrep (rg) with plain text output (used for path searches).
-    Rg,
-
-    /// ripgrep with JSON output for structured parsing (used for contents searches).
-    RgJson,
-
-    /// GNU grep with byte-offset output (`-b -n`).
-    GrepByteOffset,
-
-    /// find.
+    Ripgrep,
+    Grep,
     Find,
 }
 
@@ -71,7 +56,7 @@ impl SearchCommand {
     /// For find, any non-zero exit code is an error.
     pub fn is_error_exit(&self, code: i64) -> bool {
         match self.tool {
-            SearchTool::Rg | SearchTool::RgJson | SearchTool::GrepByteOffset => code >= 2,
+            SearchTool::Ripgrep | SearchTool::Grep => code >= 2,
             SearchTool::Find => code != 0,
         }
     }
@@ -157,7 +142,7 @@ fn build_upward_search_commands(
         commands.push(cmd);
 
         // Walk upward through ancestors.
-        let mut current = path.as_str();
+        let mut current = path.clone();
         let mut remaining = query.options.max_depth;
 
         // If max_depth is Some(0), do not traverse any ancestors
@@ -166,7 +151,7 @@ fn build_upward_search_commands(
         }
 
         loop {
-            let parent = unix_parent(current);
+            let parent = unix_parent(&current);
             if parent == current {
                 break;
             }
@@ -178,7 +163,7 @@ fn build_upward_search_commands(
                 *rem -= 1;
             }
 
-            let quoted_parent = shell_quote(parent);
+            let quoted_parent = shell_quote(&parent);
             let cmd = match query.target {
                 SearchQueryTarget::Path => build_path_search_command(
                     &quoted_parent,
@@ -208,16 +193,12 @@ fn build_upward_search_commands(
 /// Get the parent of a Unix path string.
 ///
 /// Returns `"/"` for root paths and `"."` for relative paths with no parent.
-fn unix_parent(path: &str) -> &str {
-    if path == "/" || path == "." {
-        return path;
-    }
-
-    let trimmed = path.trim_end_matches('/');
-    match trimmed.rfind('/') {
-        Some(0) => "/",
-        Some(pos) => &trimmed[..pos],
-        None => ".",
+fn unix_parent(path: &str) -> String {
+    let unix = Utf8UnixPath::new(path);
+    match unix.parent() {
+        Some(p) if p.as_str().is_empty() => ".".to_string(),
+        Some(p) => p.as_str().to_string(),
+        None => path.to_string(),
     }
 }
 
@@ -272,29 +253,6 @@ pub fn build_unix_pattern(condition: &SearchQueryCondition) -> String {
     }
 }
 
-/// Append awk-based path filters for include/exclude on contents search output.
-///
-/// Contents search output has the format `filepath:linenum:content`. The awk
-/// filter splits on `:` and matches the first field (the file path) against
-/// the regex pattern. This correctly handles regex patterns (including anchors
-/// like `$` and `^`) unlike glob-based `--glob` or `--include` flags.
-fn append_path_filters(cmd: &mut String, include: Option<&str>, exclude: Option<&str>) {
-    if let Some(inc) = include {
-        let escaped = awk_escape_regex(inc);
-        cmd.push_str(&format!(
-            " | awk -F: -v pat={} '$1 ~ pat'",
-            shell_quote(&escaped)
-        ));
-    }
-    if let Some(exc) = exclude {
-        let escaped = awk_escape_regex(exc);
-        cmd.push_str(&format!(
-            " | awk -F: -v pat={} '$1 !~ pat'",
-            shell_quote(&escaped)
-        ));
-    }
-}
-
 /// Build a path search command using rg or find.
 fn build_path_search_command(
     paths: &str,
@@ -320,7 +278,7 @@ fn build_path_search_command(
         }
         Ok(SearchCommand {
             command: cmd,
-            tool: SearchTool::Rg,
+            tool: SearchTool::Ripgrep,
         })
     } else if tools.has_find {
         let mut cmd = format!("find {paths}");
@@ -347,21 +305,23 @@ fn build_path_search_command(
 }
 
 /// Build a contents search command using rg or grep.
+///
+/// When `max_depth` is set and only grep is available, requires `find` to
+/// enumerate files with depth limiting. Always requests byte offsets (`-b`)
+/// from grep for consistent output parsing.
 fn build_contents_search_command(
     paths: &str,
     pattern: &str,
     tools: &SearchTools,
-    include: Option<&str>,
-    exclude: Option<&str>,
+    _include: Option<&str>,
+    _exclude: Option<&str>,
     max_depth: Option<u64>,
 ) -> io::Result<SearchCommand> {
     let quoted_pattern = shell_quote(pattern);
 
     if tools.has_rg {
         // Use rg --json for structured output with byte offsets and submatches.
-        // Note: awk-based path filters are not applied here because rg JSON
-        // output is not in `filepath:linenum:content` format. Include/exclude
-        // filtering is handled during parsing in `parse_rg_json_contents`.
+        // Include/exclude filtering is handled during parsing in Rust.
         let mut cmd = "rg --json".to_string();
         if let Some(depth) = max_depth {
             cmd.push_str(&format!(" --max-depth {depth}"));
@@ -369,29 +329,33 @@ fn build_contents_search_command(
         cmd.push_str(&format!(" {quoted_pattern} {paths}"));
         Ok(SearchCommand {
             command: cmd,
-            tool: SearchTool::RgJson,
+            tool: SearchTool::Ripgrep,
         })
     } else if tools.has_grep {
-        // BSD grep (macOS) does not support --max-depth. When max_depth is set,
-        // use find with -maxdepth to enumerate files, then grep each one.
-        // /dev/null is included so grep always prints file paths even for a
-        // single match. Exit code follows find semantics (0 = ok, else error).
         if let Some(depth) = max_depth {
-            let mut cmd = format!(
+            // BSD grep does not support --max-depth. When max_depth is set,
+            // use find with -maxdepth to enumerate files, then grep each one.
+            // /dev/null is included so grep always prints file paths even for a
+            // single match. Exit code follows find semantics (0 = ok, else error).
+            if !tools.has_find {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "max_depth search requires find, but it is not available",
+                ));
+            }
+            let cmd = format!(
                 "find {paths} -maxdepth {depth} -type f \
-                 -exec grep -n {quoted_pattern} {{}} /dev/null \\;"
+                 -exec grep -bn {quoted_pattern} {{}} /dev/null \\;"
             );
-            append_path_filters(&mut cmd, include, exclude);
             Ok(SearchCommand {
                 command: cmd,
                 tool: SearchTool::Find,
             })
         } else {
-            let mut cmd = format!("grep -rbn {quoted_pattern} {paths}");
-            append_path_filters(&mut cmd, include, exclude);
+            let cmd = format!("grep -rbn {quoted_pattern} {paths}");
             Ok(SearchCommand {
                 command: cmd,
-                tool: SearchTool::GrepByteOffset,
+                tool: SearchTool::Grep,
             })
         }
     } else {
@@ -404,10 +368,9 @@ fn build_contents_search_command(
 
 /// Parse search output into content matches based on the tool that produced it.
 ///
-/// Dispatches to the appropriate parser for rg JSON, grep byte-offset, or
-/// legacy `filepath:linenum:content` formats. The `include` and `exclude`
-/// patterns are only used for rg JSON output (other formats apply these
-/// filters via shell pipes during command execution).
+/// Dispatches to the appropriate parser for rg JSON or grep byte-offset formats.
+/// Include/exclude regex patterns are applied in Rust during parsing to avoid
+/// shell pipeline dependencies on awk.
 pub fn parse_contents_matches(
     output: &str,
     tool: SearchTool,
@@ -415,9 +378,8 @@ pub fn parse_contents_matches(
     exclude: Option<&str>,
 ) -> Vec<SearchQueryMatch> {
     match tool {
-        SearchTool::RgJson => parse_rg_json_contents(output, include, exclude),
-        SearchTool::GrepByteOffset => parse_grep_byte_offset_contents(output),
-        _ => parse_legacy_contents(output),
+        SearchTool::Ripgrep => parse_rg_json_contents(output, include, exclude),
+        SearchTool::Grep | SearchTool::Find => parse_grep_contents(output, include, exclude),
     }
 }
 
@@ -425,8 +387,7 @@ pub fn parse_contents_matches(
 ///
 /// Each JSON line with `type: "match"` contains structured data including
 /// file path, line number, absolute byte offset, and submatch positions.
-/// Include/exclude regex patterns are applied as post-filters on the file
-/// path since rg JSON output cannot be piped through awk.
+/// Include/exclude regex patterns are applied as post-filters on the file path.
 fn parse_rg_json_contents(
     output: &str,
     include: Option<&str>,
@@ -531,8 +492,16 @@ fn parse_rg_json_contents(
 ///
 /// Expected format: `filepath:byte_offset:linenum:matched_line`
 ///
-/// The `-b` flag adds a byte offset field before the line number.
-fn parse_grep_byte_offset_contents(output: &str) -> Vec<SearchQueryMatch> {
+/// The `-b` flag provides byte offsets for each matching line. Include/exclude
+/// regex patterns are applied as post-filters on the file path in Rust.
+fn parse_grep_contents(
+    output: &str,
+    include: Option<&str>,
+    exclude: Option<&str>,
+) -> Vec<SearchQueryMatch> {
+    let include_re = include.and_then(|p| Regex::new(p).ok());
+    let exclude_re = exclude.and_then(|p| Regex::new(p).ok());
+
     let mut matches = Vec::new();
 
     for line in output.lines() {
@@ -550,6 +519,18 @@ fn parse_grep_byte_offset_contents(output: &str) -> Vec<SearchQueryMatch> {
         let line_num_str = parts[2];
         let content = parts[3];
 
+        // Apply include/exclude filters on the file path
+        if let Some(ref re) = include_re
+            && !re.is_match(filepath)
+        {
+            continue;
+        }
+        if let Some(ref re) = exclude_re
+            && re.is_match(filepath)
+        {
+            continue;
+        }
+
         let line_num = match line_num_str.parse::<u64>() {
             Ok(n) => n,
             Err(_) => continue,
@@ -563,48 +544,6 @@ fn parse_grep_byte_offset_contents(output: &str) -> Vec<SearchQueryMatch> {
             line_number: line_num,
             absolute_offset: byte_offset,
             submatches: compute_text_submatches(&content),
-        }));
-    }
-
-    matches
-}
-
-/// Parse legacy `filepath:linenum:content` format into content search matches.
-///
-/// Used for tools that don't provide byte offsets (plain `grep -rn` or `rg -n`).
-fn parse_legacy_contents(output: &str) -> Vec<SearchQueryMatch> {
-    let mut matches = Vec::new();
-
-    for line in output.lines() {
-        if line.is_empty() {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.splitn(3, ':').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let filepath = parts[0];
-        let line_num_str = parts[1];
-        let content = parts[2];
-
-        let line_num = match line_num_str.parse::<u64>() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-
-        let content = content.to_string();
-        matches.push(SearchQueryMatch::Contents(SearchQueryContentsMatch {
-            path: RemotePath::new(filepath),
-            lines: SearchQueryMatchData::Text(content.clone()),
-            line_number: line_num,
-            absolute_offset: 0,
-            submatches: vec![SearchQuerySubmatch {
-                r#match: SearchQueryMatchData::Text(content),
-                start: 0,
-                end: 0,
-            }],
         }));
     }
 

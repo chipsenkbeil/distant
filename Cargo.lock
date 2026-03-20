@@ -1082,6 +1082,7 @@ dependencies = [
  "tar",
  "test-log",
  "tokio",
+ "typed-path",
 ]
 
 [[package]]
