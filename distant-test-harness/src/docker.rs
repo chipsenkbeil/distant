@@ -4,9 +4,11 @@
 //! for obtaining [`Client`] instances connected to Docker containers.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::Duration;
+
+use tokio::process::Command as TokioCommand;
 
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
@@ -98,13 +100,9 @@ impl DockerContainer {
     /// Upload a local file into the container and make it executable.
     ///
     /// Uses `docker cp` to copy the file and `chmod +x` to set the executable bit.
-    pub async fn upload_binary(
-        &self,
-        local_path: &std::path::Path,
-        remote_path: &str,
-    ) -> io::Result<()> {
+    pub async fn upload_binary(&self, local_path: &Path, remote_path: &str) -> io::Result<()> {
         // Ensure the parent directory exists
-        if let Some(parent) = std::path::Path::new(remote_path).parent() {
+        if let Some(parent) = Path::new(remote_path).parent() {
             let parent_str = parent.to_string_lossy();
             if !parent_str.is_empty() && parent_str != "/" {
                 let _ = self.exec(&["mkdir", "-p", &parent_str]).await;
@@ -112,7 +110,7 @@ impl DockerContainer {
         }
 
         let dest = format!("{}:{}", self.name, remote_path);
-        let status = tokio::process::Command::new("docker")
+        let status = TokioCommand::new("docker")
             .args(["cp", &local_path.to_string_lossy(), &dest])
             .status()
             .await?;
@@ -129,7 +127,7 @@ impl DockerContainer {
 
     /// Detect the container's architecture via `uname -m`.
     async fn container_arch(&self) -> io::Result<String> {
-        let output = tokio::process::Command::new("docker")
+        let output = TokioCommand::new("docker")
             .args(["exec", &self.name, "uname", "-m"])
             .output()
             .await?;
@@ -386,7 +384,7 @@ async fn build_in_docker(bin_name: &str) -> io::Result<PathBuf> {
          && cp {target_dir}/release/{bin_name} /out/{bin_name}"
     );
 
-    let status = tokio::process::Command::new("docker")
+    let status = TokioCommand::new("docker")
         .args([
             "run",
             "--rm",
@@ -432,7 +430,7 @@ fn random_suffix() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-fn random_log_file(prefix: &str) -> std::path::PathBuf {
+fn random_log_file(prefix: &str) -> PathBuf {
     let log_dir = std::env::temp_dir().join("distant");
     std::fs::create_dir_all(&log_dir).ok();
     log_dir.join(format!("docker-{}.{}.log", prefix, rand::random::<u16>()))
