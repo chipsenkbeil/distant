@@ -98,7 +98,6 @@ fn yield_an_error_when_fails(#[case] backend: Backend) {
         .code(1);
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -111,17 +110,7 @@ fn should_support_including_a_canonicalized_path(#[case] backend: Backend) {
     let file_path = ctx.child_path(&dir, "file");
     ctx.cli_write(&file_path, "");
     let link_path = ctx.child_path(&dir, "link");
-
-    let ln_output = ctx
-        .new_std_cmd(["spawn"])
-        .args(["--", "ln", "-s", &file_path, &link_path])
-        .output()
-        .expect("Failed to create symlink");
-    assert!(
-        ln_output.status.success(),
-        "ln -s failed: {}",
-        String::from_utf8_lossy(&ln_output.stderr)
-    );
+    ctx.cli_symlink(&file_path, &link_path);
 
     let output = ctx
         .new_std_cmd(["fs", "metadata"])
@@ -145,10 +134,10 @@ fn should_support_including_a_canonicalized_path(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_resolving_file_type_of_symlink(#[case] backend: Backend) {
     use distant_test_harness::utils::regex_pred;
@@ -159,17 +148,7 @@ fn should_support_resolving_file_type_of_symlink(#[case] backend: Backend) {
     let file_path = ctx.child_path(&dir, "file");
     ctx.cli_write(&file_path, "");
     let link_path = ctx.child_path(&dir, "link");
-
-    let ln_output = ctx
-        .new_std_cmd(["spawn"])
-        .args(["--", "ln", "-s", &file_path, &link_path])
-        .output()
-        .expect("Failed to create symlink");
-    assert!(
-        ln_output.status.success(),
-        "ln -s failed: {}",
-        String::from_utf8_lossy(&ln_output.stderr)
-    );
+    ctx.cli_symlink(&file_path, &link_path);
 
     ctx.new_assert_cmd(["fs", "metadata"])
         .args(["--resolve-file-type", &link_path])

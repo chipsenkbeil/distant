@@ -230,6 +230,36 @@ impl BackendCtx {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    /// Creates a symbolic link through the distant CLI, working across all
+    /// backends and platforms.
+    ///
+    /// `target` is the path the symlink points to; `link` is the path of the
+    /// symlink itself. For SSH and Docker backends the remote is always Unix
+    /// so `ln -s` is used. For the Host backend, the command is
+    /// platform-dependent: `ln -s` on Unix, `cmd /c mklink` on Windows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the symlink creation command fails.
+    pub fn cli_symlink(&self, target: &str, link: &str) {
+        let output = if cfg!(windows) && matches!(self.backend(), Backend::Host) {
+            self.new_std_cmd(["spawn"])
+                .args(["--", "cmd", "/c", "mklink", link, target])
+                .output()
+                .expect("failed to create symlink")
+        } else {
+            self.new_std_cmd(["spawn"])
+                .args(["--", "ln", "-s", target, link])
+                .output()
+                .expect("failed to create symlink")
+        };
+        assert!(
+            output.status.success(),
+            "symlink creation failed ({target} -> {link}): {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 /// Creates a [`BackendCtx`] for the given backend.

@@ -51,7 +51,6 @@ fn should_fail_if_path_does_not_exist(#[case] backend: Backend) {
         .failure();
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -82,7 +81,6 @@ fn should_set_file_readonly_with_octal_mode(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -113,7 +111,6 @@ fn should_set_file_permissions_with_symbolic_mode(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]

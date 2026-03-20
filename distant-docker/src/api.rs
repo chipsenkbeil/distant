@@ -320,7 +320,7 @@ impl Api for DockerApi {
         path: RemotePath,
         depth: usize,
         absolute: bool,
-        _canonicalize: bool,
+        canonicalize: bool,
         include_root: bool,
     ) -> impl std::future::Future<Output = io::Result<(Vec<DirEntry>, Vec<io::Error>)>> + Send {
         async move {
@@ -328,6 +328,21 @@ impl Api for DockerApi {
             // and strip_prefix work correctly
             let path = self.resolve_path(Path::new(path.as_str())).await?;
             let path_str = path.to_string_lossy().to_string();
+
+            // When canonicalize is requested, resolve symlinks in the path
+            // so that `find` output uses the real directory location
+            // (consistent with Host and SSH backends).
+            let path_str = if canonicalize {
+                self.run_cmd(&["readlink", "-f", &path_str])
+                    .await
+                    .ok()
+                    .filter(|o| o.success())
+                    .map(|o| o.stdout_str().trim().to_string())
+                    .unwrap_or(path_str)
+            } else {
+                path_str
+            };
+            let path = PathBuf::from(&path_str);
 
             // Verify the directory exists before attempting to list it (consistent
             // with Host and SSH backends which return NotFound for missing paths).
@@ -652,24 +667,57 @@ impl Api for DockerApi {
         _ctx: Ctx,
         path: RemotePath,
         canonicalize: bool,
-        _resolve_file_type: bool,
+        resolve_file_type: bool,
     ) -> impl std::future::Future<Output = io::Result<Metadata>> + Send {
         async move {
             let path_str = path.as_str();
 
+            // Resolve the canonical path when requested (used for both
+            // canonicalize output and as the stat target when resolving
+            // symlinks).
+            let canonical = if canonicalize || resolve_file_type {
+                self.run_cmd(&["readlink", "-f", path_str])
+                    .await
+                    .ok()
+                    .filter(|o| o.success())
+                    .map(|o| o.stdout_str().trim().to_string())
+            } else {
+                None
+            };
+
+            // When resolve_file_type is set, stat the resolved target so
+            // the file type reflects the destination rather than the link.
+            // Use `stat -L` which follows symlinks natively.
+            let stat_cmd: &[&str] = if resolve_file_type {
+                &[
+                    "stat",
+                    "-L",
+                    "-c",
+                    "%F %s %Y %X %W %a %u %g %h %i",
+                    path_str,
+                ]
+            } else {
+                &["stat", "-c", "%F %s %Y %X %W %a %u %g %h %i", path_str]
+            };
+
             // Try exec-based stat first
-            if let Ok(output) = self
-                .run_cmd(&["stat", "-c", "%F %s %Y %X %W %a %u %g %h %i", path_str])
-                .await
+            if let Ok(output) = self.run_cmd(stat_cmd).await
                 && output.success()
             {
                 let stdout = output.stdout_str();
-                if let Some(metadata) = parse_stat_output(stdout.trim(), path_str, canonicalize) {
+                let canon_path = if canonicalize {
+                    canonical.as_deref()
+                } else {
+                    None
+                };
+                if let Some(metadata) = parse_stat_output(stdout.trim(), canon_path) {
                     return Ok(metadata);
                 }
             }
 
-            // Fallback to tar-based metadata
+            // Fallback to tar-based metadata (tar always follows symlinks
+            // for the top-level entry, so resolve_file_type is inherently
+            // handled).
             let entries =
                 utils::tar_list_dir(self.client.inner(), &self.container, path_str).await?;
 
@@ -682,7 +730,9 @@ impl Api for DockerApi {
 
                 Ok(Metadata {
                     canonicalized_path: if canonicalize {
-                        Some(path.clone())
+                        canonical
+                            .map(RemotePath::new)
+                            .or_else(|| Some(path.clone()))
                     } else {
                         None
                     },
@@ -1278,11 +1328,14 @@ async fn docker_tunnel_relay_task(
     tunnels.write().await.remove(&id);
 }
 
-/// Parse Unix `stat` output into [`Metadata`].
+/// Parses the output of `stat -c '%F %s %Y %X %W %a %u %g %h %i'` into [`Metadata`].
 ///
 /// Expected format: `%F %s %Y %X %W %a %u %g %h %i`
 /// Example: `regular file 1234 1700000000 1700000000 1699000000 644 1000 1000 1 12345`
-fn parse_stat_output(line: &str, path: &str, canonicalize: bool) -> Option<Metadata> {
+///
+/// `canonical_path`, when `Some`, is stored as the canonicalized path in the
+/// returned metadata (typically the result of `readlink -f`).
+fn parse_stat_output(line: &str, canonical_path: Option<&str>) -> Option<Metadata> {
     let parts: Vec<&str> = line.splitn(10, ' ').collect();
     if parts.len() < 6 {
         return None;
@@ -1333,11 +1386,7 @@ fn parse_stat_output(line: &str, path: &str, canonicalize: bool) -> Option<Metad
     });
 
     Some(Metadata {
-        canonicalized_path: if canonicalize {
-            Some(RemotePath::new(path))
-        } else {
-            None
-        },
+        canonicalized_path: canonical_path.map(RemotePath::new),
         file_type,
         len: size,
         readonly,

@@ -91,7 +91,6 @@ fn yield_an_error_when_fails(#[case] backend: Backend) {
         .code(1);
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -122,10 +121,10 @@ fn should_use_absolute_paths_if_specified(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_canonicalize_flag(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -135,17 +134,7 @@ fn should_support_canonicalize_flag(#[case] backend: Backend) {
     ctx.cli_mkdir(&target);
     ctx.cli_write(&ctx.child_path(&target, "file1"), "");
     let link = ctx.child_path(&dir, "link");
-
-    let ln_output = ctx
-        .new_std_cmd(["spawn"])
-        .args(["--", "ln", "-s", &target, &link])
-        .output()
-        .expect("Failed to create symlink");
-    assert!(
-        ln_output.status.success(),
-        "ln -s failed: {}",
-        String::from_utf8_lossy(&ln_output.stderr)
-    );
+    ctx.cli_symlink(&target, &link);
 
     let output = ctx
         .new_std_cmd(["fs", "read"])
