@@ -1,7 +1,9 @@
 //! Integration tests for the `distant spawn` CLI subcommand.
 //!
 //! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
-//! PTY support, and error handling.
+//! exit code forwarding, environment variables, PTY support, and error handling.
+
+use std::io::Write;
 
 use rstest::*;
 
@@ -163,6 +165,128 @@ fn should_support_shell_flag(#[case] backend: Backend) {
     assert!(
         stdout.contains("shell-flag-ok"),
         "Expected 'shell-flag-ok' in stdout, got: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_capture_stderr(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["-c", "sh -c 'echo error_msg >&2'"])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        output.status.success(),
+        "spawn should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error_msg"),
+        "Expected 'error_msg' in stderr, got: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[test_log::test]
+fn should_forward_stdin(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    // Use `head -1` which reads exactly one line from stdin and exits
+    let mut child = ctx
+        .new_std_cmd(["spawn"])
+        .args(["--", "head", "-1"])
+        .spawn()
+        .expect("Failed to spawn");
+
+    let mut stdin = child.stdin.take().expect("stdin should be piped");
+    stdin
+        .write_all(b"stdin-forwarded\n")
+        .expect("Failed to write to stdin");
+    drop(stdin);
+
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for child process");
+
+    assert!(
+        output.status.success(),
+        "spawn with stdin should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("stdin-forwarded"),
+        "Expected 'stdin-forwarded' in stdout, got: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_forward_exit_code(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args(["-c", "sh -c 'exit 42'"])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        !output.status.success(),
+        "spawn of 'exit 42' should fail (non-zero exit)"
+    );
+
+    let code = output.status.code().expect("process should have exit code");
+    assert_eq!(code, 42, "Expected exit code 42, got: {code}");
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_forward_environment_variables(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    let output = ctx
+        .new_std_cmd(["spawn"])
+        .args([
+            "--environment",
+            "DISTANT_TEST_VAR=hello_from_env",
+            "-c",
+            "sh -c 'echo $DISTANT_TEST_VAR'",
+        ])
+        .output()
+        .expect("Failed to run spawn");
+
+    assert!(
+        output.status.success(),
+        "spawn with --environment should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("hello_from_env"),
+        "Expected 'hello_from_env' in stdout, got: {stdout}"
     );
 }
 
