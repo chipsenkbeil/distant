@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use distant_test_harness::manager;
+use distant_test_harness::process::TestChild;
 
 #[cfg(unix)]
 #[test]
@@ -15,13 +16,12 @@ fn should_listen_on_custom_unix_socket() {
     let temp = assert_fs::TempDir::new().unwrap();
     let socket_path = temp.child("test.sock");
 
-    let mut child = Command::new(manager::bin_path())
-        .args(["manager", "listen", "--unix-socket"])
-        .arg(socket_path.path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn manager");
+    let child = TestChild::spawn(
+        Command::new(manager::bin_path())
+            .args(["manager", "listen", "--unix-socket"])
+            .arg(socket_path.path()),
+    )
+    .expect("Failed to spawn manager");
 
     // Give the manager time to start and create the socket
     // (socket binding is async, 200ms may not be enough — retry up to 2s)
@@ -35,8 +35,7 @@ fn should_listen_on_custom_unix_socket() {
 
     let exists = socket_path.path().exists();
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     assert!(
         exists,
@@ -50,12 +49,13 @@ fn should_listen_on_custom_unix_socket() {
 fn should_listen_on_custom_windows_pipe() {
     let pipe_name = format!("distant_test_listen_{}", std::process::id());
 
-    let mut child = Command::new(manager::bin_path())
-        .args(["manager", "listen", "--windows-pipe", &pipe_name])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn manager");
+    let mut child = TestChild::spawn(Command::new(manager::bin_path()).args([
+        "manager",
+        "listen",
+        "--windows-pipe",
+        &pipe_name,
+    ]))
+    .expect("Failed to spawn manager");
 
     // Give the manager time to start and bind the named pipe
     std::thread::sleep(Duration::from_millis(500));
@@ -66,8 +66,7 @@ fn should_listen_on_custom_windows_pipe() {
         .expect("Failed to check manager status")
         .is_none();
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     assert!(
         still_running,
@@ -84,13 +83,12 @@ fn should_fail_on_duplicate_socket() {
     let socket_path = temp.child("test.sock");
 
     // Start first manager
-    let mut child1 = Command::new(manager::bin_path())
-        .args(["manager", "listen", "--unix-socket"])
-        .arg(socket_path.path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn first manager");
+    let child1 = TestChild::spawn(
+        Command::new(manager::bin_path())
+            .args(["manager", "listen", "--unix-socket"])
+            .arg(socket_path.path()),
+    )
+    .expect("Failed to spawn first manager");
 
     // Give first manager time to bind the socket
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -110,8 +108,7 @@ fn should_fail_on_duplicate_socket() {
         .output()
         .expect("Failed to run second manager");
 
-    let _ = child1.kill();
-    let _ = child1.wait();
+    child1.kill();
 
     assert!(
         !output.status.success(),
@@ -125,12 +122,13 @@ fn should_fail_on_duplicate_pipe() {
     let pipe_name = format!("distant_test_dup_{}", std::process::id());
 
     // Start first manager
-    let mut child1 = Command::new(manager::bin_path())
-        .args(["manager", "listen", "--windows-pipe", &pipe_name])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn first manager");
+    let child1 = TestChild::spawn(Command::new(manager::bin_path()).args([
+        "manager",
+        "listen",
+        "--windows-pipe",
+        &pipe_name,
+    ]))
+    .expect("Failed to spawn first manager");
 
     // Give first manager time to bind the pipe
     std::thread::sleep(Duration::from_millis(500));
@@ -143,8 +141,7 @@ fn should_fail_on_duplicate_pipe() {
         .output()
         .expect("Failed to run second manager");
 
-    let _ = child1.kill();
-    let _ = child1.wait();
+    child1.kill();
 
     assert!(
         !output.status.success(),

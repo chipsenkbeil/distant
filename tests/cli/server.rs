@@ -4,19 +4,21 @@
 //! and that the `--help` flag documents expected options.
 
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use distant_test_harness::manager;
+use distant_test_harness::process::TestChild;
 
 #[test]
 fn server_listen_should_output_credentials_and_exit() {
-    let mut child = Command::new(manager::bin_path())
-        .args(["server", "listen", "--shutdown", "after=1"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn server");
+    let mut child = TestChild::spawn(Command::new(manager::bin_path()).args([
+        "server",
+        "listen",
+        "--shutdown",
+        "after=1",
+    ]))
+    .expect("Failed to spawn server");
 
     let mut stdout = child.stdout.take().unwrap();
     let mut output = String::new();
@@ -29,7 +31,6 @@ fn server_listen_should_output_credentials_and_exit() {
             Ok(0) => break,
             Ok(n) => {
                 output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                // Credentials contain "distant://"
                 if output.contains("distant://") {
                     break;
                 }
@@ -41,9 +42,7 @@ fn server_listen_should_output_credentials_and_exit() {
         }
     }
 
-    // Kill the server
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     assert!(
         output.contains("distant://"),
@@ -54,12 +53,15 @@ fn server_listen_should_output_credentials_and_exit() {
 
 #[test]
 fn server_listen_custom_port() {
-    let mut child = Command::new(manager::bin_path())
-        .args(["server", "listen", "--port", "0", "--shutdown", "after=1"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn server with --port 0");
+    let mut child = TestChild::spawn(Command::new(manager::bin_path()).args([
+        "server",
+        "listen",
+        "--port",
+        "0",
+        "--shutdown",
+        "after=1",
+    ]))
+    .expect("Failed to spawn server with --port 0");
 
     let mut stdout = child.stdout.take().unwrap();
     let mut output = String::new();
@@ -82,8 +84,7 @@ fn server_listen_custom_port() {
         }
     }
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     // The credentials URL should contain a port number (from the OS-assigned ephemeral port)
     assert!(
