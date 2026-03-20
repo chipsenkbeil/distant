@@ -332,6 +332,8 @@ fn should_overwrite_existing_destination(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_upload_to_server_cwd_with_bare_colon(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
@@ -345,10 +347,17 @@ fn should_upload_to_server_cwd_with_bare_colon(#[case] backend: Backend) {
         .assert()
         .success();
 
-    let landed = std::env::current_dir().unwrap().join("bare_colon.txt");
-    assert_eq!(
-        std::fs::read_to_string(&landed).unwrap(),
-        "bare colon content"
-    );
-    std::fs::remove_file(&landed).unwrap();
+    let info_output = ctx
+        .new_std_cmd(["system-info"])
+        .output()
+        .expect("Failed to run system-info");
+    let stdout = String::from_utf8_lossy(&info_output.stdout);
+    let cwd = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Cwd: "))
+        .expect("system-info should contain Cwd line");
+    let cwd = cwd.trim_matches('"');
+
+    let landed = ctx.child_path(cwd, "bare_colon.txt");
+    assert_eq!(ctx.cli_read(&landed), "bare colon content");
 }
