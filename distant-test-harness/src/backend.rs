@@ -207,7 +207,7 @@ impl BackendCtx {
             #[cfg(feature = "docker")]
             Self::Docker(ctx) => ctx.container().prepare_binary(bin_name).await,
             _ => {
-                let path = crate::exe::build_harness_bin(bin_name).await?;
+                let path = crate::exe::build_harness_bin(bin_name, None).await?;
                 Ok(path.to_string_lossy().to_string())
             }
         }

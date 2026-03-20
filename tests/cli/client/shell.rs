@@ -10,7 +10,11 @@ use std::time::Duration;
 use rstest::*;
 
 use distant_test_harness::backend::{Backend, BackendCtx};
+use distant_test_harness::pty::PtySession;
 use distant_test_harness::skip_if_no_backend;
+
+/// Extended timeout for echo tests that need extra time to establish connection.
+const ECHO_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["shell"]);
@@ -34,7 +38,7 @@ async fn should_run_individual_command(#[case] backend: Backend) {
     let extra_args: &[&str] = &["--", "cmd", "/c", "echo", "hello"];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("hello");
     let exit_code = session.wait_for_exit();
@@ -54,7 +58,7 @@ async fn should_echo_input_through_pty(#[case] backend: Backend) {
         .expect("Failed to build pty-echo");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_echo_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.send("abc");
     session.expect("abc");
@@ -73,7 +77,7 @@ async fn should_display_interactive_prompt(#[case] backend: Backend) {
         .expect("Failed to build pty-interactive");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
 }
@@ -91,7 +95,7 @@ async fn should_exit_on_eof_signal(#[case] backend: Backend) {
         .expect("Failed to build pty-interactive");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
 
@@ -135,7 +139,7 @@ async fn should_run_command_with_predict_off(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("predict-off-ok");
     let exit_code = session.wait_for_exit();
@@ -155,7 +159,7 @@ async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
         .expect("Failed to build pty-interactive");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("$ ");
     session.send("\x03");
@@ -177,7 +181,7 @@ async fn should_suppress_predicted_password_echo(#[case] backend: Backend) {
         .expect("Failed to build pty-password");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -206,7 +210,7 @@ async fn should_run_command_with_predict_on(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("predict-on-ok");
     let exit_code = session.wait_for_exit();
@@ -226,7 +230,7 @@ async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
         .expect("Failed to build pty-password");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_password_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -246,8 +250,8 @@ async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend)
         .expect("Failed to build pty-echo");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_echo_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
-    session.set_timeout(Duration::from_secs(60));
+    let mut session = PtySession::spawn(&bin, &args);
+    session.set_timeout(ECHO_TEST_TIMEOUT);
 
     session.expect("Connected to manager");
 
@@ -272,7 +276,7 @@ async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
         .expect("Failed to build pty-echo");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_echo_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.send("predict-immediate");
     session.expect("predict-immediate");
@@ -291,7 +295,7 @@ async fn should_correct_prediction_mismatch(#[case] backend: Backend) {
         .expect("Failed to build pty-password");
 
     let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("Password: ");
     session.send_line("secret123");
@@ -328,7 +332,7 @@ async fn should_enter_alternate_screen(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("ALT_ENTRY_OK");
 }
@@ -363,7 +367,7 @@ async fn should_exit_alternate_screen(#[case] backend: Backend) {
     ];
 
     let (bin, args) = shell_cmd_args(&ctx, extra_args);
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.expect("RESTORED");
 }

@@ -10,6 +10,7 @@ use std::time::Duration;
 use regex::Regex;
 use rstest::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, Command};
 use tokio::time;
 
 use distant_test_harness::backend::{Backend, BackendCtx};
@@ -74,12 +75,12 @@ fn parse_tunnel_started(output: &str) -> (u32, u16) {
 }
 
 /// Spawns a tcp-echo-server on the host and returns its child process and listening port.
-async fn spawn_echo_server() -> (tokio::process::Child, u16) {
+async fn spawn_echo_server() -> (Child, u16) {
     let echo_bin = exe::build_tcp_echo_server()
         .await
         .expect("failed to build tcp-echo-server");
 
-    let mut echo_child = tokio::process::Command::new(&echo_bin)
+    let mut echo_child = Command::new(&echo_bin)
         .arg(ECHO_SERVER_LIFETIME_SECS)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -112,7 +113,7 @@ async fn spawn_echo_server() -> (tokio::process::Child, u16) {
 /// Cross-compiles the binary, uploads it, then runs it inside the container
 /// so that `127.0.0.1` in the tunnel spec resolves to the container's loopback.
 #[cfg(feature = "docker")]
-async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (tokio::process::Child, u16) {
+async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (Child, u16) {
     let remote_path = ctx
         .prepare_binary("tcp-echo-server")
         .await
@@ -122,7 +123,7 @@ async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (tokio::process::Ch
         .docker_container_name()
         .expect("expected Docker backend");
 
-    let mut child = tokio::process::Command::new("docker")
+    let mut child = Command::new("docker")
         .args([
             "exec",
             "-i",
@@ -161,7 +162,7 @@ async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (tokio::process::Ch
 /// with the host. For Docker, this cross-compiles the binary, uploads it into
 /// the container, and runs it inside via `docker exec` so the container's
 /// `127.0.0.1` reaches it.
-async fn spawn_reachable_echo_server(ctx: &BackendCtx) -> (tokio::process::Child, u16) {
+async fn spawn_reachable_echo_server(ctx: &BackendCtx) -> (Child, u16) {
     match ctx.backend() {
         #[cfg(feature = "docker")]
         Backend::Docker => spawn_echo_server_in_container(ctx).await,

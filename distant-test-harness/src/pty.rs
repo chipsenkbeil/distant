@@ -28,6 +28,13 @@ const PTY_COLS: u16 = 120;
 /// Default PTY row count.
 const PTY_ROWS: u16 = 40;
 
+/// Polling interval for busy-wait loops checking PTY output.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Polling interval for the exit-wait loop (shorter since we are just
+/// checking process status, not scanning a buffer).
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Cross-platform PTY session for testing.
 ///
 /// Wraps `portable-pty` with expect-like matching for test assertions.
@@ -157,7 +164,7 @@ impl PtySession {
                 "Timed out waiting for '{needle}' in PTY output. Buffer: {:?}",
                 String::from_utf8_lossy(&self.buffer.lock().unwrap())
             );
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 
@@ -185,7 +192,7 @@ impl PtySession {
                 "Process did not exit within {}s",
                 EXIT_TIMEOUT.as_secs()
             );
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(EXIT_POLL_INTERVAL);
         }
     }
 

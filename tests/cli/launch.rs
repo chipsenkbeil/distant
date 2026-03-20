@@ -1,9 +1,11 @@
 //! E2E tests for the `distant launch` command with SSH.
 
+use std::net::TcpListener;
 use std::process::Stdio;
 use std::time::Duration;
 
 use rstest::*;
+use tokio::process::Command;
 
 use distant_test_harness::manager::{
     self, ManagerOnlyCtx, SshLaunchCtx, manager_only_ctx, ssh_launch_ctx,
@@ -63,7 +65,7 @@ fn launch_ssh_wrong_credentials(manager_only_ctx: ManagerOnlyCtx) {
 async fn launch_ssh_connection_timeout() {
     let ctx = ManagerOnlyCtx::start();
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind TCP listener");
     let port = listener.local_addr().unwrap().port();
 
     std::thread::spawn(move || {
@@ -72,7 +74,7 @@ async fn launch_ssh_connection_timeout() {
         }
     });
 
-    let mut child = tokio::process::Command::new(manager::bin_path())
+    let mut child = Command::new(manager::bin_path())
         .arg("launch")
         .arg("--distant")
         .arg(manager::bin_path())
@@ -105,6 +107,8 @@ async fn launch_ssh_connection_timeout() {
             );
         }
         Err(_) => {
+            // Process is still stuck on the SSH handshake after LAUNCH_TIMEOUT —
+            // this confirms the timeout scenario. Kill it and treat as success.
             child.kill().await.ok();
         }
     }

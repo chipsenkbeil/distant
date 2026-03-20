@@ -241,6 +241,7 @@ fn should_support_upward_search(#[case] backend: Backend) {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+
     // Upward search from sub/ should find ancestor.txt in parent base/ directory
     assert!(
         stdout.contains("ancestor.txt"),

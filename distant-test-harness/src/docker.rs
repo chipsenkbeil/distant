@@ -17,6 +17,9 @@ use rstest::*;
 
 use crate::manager::bin_path;
 
+/// Docker image used for building test binaries inside containers.
+const DOCKER_BUILD_IMAGE: &str = "rust:1.88-slim";
+
 /// Checks whether a Linux Docker daemon is available.
 ///
 /// Returns `true` only when the daemon is reachable **and** is running Linux containers.
@@ -153,7 +156,7 @@ impl DockerContainer {
     ///
     /// Tries cross-compilation with `--target` first (fast if a cross-linker
     /// is installed or the host already matches). Falls back to building inside
-    /// a `rust:1.88-slim` Docker container with a minimal generated project.
+    /// a [`DOCKER_BUILD_IMAGE`] Docker container with a minimal generated project.
     ///
     /// Returns the remote path where the binary was placed (`/usr/local/bin/<name>`).
     pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
@@ -162,7 +165,7 @@ impl DockerContainer {
 
         // Fast path: try cross-compile (works natively on matching Linux hosts,
         // or when a cross-linker like `aarch64-linux-gnu-gcc` is installed)
-        let local_path = match crate::exe::build_harness_bin_for_target(bin_name, triple).await {
+        let local_path = match crate::exe::build_harness_bin(bin_name, Some(triple)).await {
             Ok(path) => {
                 log::info!("Cross-compiled {bin_name} for {triple}");
                 path
@@ -411,6 +414,7 @@ async fn build_in_docker(bin_name: &str) -> io::Result<PathBuf> {
     let build_dir_str = build_dir.to_string_lossy();
     let cache_dir_str = cache_dir.to_string_lossy();
     let target_dir = "/tmp/build";
+
     // Copy source to a writable location inside the container (Cargo needs to
     // write Cargo.lock), then build and copy the result to the output volume.
     let build_and_copy = format!(
@@ -431,7 +435,7 @@ async fn build_in_docker(bin_name: &str) -> io::Result<PathBuf> {
             "distant-docker-cargo-cache:/usr/local/cargo/registry",
             "-w",
             "/src",
-            "rust:1.88-slim",
+            DOCKER_BUILD_IMAGE,
             "sh",
             "-c",
             &build_and_copy,

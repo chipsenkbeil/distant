@@ -3,6 +3,7 @@
 use assert_fs::prelude::*;
 
 use distant_test_harness::manager::{self, ManagerOnlyCtx};
+use distant_test_harness::pty::PtySession;
 
 fn test_log_file(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("distant");
@@ -68,7 +69,7 @@ async fn ssh_shell_interactive() {
         pty_echo_str.to_string(),
     ];
 
-    let mut session = distant_test_harness::pty::PtySession::spawn(&bin, &args);
+    let mut session = PtySession::spawn(&bin, &args);
 
     session.send("abc");
     session.expect("abc");
