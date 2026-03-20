@@ -3,6 +3,7 @@
 //! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
 //! exit code forwarding, environment variables, PTY support, and error handling.
 
+#[cfg(unix)]
 use std::io::Write;
 
 use rstest::*;
