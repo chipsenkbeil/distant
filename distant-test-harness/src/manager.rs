@@ -430,7 +430,7 @@ fn resolve_bin_path() -> PathBuf {
 }
 
 /// Waits for the manager to be ready by polling for the socket/pipe.
-fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
+pub(crate) fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
     let start = Instant::now();
     let timeout = Duration::from_secs(2);
     let poll_interval = Duration::from_millis(25);
