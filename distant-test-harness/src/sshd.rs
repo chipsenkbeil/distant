@@ -42,7 +42,7 @@ const PORT_RANGE: (u16, u16) = (49152, 65535);
 pub static USERNAME: LazyLock<String> = LazyLock::new(|| whoami::username().unwrap_or_default());
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
-const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
+const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(100);
 
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
@@ -600,19 +600,35 @@ impl Sshd {
             )));
         }
 
-        // Pause for a little bit to make sure that the server didn't die due to an error
-        thread::sleep(Duration::from_millis(100));
+        // Poll for TCP connectivity instead of fixed sleeps. This detects
+        // actual readiness rather than hoping 200ms is enough.
+        let addr = std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let poll_interval = Duration::from_millis(50);
 
-        let child = match check(child).context("Sshd encountered problems (after 100ms)")? {
-            Ok(child) => child,
-            Err(x) => return Ok(Err(x)),
-        };
+        loop {
+            // Check if sshd crashed
+            let child_ref =
+                match check(child).context("Sshd encountered problems during startup")? {
+                    Ok(c) => c,
+                    Err(x) => return Ok(Err(x)),
+                };
+            child = child_ref;
 
-        // Pause for a little bit to make sure that the server didn't die due to an error
-        thread::sleep(Duration::from_millis(100));
+            // Try TCP connect to see if sshd is accepting connections
+            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+                return Ok(Ok(child));
+            }
 
-        let result = check(child).context("Sshd encountered problems (after 200ms)")?;
-        Ok(result)
+            if std::time::Instant::now() >= deadline {
+                return Ok(Err((
+                    None,
+                    format!("sshd did not accept TCP connections on port {port} within 5s"),
+                )));
+            }
+
+            thread::sleep(poll_interval);
+        }
     }
 
     /// Checks if still alive
