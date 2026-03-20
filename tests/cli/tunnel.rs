@@ -108,54 +108,6 @@ async fn spawn_echo_server() -> (Child, u16) {
     (echo_child, echo_port)
 }
 
-/// Spawns a tcp-echo-server inside the Docker container via `docker exec`.
-///
-/// Cross-compiles the binary, uploads it, then runs it inside the container
-/// so that `127.0.0.1` in the tunnel spec resolves to the container's loopback.
-#[cfg(feature = "docker")]
-async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (Child, u16) {
-    let remote_path = ctx
-        .prepare_binary("tcp-echo-server")
-        .await
-        .expect("failed to prepare tcp-echo-server for Docker");
-
-    let container_name = ctx
-        .docker_container_name()
-        .expect("expected Docker backend");
-
-    let mut child = Command::new("docker")
-        .args([
-            "exec",
-            "-i",
-            container_name,
-            &remote_path,
-            ECHO_SERVER_LIFETIME_SECS,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .expect("failed to spawn tcp-echo-server in container");
-
-    let stdout = child.stdout.take().expect("stdout not captured");
-    let mut reader = tokio::io::BufReader::new(stdout);
-    let mut port_line = String::new();
-    time::timeout(
-        ECHO_SERVER_STARTUP_TIMEOUT,
-        reader.read_line(&mut port_line),
-    )
-    .await
-    .expect("timed out waiting for echo server port in container")
-    .expect("failed to read echo server port from container");
-
-    let port: u16 = port_line
-        .trim()
-        .parse()
-        .expect("echo server in container should print port number");
-
-    (child, port)
-}
-
 /// Spawns a tcp-echo-server that the given backend can reach at `127.0.0.1`.
 ///
 /// For Host/SSH, this spawns locally since the remote side shares `127.0.0.1`
@@ -165,7 +117,48 @@ async fn spawn_echo_server_in_container(ctx: &BackendCtx) -> (Child, u16) {
 async fn spawn_reachable_echo_server(ctx: &BackendCtx) -> (Child, u16) {
     match ctx.backend() {
         #[cfg(feature = "docker")]
-        Backend::Docker => spawn_echo_server_in_container(ctx).await,
+        Backend::Docker => {
+            let remote_path = ctx
+                .prepare_binary("tcp-echo-server")
+                .await
+                .expect("failed to prepare tcp-echo-server for Docker");
+
+            let container_name = ctx
+                .docker_container_name()
+                .expect("expected Docker backend");
+
+            let mut child = Command::new("docker")
+                .args([
+                    "exec",
+                    "-i",
+                    container_name,
+                    &remote_path,
+                    ECHO_SERVER_LIFETIME_SECS,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("failed to spawn tcp-echo-server in container");
+
+            let stdout = child.stdout.take().expect("stdout not captured");
+            let mut reader = tokio::io::BufReader::new(stdout);
+            let mut port_line = String::new();
+            time::timeout(
+                ECHO_SERVER_STARTUP_TIMEOUT,
+                reader.read_line(&mut port_line),
+            )
+            .await
+            .expect("timed out waiting for echo server port in container")
+            .expect("failed to read echo server port from container");
+
+            let port: u16 = port_line
+                .trim()
+                .parse()
+                .expect("echo server in container should print port number");
+
+            (child, port)
+        }
         _ => spawn_echo_server().await,
     }
 }

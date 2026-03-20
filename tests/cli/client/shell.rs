@@ -99,7 +99,10 @@ async fn should_exit_on_eof_signal(#[case] backend: Backend) {
 
     session.expect("$ ");
 
-    // On Unix, Ctrl-D sends EOF to the PTY which closes the shell cleanly.
+    // On Unix, Ctrl-D (0x04) sends EOF to the shell's stdin, causing it to
+    // exit cleanly — the same way a user would end an interactive session.
+    // We retry a few times because the PTY may buffer or the shell may not
+    // process the first EOF immediately.
     #[cfg(unix)]
     for _ in 0..5 {
         session.send("\x04");
@@ -109,7 +112,8 @@ async fn should_exit_on_eof_signal(#[case] backend: Backend) {
         }
     }
 
-    // On Windows, we send "exit" because ConPTY doesn't support Ctrl-D (EOF signal).
+    // On Windows, Ctrl-D is not recognized as EOF by cmd.exe or ConPTY, so
+    // we must explicitly send the `exit` command to terminate the shell.
     #[cfg(windows)]
     session.send_line("exit");
 
