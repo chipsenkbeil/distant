@@ -14,6 +14,7 @@ use distant_core::protocol::{
 use log::*;
 use regex::Regex;
 use serde_json::Value;
+use typed_path::Utf8UnixPath;
 
 use crate::pool;
 use crate::utils;
@@ -88,30 +89,19 @@ pub enum SearchTool {
     Find,
 }
 
-/// Whether rg JSON output mode is used for contents search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputFormat {
-    /// Standard `filepath:linenum:content` format from grep/rg.
-    Standard,
-
-    /// JSON lines format from `rg --json`.
-    RgJson,
-
-    /// Byte-offset format from `grep -b -n`: `byte_offset:linenum:content`.
-    GrepByteOffset,
-}
-
 /// Result of building a search command, including the tool used and metadata
 /// needed for parsing the output.
+///
+/// The output format is determined implicitly by the tool and target:
+/// - Path searches: plain file paths, parsed by [`parse_path_matches`]
+/// - Contents + Rg: `rg --json` structured output with byte offsets and submatches
+/// - Contents + Grep/Find: `grep -b -n` output with byte offsets
 pub struct SearchCommand {
     /// The shell command string to execute.
     pub command: String,
 
     /// The primary search tool used.
     pub tool: SearchTool,
-
-    /// The output format produced by the command.
-    pub output_format: OutputFormat,
 
     /// The search target (path or contents).
     pub target: SearchQueryTarget,
@@ -140,18 +130,23 @@ impl SearchCommand {
     }
 
     /// Parse the command's stdout output into search matches, dispatching to the
-    /// appropriate parser based on the output format and search target.
+    /// appropriate parser based on the tool and search target.
+    ///
+    /// For contents searches, rg uses `--json` output (structured with byte
+    /// offsets and submatches), while grep/find use `-b -n` output (byte
+    /// offsets in a colon-delimited format).
     pub fn parse_output(&self, stdout: &str) -> Vec<SearchQueryMatch> {
         match self.target {
             SearchQueryTarget::Path => parse_path_matches(stdout, &self.pattern),
-            SearchQueryTarget::Contents => match self.output_format {
-                OutputFormat::RgJson => parse_rg_json_contents_matches(
+            SearchQueryTarget::Contents => match self.tool {
+                SearchTool::Rg => parse_rg_json_contents_matches(
                     stdout,
                     self.include.as_deref(),
                     self.exclude.as_deref(),
                 ),
-                OutputFormat::GrepByteOffset => parse_grep_contents_matches(stdout, &self.pattern),
-                OutputFormat::Standard => parse_contents_matches(stdout, &self.pattern),
+                SearchTool::Grep | SearchTool::Find => {
+                    parse_grep_contents_matches(stdout, &self.pattern)
+                }
             },
         }
     }
@@ -276,14 +271,14 @@ fn build_upward_search_commands(
         // Walk parent directories, limited by max_depth
         let mut remaining = query.options.max_depth;
         if query.options.max_depth.is_none() || query.options.max_depth > Some(0) {
-            let mut current = path.as_str();
-            while let Some(parent) = parent_path(current) {
+            let mut current = path.clone();
+            while let Some(parent) = parent_path(&current) {
                 if remaining == Some(0) {
                     break;
                 }
 
-                all_dirs.push(parent.to_string());
                 current = parent;
+                all_dirs.push(current.clone());
 
                 if let Some(ref mut r) = remaining {
                     *r -= 1;
@@ -324,19 +319,12 @@ fn build_upward_search_commands(
 
 /// Extract the parent path from a Unix path string.
 ///
-/// Returns `None` for root (`/`) or paths with no parent component.
-fn parent_path(path: &str) -> Option<&str> {
-    let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    match trimmed.rfind('/') {
-        Some(0) => {
-            // Parent is root "/"
-            if trimmed == "/" { None } else { Some("/") }
-        }
-        Some(idx) => Some(&trimmed[..idx]),
+/// Returns `None` for root (`/`) or relative paths with no parent component.
+fn parent_path(path: &str) -> Option<String> {
+    let unix = Utf8UnixPath::new(path);
+    match unix.parent() {
+        Some(p) if p.as_str().is_empty() => None,
+        Some(p) => Some(p.as_str().to_string()),
         None => None,
     }
 }
@@ -445,7 +433,6 @@ fn build_path_search_command(
         Ok(SearchCommand {
             command: cmd,
             tool: SearchTool::Rg,
-            output_format: OutputFormat::Standard,
             target: SearchQueryTarget::Path,
             pattern: String::new(),
             include: None,
@@ -467,7 +454,6 @@ fn build_path_search_command(
         Ok(SearchCommand {
             command: cmd,
             tool: SearchTool::Find,
-            output_format: OutputFormat::Standard,
             target: SearchQueryTarget::Path,
             pattern: String::new(),
             include: None,
@@ -510,7 +496,6 @@ fn build_contents_search_command(
         Ok(SearchCommand {
             command: cmd,
             tool: SearchTool::Rg,
-            output_format: OutputFormat::RgJson,
             target: SearchQueryTarget::Contents,
             pattern: String::new(),
             include: include.map(String::from),
@@ -530,7 +515,6 @@ fn build_contents_search_command(
             Ok(SearchCommand {
                 command: cmd,
                 tool: SearchTool::Find,
-                output_format: OutputFormat::GrepByteOffset,
                 target: SearchQueryTarget::Contents,
                 pattern: String::new(),
                 include: None,
@@ -542,7 +526,6 @@ fn build_contents_search_command(
             Ok(SearchCommand {
                 command: cmd,
                 tool: SearchTool::Grep,
-                output_format: OutputFormat::GrepByteOffset,
                 target: SearchQueryTarget::Contents,
                 pattern: String::new(),
                 include: None,
@@ -710,45 +693,6 @@ pub fn parse_grep_contents_matches(output: &str, pattern: &str) -> Vec<SearchQue
             absolute_offset: byte_offset,
             submatches,
         }));
-    }
-
-    matches
-}
-
-/// Parse standard `filepath:linenum:content` output into content search matches.
-///
-/// Used as a fallback when neither rg JSON nor grep byte-offset output is available.
-/// The `pattern` parameter computes submatch positions within each matching line.
-pub fn parse_contents_matches(output: &str, pattern: &str) -> Vec<SearchQueryMatch> {
-    let re = Regex::new(pattern).ok();
-    let mut matches = Vec::new();
-
-    for line in output.lines() {
-        if line.is_empty() {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.splitn(3, ':').collect();
-
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let filepath = parts[0].to_string();
-        let line_num_str = parts[1];
-        let content = parts[2];
-
-        if let Ok(line_num) = line_num_str.parse::<u64>() {
-            let submatches = compute_submatches_for_line(content, re.as_ref());
-            let content = content.to_string();
-            matches.push(SearchQueryMatch::Contents(SearchQueryContentsMatch {
-                path: RemotePath::new(&filepath),
-                lines: SearchQueryMatchData::Text(content),
-                line_number: line_num,
-                absolute_offset: 0,
-                submatches,
-            }));
-        }
     }
 
     matches

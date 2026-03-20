@@ -1004,10 +1004,9 @@ impl Api for SshApi {
                     error!("Search {search_id} failed: {e}");
                 }
 
-                // Always send SearchDone unless cancelled, then clean up.
-                if !cancelled.load(Ordering::Relaxed) {
-                    let _ = ctx.reply.send(Response::SearchDone { id: search_id });
-                }
+                // Always send SearchDone (even on cancellation), matching
+                // distant-host behavior so clients see a clean lifecycle end.
+                let _ = ctx.reply.send(Response::SearchDone { id: search_id });
 
                 searches_cleanup.write().await.remove(&search_id);
             });
