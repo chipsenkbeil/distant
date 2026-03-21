@@ -511,12 +511,10 @@ async fn tunnel_listen_should_fail_with_privileged_port(#[case] backend: Backend
     }
 }
 
-/// Docker excluded: the Docker tunnel implementation resets the TCP connection
-/// before the echo response can be read back (ConnectionReset on read_to_end).
-/// The tunnel opens and binds correctly (tested by tunnel_open_should_print_local_port).
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[tokio::test]
 async fn tunnel_open_should_forward_data(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);

@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use async_once_cell::OnceCell;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
@@ -26,6 +27,10 @@ use crate::process::{self, Process, SpawnResult};
 use crate::search;
 use crate::utils::{self, SearchTools, TunnelTools};
 use crate::{DockerClient, DockerOpts};
+
+/// Timeout for draining remaining Docker exec stdout after the write side closes.
+/// Allows the remote relay process to flush its response before the session is torn down.
+const TUNNEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Global counter for generating unique tunnel IDs across all Docker connections.
 static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
@@ -1295,35 +1300,51 @@ async fn docker_tunnel_relay_task(
         }
     });
 
-    tokio::select! {
-        _ = async {
-            while let Some(msg) = output.next().await {
-                match msg {
-                    Ok(bollard::container::LogOutput::StdOut { message }) => {
-                        if !message.is_empty()
-                            && reply
-                                .send(Response::TunnelData {
-                                    id,
-                                    data: message.to_vec(),
-                                })
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        debug!("[Tunnel {id}] Read error: {e}");
+    /// Drain remaining stdout from the Docker exec stream, forwarding as TunnelData.
+    ///
+    /// Used after the write side closes to give the remote process time to flush
+    /// its response before the exec session is torn down.
+    async fn drain_output(
+        id: TunnelId,
+        output: &mut (impl futures::Stream<
+            Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
+        > + Unpin),
+        reply: &dyn Reply<Data = Response>,
+    ) {
+        while let Some(msg) = output.next().await {
+            match msg {
+                Ok(bollard::container::LogOutput::StdOut { message }) => {
+                    if !message.is_empty()
+                        && reply
+                            .send(Response::TunnelData {
+                                id,
+                                data: message.to_vec(),
+                            })
+                            .is_err()
+                    {
                         break;
                     }
                 }
+                Ok(_) => {}
+                Err(_) => break,
             }
-        } => {
+        }
+    }
+
+    tokio::select! {
+        _ = drain_output(id, &mut output, &*reply) => {
             write_task.abort();
         }
         _ = &mut write_task => {
             // Write channel closed (tunnel_close dropped write_tx).
-            // output will be dropped here, closing the Docker exec stream.
+            // Docker exec doesn't support half-close: closing stdin may tear
+            // down the entire attach stream. Drain remaining stdout with a
+            // timeout so the remote process can flush its response.
+            let _ = tokio::time::timeout(
+                TUNNEL_DRAIN_TIMEOUT,
+                drain_output(id, &mut output, &*reply),
+            )
+            .await;
         }
     }
 
