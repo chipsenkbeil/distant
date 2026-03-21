@@ -1306,9 +1306,11 @@ async fn docker_tunnel_relay_task(
     /// its response before the exec session is torn down.
     async fn drain_output(
         id: TunnelId,
-        output: &mut (impl futures::Stream<
+        output: &mut (
+                 impl futures::Stream<
             Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
-        > + Unpin),
+        > + Unpin
+             ),
         reply: &dyn Reply<Data = Response>,
     ) {
         while let Some(msg) = output.next().await {

@@ -34,6 +34,7 @@ pub struct SpawnResult {
 ///
 /// Takes ownership of an already-opened channel and a pool permit.
 /// The permit is moved into the background task and freed when the process exits.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_simple<F, Fut>(
     channel: Channel<russh::client::Msg>,
     permit: PoolPermit,

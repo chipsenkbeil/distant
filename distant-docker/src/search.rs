@@ -576,22 +576,22 @@ pub fn parse_path_matches(
             let path = line.trim();
 
             // Apply the main search pattern
-            if let Some(ref re) = re {
-                if !re.is_match(path) {
-                    return None;
-                }
+            if let Some(ref re) = re
+                && !re.is_match(path)
+            {
+                return None;
             }
 
             // Apply include/exclude filters
-            if let Some(ref re) = include_re {
-                if !re.is_match(path) {
-                    return None;
-                }
+            if let Some(ref re) = include_re
+                && !re.is_match(path)
+            {
+                return None;
             }
-            if let Some(ref re) = exclude_re {
-                if re.is_match(path) {
-                    return None;
-                }
+            if let Some(ref re) = exclude_re
+                && re.is_match(path)
+            {
+                return None;
             }
 
             let submatches = compute_path_submatches(path, re.as_ref());
