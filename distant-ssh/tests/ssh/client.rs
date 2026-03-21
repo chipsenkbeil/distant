@@ -2130,19 +2130,35 @@ async fn proc_spawn_with_pty_should_support_resize(#[future] client: Ctx<Client>
 
 #[rstest]
 #[test(tokio::test)]
-async fn proc_spawn_should_fail_if_current_dir_specified(#[future] client: Ctx<Client>) {
+async fn proc_spawn_should_support_current_dir(#[future] client: Ctx<Client>) {
     let mut client = client.await;
 
-    let current_dir = if cfg!(windows) { "C:\\temp" } else { "/tmp" };
-    let result = client
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let dir_path = temp_dir.path().to_str().unwrap();
+    let cmd = platform_cmd("pwd", "cd");
+
+    let mut proc = client
         .spawn(
-            "echo hello".to_string(),
+            cmd,
             Environment::new(),
-            Some(RemotePath::new(current_dir)),
+            Some(RemotePath::new(dir_path)),
             None,
         )
-        .await;
-    assert!(result.is_err());
+        .await
+        .expect("proc_spawn with current_dir should succeed");
+
+    let stdout_pipe = proc.stdout.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while let Ok(Ok(data)) = tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
+        accumulated.extend_from_slice(&data);
+    }
+    let stdout_str = String::from_utf8_lossy(&accumulated);
+    let dir_basename = Path::new(dir_path).file_name().unwrap().to_str().unwrap();
+    assert!(
+        stdout_str.contains(dir_basename),
+        "Expected working directory to contain '{dir_basename}', got: {stdout_str}"
+    );
 }
 
 #[rstest]
@@ -2277,14 +2293,18 @@ async fn set_permissions_should_fail_if_path_does_not_exist(#[future] client: Ct
 
 #[rstest]
 #[test(tokio::test)]
-async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(#[future] client: Ctx<Client>) {
+async fn proc_spawn_with_pty_should_support_current_dir(#[future] client: Ctx<Client>) {
     let mut client = client.await;
-    let current_dir = if cfg!(windows) { "C:\\temp" } else { "/tmp" };
-    let result = client
+
+    let temp_dir = assert_fs::TempDir::new().unwrap();
+    let dir_path = temp_dir.path().to_str().unwrap();
+    let cmd = platform_cmd("pwd", "cd");
+
+    let mut proc = client
         .spawn(
-            "echo hello".to_string(),
+            cmd,
             Environment::new(),
-            Some(RemotePath::new(current_dir)),
+            Some(RemotePath::new(dir_path)),
             Some(PtySize {
                 rows: 24,
                 cols: 80,
@@ -2292,8 +2312,21 @@ async fn proc_spawn_with_pty_should_fail_if_current_dir_specified(#[future] clie
                 pixel_height: 0,
             }),
         )
-        .await;
-    assert!(result.is_err(), "PTY spawn with current_dir should fail");
+        .await
+        .expect("PTY spawn with current_dir should succeed");
+
+    let stdout_pipe = proc.stdout.as_mut().unwrap();
+    let mut accumulated = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while let Ok(Ok(data)) = tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
+        accumulated.extend_from_slice(&data);
+    }
+    let stdout_str = String::from_utf8_lossy(&accumulated);
+    let dir_basename = Path::new(dir_path).file_name().unwrap().to_str().unwrap();
+    assert!(
+        stdout_str.contains(dir_basename),
+        "Expected PTY output to contain '{dir_basename}', got: {stdout_str}"
+    );
 }
 
 #[rstest]
