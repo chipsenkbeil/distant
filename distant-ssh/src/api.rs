@@ -1053,6 +1053,7 @@ impl Api for SshApi {
         let pool = &self.pool;
         let processes = &self.processes;
         let global_processes = Arc::downgrade(processes);
+        let family = self.family;
         async move {
             debug!(
                 "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
@@ -1086,6 +1087,7 @@ impl Api for SshApi {
                         &cmd,
                         environment,
                         current_dir,
+                        family,
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),
                     )
@@ -1098,6 +1100,7 @@ impl Api for SshApi {
                         &cmd,
                         environment,
                         current_dir,
+                        family,
                         size,
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),

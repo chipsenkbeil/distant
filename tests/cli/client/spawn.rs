@@ -117,6 +117,7 @@ fn should_fail_for_nonexistent_command(#[case] backend: Backend) {
 
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_support_current_dir(#[case] backend: Backend) {
