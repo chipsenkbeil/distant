@@ -46,9 +46,7 @@ struct DockerTunnel {
 /// API (for file I/O) and container exec (for process and filesystem operations).
 ///
 /// Only Unix containers are supported. The implementation assumes POSIX standard tools
-/// (`test`, `ls`, `head`, `grep`, `find`, `readlink`, `stat`, `rm`, `cp`, `mv`, `chmod`,
-/// `cat`, `mkdir`, `sh`) are available in the container, which is guaranteed by the
-/// ubuntu:22.04 base image used for all containers.
+/// are available in the container.
 pub struct DockerApi {
     /// Docker client handle.
     client: DockerClient,
@@ -1330,10 +1328,7 @@ async fn docker_tunnel_relay_task(
     tunnels.write().await.remove(&id);
 }
 
-/// Parses the output of `stat -c '%F %s %Y %X %W %a %u %g %h %i'` into [`Metadata`].
-///
-/// Expected format: `%F %s %Y %X %W %a %u %g %h %i`
-/// Example: `regular file 1234 1700000000 1700000000 1699000000 644 1000 1000 1 12345`
+/// Parses the output of `stat -c` into [`Metadata`].
 ///
 /// `canonical_path`, when `Some`, is stored as the canonicalized path in the
 /// returned metadata (typically the result of `readlink -f`).

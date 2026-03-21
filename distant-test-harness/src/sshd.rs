@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fmt, io, thread};
 
 use anyhow::Context;
@@ -602,8 +602,8 @@ impl Sshd {
 
         // Poll for TCP connectivity instead of fixed sleeps. This detects
         // actual readiness rather than hoping 200ms is enough.
-        let addr = std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let deadline = Instant::now() + Duration::from_secs(5);
         let poll_interval = Duration::from_millis(50);
 
         loop {
@@ -616,11 +616,11 @@ impl Sshd {
             child = child_ref;
 
             // Try TCP connect to see if sshd is accepting connections
-            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
                 return Ok(Ok(child));
             }
 
-            if std::time::Instant::now() >= deadline {
+            if Instant::now() >= deadline {
                 return Ok(Err((
                     None,
                     format!("sshd did not accept TCP connections on port {port} within 5s"),
