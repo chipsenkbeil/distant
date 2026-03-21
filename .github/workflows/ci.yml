@@ -200,7 +200,7 @@ jobs:
           # to rebuild from cached deps). This typically cuts target/ from ~2GB
           # to ~500MB-1GB.
           rm -rf target/release/incremental target/debug
-          for crate in distant distant-core distant-docker distant-host distant-ssh distant-test-harness pty-echo pty-password pty-interactive tcp-to-stdio tcp-echo-server; do
+          for crate in distant distant-core distant-docker distant-host distant-ssh distant-test-harness pty-echo pty-password pty-interactive stdin-line print-cwd tcp-to-stdio tcp-echo-server; do
             pat="${crate//-/_}"
             rm -f target/release/"$crate" target/release/deps/"$pat"-* target/release/deps/lib"$pat"-*
             rm -rf target/release/.fingerprint/"$pat"-* target/release/.fingerprint/"$crate"-*

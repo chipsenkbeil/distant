@@ -118,22 +118,20 @@ fn should_fail_for_nonexistent_command(#[case] backend: Backend) {
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
-#[test_log::test]
-fn should_support_current_dir(#[case] backend: Backend) {
+#[tokio::test]
+async fn should_support_current_dir(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
+    let print_cwd = ctx
+        .prepare_binary("print-cwd")
+        .await
+        .expect("Failed to build print-cwd");
+
     let dir = ctx.unique_dir("spawn-cwd");
     ctx.cli_mkdir(&dir);
 
-    // pwd on Unix/Docker, cd on Windows Host/SSH
-    let cmd = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
-        "cd"
-    } else {
-        "pwd"
-    };
-
     let output = ctx
         .new_std_cmd(["spawn"])
-        .args(["--current-dir", &dir, "--", cmd])
+        .args(["--current-dir", &dir, "--", &print_cwd])
         .output()
         .expect("Failed to run spawn");
 
@@ -214,22 +212,17 @@ fn should_capture_stderr(#[case] backend: Backend) {
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
-#[test_log::test]
-fn should_forward_stdin(#[case] backend: Backend) {
+#[tokio::test]
+async fn should_forward_stdin(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
-
-    // head -1 reads exactly one line from stdin and exits.
-    // On Windows (Host/SSH), findstr "." matches all non-empty lines.
-    // Note: "^" can't be used because cmd.exe treats it as an escape character.
-    let args: Vec<&str> = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
-        vec!["--", "findstr", "."]
-    } else {
-        vec!["--", "head", "-1"]
-    };
+    let stdin_line = ctx
+        .prepare_binary("stdin-line")
+        .await
+        .expect("Failed to build stdin-line");
 
     let mut child = ctx
         .new_std_cmd(["spawn"])
-        .args(&args)
+        .args(["--", &stdin_line])
         .spawn()
         .expect("Failed to spawn");
 
@@ -291,13 +284,6 @@ fn should_forward_exit_code(#[case] backend: Backend) {
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_forward_environment_variables(#[case] backend: Backend) {
-    // Windows OpenSSH does not support AcceptEnv / set_env channel requests,
-    // so environment variables are not forwarded via SSH on Windows.
-    if cfg!(windows) && matches!(backend, Backend::Ssh) {
-        eprintln!("Skipping: Windows OpenSSH does not support AcceptEnv");
-        return;
-    }
-
     let ctx = skip_if_no_backend!(backend);
 
     let shell_cmd = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {

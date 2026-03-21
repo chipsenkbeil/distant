@@ -52,6 +52,14 @@ name = "tcp-to-stdio"
 path = "src/bin/tcp_to_stdio.rs"
 
 [[bin]]
+name = "stdin-line"
+path = "src/bin/stdin_line.rs"
+
+[[bin]]
+name = "print-cwd"
+path = "src/bin/print_cwd.rs"
+
+[[bin]]
 name = "tcp-echo-server"
 path = "src/bin/tcp_echo_server.rs"
 

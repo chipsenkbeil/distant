@@ -243,9 +243,23 @@ impl BackendCtx {
     ///
     /// Panics if the symlink creation command fails.
     pub fn cli_symlink(&self, target: &str, link: &str) {
-        let output = if cfg!(windows) && matches!(self.backend(), Backend::Host) {
+        let output = if cfg!(windows) && !matches!(self.backend(), Backend::Docker) {
+            // Detect whether the target is a directory so we can pass `/D` to mklink.
+            let is_dir = {
+                let meta = self
+                    .new_std_cmd(["fs", "metadata"])
+                    .arg(target)
+                    .output()
+                    .expect("failed to check target type");
+                meta.status.success() && String::from_utf8_lossy(&meta.stdout).contains("Type: dir")
+            };
+            let mut args = vec!["--", "cmd", "/c", "mklink"];
+            if is_dir {
+                args.push("/D");
+            }
+            args.extend([link, target]);
             self.new_std_cmd(["spawn"])
-                .args(["--", "cmd", "/c", "mklink", link, target])
+                .args(&args)
                 .output()
                 .expect("failed to create symlink")
         } else {

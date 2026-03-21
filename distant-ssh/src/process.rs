@@ -49,14 +49,24 @@ where
     F: FnOnce(ProcessId) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    // Set environment variables before executing the command
+    // Try set_env for each variable; fall back to command-inlining on Windows
+    // if the server rejects AcceptEnv (common with Windows OpenSSH).
+    let mut env_via_channel = true;
     for (key, value) in environment.iter() {
-        // set_env may fail if the server rejects it (AcceptEnv), but we ignore failures
-        let _ = channel.set_env(true, key, value).await;
+        if channel.set_env(true, key, value).await.is_err() {
+            env_via_channel = false;
+            break;
+        }
     }
 
+    let cmd = if !env_via_channel && family == SshFamily::Windows && !environment.is_empty() {
+        wrap_with_inline_env(cmd, &environment)
+    } else {
+        cmd.to_string()
+    };
+
     // Wrap command with cd if current_dir is set
-    let effective_cmd = wrap_with_current_dir(cmd, current_dir.as_ref(), family);
+    let effective_cmd = wrap_with_current_dir(&cmd, current_dir.as_ref(), family);
 
     // Execute the command via SSH channel
     channel
@@ -253,8 +263,14 @@ where
         .map(|s| s.as_str().to_string())
         .unwrap_or_else(|| "xterm-256color".to_string());
 
+    // Try set_env for each variable; fall back to command-inlining on Windows
+    // if the server rejects AcceptEnv (common with Windows OpenSSH).
+    let mut env_via_channel = true;
     for (key, value) in environment.iter() {
-        let _ = channel.set_env(true, key, value).await;
+        if channel.set_env(true, key, value).await.is_err() {
+            env_via_channel = false;
+            break;
+        }
     }
 
     // Request PTY with specified size
@@ -271,8 +287,14 @@ where
         .await
         .map_err(io::Error::other)?;
 
+    let cmd = if !env_via_channel && family == SshFamily::Windows && !environment.is_empty() {
+        wrap_with_inline_env(cmd, &environment)
+    } else {
+        cmd.to_string()
+    };
+
     // Wrap command with cd if current_dir is set
-    let effective_cmd = wrap_with_current_dir(cmd, current_dir.as_ref(), family);
+    let effective_cmd = wrap_with_current_dir(&cmd, current_dir.as_ref(), family);
 
     // Run the command (or request a shell if cmd is empty)
     if effective_cmd.is_empty() {
@@ -444,6 +466,27 @@ where
         killer: kill_tx,
         resizer: resize_tx,
     })
+}
+
+/// Inlines environment variables into a Windows command using `set` + `call`.
+///
+/// When SSH `set_env` channel requests are rejected (e.g. Windows OpenSSH),
+/// this wraps the command so that env vars are set in the cmd.exe process
+/// before the user's command runs. The `call` prefix triggers a second
+/// variable-expansion pass, allowing standard `%VAR%` syntax to work.
+fn wrap_with_inline_env(cmd: &str, env: &Environment) -> String {
+    if cmd.is_empty() || env.is_empty() {
+        return cmd.to_string();
+    }
+    let mut prefix = String::new();
+    for (key, value) in env.iter() {
+        prefix.push_str(&format!("set {key}={value}&& "));
+    }
+    // Escape % to %% in the original command to survive the outer cmd.exe's
+    // first parse pass. The `call` prefix triggers a second expansion where
+    // %VAR% references resolve to the values set above.
+    let escaped_cmd = cmd.replace('%', "%%");
+    format!("{prefix}call {escaped_cmd}")
 }
 
 /// Wraps a command with `cd <dir> && <cmd>` when `current_dir` is set.
