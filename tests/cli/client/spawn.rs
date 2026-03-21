@@ -3,7 +3,6 @@
 //! Tests executing remote processes, capturing stdout/stderr, forwarding stdin,
 //! exit code forwarding, environment variables, PTY support, and error handling.
 
-#[cfg(unix)]
 use std::io::Write;
 
 use rstest::*;
@@ -170,7 +169,6 @@ fn should_support_shell_flag(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -179,9 +177,16 @@ fn should_support_shell_flag(#[case] backend: Backend) {
 fn should_capture_stderr(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
+    // Docker always targets Unix containers; Host and SSH target the local OS
+    let shell_cmd = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
+        "cmd /c echo error_msg 1>&2"
+    } else {
+        "sh -c 'echo error_msg >&2'"
+    };
+
     let output = ctx
         .new_std_cmd(["spawn"])
-        .args(["-c", "sh -c 'echo error_msg >&2'"])
+        .args(["-c", shell_cmd])
         .output()
         .expect("Failed to run spawn");
 
@@ -198,18 +203,25 @@ fn should_capture_stderr(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_forward_stdin(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    // Use `head -1` which reads exactly one line from stdin and exits
+    // head -1 reads exactly one line from stdin and exits.
+    // On Windows (Host/SSH), findstr "^" matches all lines — pipe one line + close stdin.
+    let args: Vec<&str> = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
+        vec!["--", "findstr", "^"]
+    } else {
+        vec!["--", "head", "-1"]
+    };
+
     let mut child = ctx
         .new_std_cmd(["spawn"])
-        .args(["--", "head", "-1"])
+        .args(&args)
         .spawn()
         .expect("Failed to spawn");
 
@@ -236,7 +248,6 @@ fn should_forward_stdin(#[case] backend: Backend) {
     );
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
@@ -245,9 +256,15 @@ fn should_forward_stdin(#[case] backend: Backend) {
 fn should_forward_exit_code(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
+    let shell_cmd = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
+        "cmd /c exit /b 42"
+    } else {
+        "sh -c 'exit 42'"
+    };
+
     let output = ctx
         .new_std_cmd(["spawn"])
-        .args(["-c", "sh -c 'exit 42'"])
+        .args(["-c", shell_cmd])
         .output()
         .expect("Failed to run spawn");
 
@@ -260,13 +277,19 @@ fn should_forward_exit_code(#[case] backend: Backend) {
     assert_eq!(code, 42, "Expected exit code 42, got: {code}");
 }
 
-#[cfg(unix)]
 #[rstest]
 #[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
 #[test_log::test]
 fn should_forward_environment_variables(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
+
+    let shell_cmd = if cfg!(windows) && matches!(backend, Backend::Host | Backend::Ssh) {
+        "cmd /c echo %DISTANT_TEST_VAR%"
+    } else {
+        "sh -c 'echo $DISTANT_TEST_VAR'"
+    };
 
     let output = ctx
         .new_std_cmd(["spawn"])
@@ -274,7 +297,7 @@ fn should_forward_environment_variables(#[case] backend: Backend) {
             "--environment",
             "DISTANT_TEST_VAR=hello_from_env",
             "-c",
-            "sh -c 'echo $DISTANT_TEST_VAR'",
+            shell_cmd,
         ])
         .output()
         .expect("Failed to run spawn");
