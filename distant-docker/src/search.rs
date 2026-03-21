@@ -254,28 +254,23 @@ pub fn build_unix_pattern(condition: &SearchQueryCondition) -> String {
 }
 
 /// Build a path search command using rg or find.
+///
+/// Pattern matching, include/exclude filtering are all applied in Rust during
+/// result parsing (see [`parse_path_matches`]), so the shell command just lists files.
 fn build_path_search_command(
     paths: &str,
-    pattern: &str,
+    _pattern: &str,
     tools: &SearchTools,
-    include: Option<&str>,
-    exclude: Option<&str>,
+    _include: Option<&str>,
+    _exclude: Option<&str>,
     max_depth: Option<u64>,
 ) -> io::Result<SearchCommand> {
-    let quoted_pattern = shell_quote(pattern);
-
     if tools.has_rg {
         let mut cmd = "rg --files".to_string();
         if let Some(depth) = max_depth {
             cmd.push_str(&format!(" --max-depth {depth}"));
         }
-        cmd.push_str(&format!(" {paths} | grep -E {quoted_pattern}"));
-        if let Some(inc) = include {
-            cmd.push_str(&format!(" | grep -E {}", shell_quote(inc)));
-        }
-        if let Some(exc) = exclude {
-            cmd.push_str(&format!(" | grep -vE {}", shell_quote(exc)));
-        }
+        cmd.push_str(&format!(" {paths}"));
         Ok(SearchCommand {
             command: cmd,
             tool: SearchTool::Ripgrep,
@@ -285,13 +280,7 @@ fn build_path_search_command(
         if let Some(depth) = max_depth {
             cmd.push_str(&format!(" -maxdepth {depth}"));
         }
-        cmd.push_str(&format!(" -regex '.*{pattern}.*' -print"));
-        if let Some(inc) = include {
-            cmd.push_str(&format!(" | grep -E {}", shell_quote(inc)));
-        }
-        if let Some(exc) = exclude {
-            cmd.push_str(&format!(" | grep -vE {}", shell_quote(exc)));
-        }
+        cmd.push_str(" -print");
         Ok(SearchCommand {
             command: cmd,
             tool: SearchTool::Find,
@@ -569,20 +558,47 @@ fn compute_text_submatches(content: &str) -> Vec<SearchQuerySubmatch> {
 /// When the condition can be compiled as a regex, each path is matched to find
 /// the exact substring that triggered the match. Otherwise falls back to the
 /// full path as the submatch.
-pub fn parse_path_matches(output: &str, condition: &SearchQueryCondition) -> Vec<SearchQueryMatch> {
+pub fn parse_path_matches(
+    output: &str,
+    condition: &SearchQueryCondition,
+    include: Option<&str>,
+    exclude: Option<&str>,
+) -> Vec<SearchQueryMatch> {
     let pattern = build_unix_pattern(condition);
     let re = Regex::new(&pattern).ok();
+    let include_re = include.and_then(|p| Regex::new(p).ok());
+    let exclude_re = exclude.and_then(|p| Regex::new(p).ok());
 
     output
         .lines()
         .filter(|line| !line.is_empty())
-        .map(|line| {
+        .filter_map(|line| {
             let path = line.trim();
+
+            // Apply the main search pattern
+            if let Some(ref re) = re {
+                if !re.is_match(path) {
+                    return None;
+                }
+            }
+
+            // Apply include/exclude filters
+            if let Some(ref re) = include_re {
+                if !re.is_match(path) {
+                    return None;
+                }
+            }
+            if let Some(ref re) = exclude_re {
+                if re.is_match(path) {
+                    return None;
+                }
+            }
+
             let submatches = compute_path_submatches(path, re.as_ref());
-            SearchQueryMatch::Path(SearchQueryPathMatch {
+            Some(SearchQueryMatch::Path(SearchQueryPathMatch {
                 path: RemotePath::new(path),
                 submatches,
-            })
+            }))
         })
         .collect()
 }

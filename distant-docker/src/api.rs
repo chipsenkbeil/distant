@@ -829,9 +829,12 @@ impl Api for DockerApi {
                         include_pattern.as_deref(),
                         exclude_pattern.as_deref(),
                     ),
-                    SearchQueryTarget::Path => {
-                        search::parse_path_matches(&stdout, &query.condition)
-                    }
+                    SearchQueryTarget::Path => search::parse_path_matches(
+                        &stdout,
+                        &query.condition,
+                        include_pattern.as_deref(),
+                        exclude_pattern.as_deref(),
+                    ),
                 };
                 all_matches.extend(matches);
             }
