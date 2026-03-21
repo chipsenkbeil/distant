@@ -360,4 +360,10 @@ fn should_upload_to_server_cwd_with_bare_colon(#[case] backend: Backend) {
 
     let landed = ctx.child_path(cwd, "bare_colon.txt");
     assert_eq!(ctx.cli_read(&landed), "bare colon content");
+
+    // Clean up: remove the file that landed in the server's cwd
+    ctx.new_assert_cmd(["fs", "remove"])
+        .arg(&landed)
+        .assert()
+        .success();
 }
