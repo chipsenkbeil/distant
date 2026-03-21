@@ -39,7 +39,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features
-      - run: cargo nextest run --profile ci --all-features --workspace
+      - run: cargo nextest run --all-features --workspace
       - run: cargo test --all-features --workspace --doc
 
   macos:

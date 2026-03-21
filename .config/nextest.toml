@@ -18,6 +18,8 @@ fail-fast = false
 leak-timeout = { period = "500ms", result = "fail" }
 status-level = "fail"
 final-status-level = "leak"
+retries = { backoff = "exponential", count = 4, delay = "1s", max-delay = "16s", jitter = true }
+slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.default.overrides]]
 filter = 'binary_id(distant-ssh::lib)'
@@ -51,6 +53,3 @@ test-group = 'ssh-integration'
 filter = 'test(shell::) | test(spawn::)'
 test-group = 'pty-tests'
 
-[profile.ci]
-retries = { backoff = "exponential", count = 4, delay = "1s", max-delay = "16s", jitter = true }
-slow-timeout = { period = "60s", terminate-after = 3 }

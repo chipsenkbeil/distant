@@ -24,7 +24,7 @@ cargo test --all-features --workspace
 cargo test --all-features -p <crate>
 
 # Nextest (CI-style)
-cargo nextest run --profile ci --all-features --workspace --all-targets
+cargo nextest run --all-features --workspace --all-targets
 ```
 
 ## Before Committing

@@ -107,6 +107,21 @@ via `~/.ssh/config` with `HostName` directive.
   This is also reported by external user in issue #251.
 - **Related:** [#251](#issue-251), [#252](#issue-252)
 
+### TD-8: Windows ConPTY nested PTY exit detection
+
+**(Bug)** `should_exit_on_eof_signal` test hangs on Windows for both Host and
+SSH backends. After `pty-interactive` exits via "exit" command, `distant shell`
+does not exit within 60s. The nested ConPTY chain (test ConPTY → distant shell
+→ server ConPTY → pty-interactive) doesn't reliably propagate process exit
+back to the outer ConPTY. Test is currently `#[ignore]` on Windows.
+
+- **Crate:** `distant` (binary)
+- **Files:** `src/cli/commands/common/terminal.rs`, `distant-host/src/api/process/pty.rs`
+- **Context:** ConPTY is known to not send EOF on stdout pipes after child
+  exit. The server has a 5s drain timeout for this, so ProcDone should still
+  arrive. The hang may be in `distant shell`'s crossterm event loop or tokio
+  runtime shutdown blocking on a ConPTY resource.
+
 ---
 
 ## Open Issues

@@ -44,8 +44,8 @@ cargo test --all-features --workspace
 # With nextest (preferred — parallel execution, better output)
 cargo nextest run --all-features --workspace
 
-# CI profile (retries, slow-timeout)
-cargo nextest run --profile ci --all-features --workspace
+# With retries + slow-timeout (configured in default profile)
+cargo nextest run --all-features --workspace
 ```
 
 ### Individual Crates
@@ -176,11 +176,11 @@ To prevent resource exhaustion, certain test categories have thread limits:
 | `tunnel-tests` | `test(tunnel_)` | 4 | Prevents port exhaustion |
 | `pty-tests` | `test(shell::) \| test(spawn::)` | 4 | PTY tests need careful concurrency |
 
-### CI Profile
+### Retries and Slow Timeout
 
-The `ci` profile adds:
+The default nextest profile includes:
 
-- **Retries**: 4 (handles intermittent SSH/Docker failures)
+- **Retries**: 4 with exponential backoff (handles intermittent SSH/Docker failures)
 - **Slow timeout**: 60s period, terminate after 3 periods (180s total)
 
 ## CI Configuration
@@ -199,8 +199,8 @@ CI runs on three platforms via `.github/workflows/ci.yml`:
 **Linux**: `sudo mkdir -p /run/sshd` (required by sshd) and `docker pull ubuntu:22.04`.
 
 **Windows**: Stops the system `sshd` service (conflicts with per-test instances),
-enables `ssh-agent`, and opens firewall ports 49152–65535. Windows tests get
-extra nextest retries (3) and a 90s test timeout.
+enables `ssh-agent`, and opens firewall ports 49152–65535. Windows SSH tests run
+sequentially (max-threads = 1) via the `ssh-integration-windows` test group.
 
 ## Writing Tests
 

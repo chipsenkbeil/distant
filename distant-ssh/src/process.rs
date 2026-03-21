@@ -59,7 +59,11 @@ where
         }
     }
 
-    let cmd = if !env_via_channel && family == SshFamily::Windows && !environment.is_empty() {
+    let cmd = if family == SshFamily::Windows && !environment.is_empty() {
+        // Always inline env vars on Windows: `set_env` (SSH env channel request)
+        // returns Ok but Windows OpenSSH silently ignores the variable.
+        wrap_with_inline_env(cmd, &environment)
+    } else if !env_via_channel && !environment.is_empty() {
         wrap_with_inline_env(cmd, &environment)
     } else {
         cmd.to_string()
@@ -287,7 +291,11 @@ where
         .await
         .map_err(io::Error::other)?;
 
-    let cmd = if !env_via_channel && family == SshFamily::Windows && !environment.is_empty() {
+    let cmd = if family == SshFamily::Windows && !environment.is_empty() {
+        // Always inline env vars on Windows: `set_env` (SSH env channel request)
+        // returns Ok but Windows OpenSSH silently ignores the variable.
+        wrap_with_inline_env(cmd, &environment)
+    } else if !env_via_channel && !environment.is_empty() {
         wrap_with_inline_env(cmd, &environment)
     } else {
         cmd.to_string()
@@ -480,7 +488,11 @@ fn wrap_with_inline_env(cmd: &str, env: &Environment) -> String {
     }
     let mut prefix = String::new();
     for (key, value) in env.iter() {
-        prefix.push_str(&format!("set {key}={value}&& "));
+        // Use `set "KEY=VALUE"` quoting to protect cmd.exe metacharacters
+        // (&, |, >, <, spaces) in values. Escape `%` → `%%` to prevent
+        // premature variable expansion.
+        let escaped_value = value.replace('%', "%%");
+        prefix.push_str(&format!("set \"{key}={escaped_value}\"&& "));
     }
     // Escape % to %% in the original command to survive the outer cmd.exe's
     // first parse pass. The `call` prefix triggers a second expansion where

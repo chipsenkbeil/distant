@@ -156,14 +156,6 @@ jobs:
 
           # Ensure we have proper permissions for file operations
           # Grant current user SeCreateSymbolicLinkPrivilege if needed for tests
-      - name: Extend Windows retry count to be more resilient
-        run: echo "NEXTEST_RETRIES=3" >> $GITHUB_ENV
-        shell: bash
-        if: matrix.os == 'windows-latest'
-      - name: Set test timeout for Windows SSH (sequential execution needs more time)
-        run: echo "NEXTEST_TEST_TIMEOUT=120s" >> $GITHUB_ENV
-        shell: bash
-        if: matrix.os == 'windows-latest'
       - name: Ensure /run/sshd exists on Unix
         run: sudo mkdir -p /run/sshd
         if: matrix.os == 'ubuntu-latest'
@@ -171,7 +163,7 @@ jobs:
         run: docker pull ubuntu:22.04
         if: runner.os == 'Linux'
       - name: Run all workspace tests (all features)
-        run: cargo nextest run --profile ci --release --all-features --workspace
+        run: cargo nextest run --release --all-features --workspace
       - name: Run all doc tests (all features)
         run: cargo test --release --all-features --workspace --doc
 
@@ -218,5 +210,5 @@ jobs:
             . "$HOME/.cargo/env"
             mv ./cargo-nextest "$HOME/.cargo/bin/"
             sudo mkdir -p /var/run/sshd
-            cargo nextest run --profile ci --release --all-features --workspace --retries 7
+            cargo nextest run --release --all-features --workspace --retries 7
             cargo test --release --all-features --workspace --doc

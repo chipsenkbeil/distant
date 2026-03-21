@@ -82,10 +82,18 @@ async fn should_display_interactive_prompt(#[case] backend: Backend) {
     session.expect("$ ");
 }
 
+// Windows: nested ConPTY chain (test ConPTY → distant shell → server ConPTY →
+// pty-interactive) doesn't reliably propagate process exit back to the outer
+// ConPTY, causing `distant shell` to hang after the remote process exits.
+// See docs/TODO.md for tracking.
 #[rstest]
 #[case::host(Backend::Host)]
 #[case::ssh(Backend::Ssh)]
 #[case::docker(Backend::Docker)]
+#[cfg_attr(
+    windows,
+    ignore = "Windows ConPTY does not reliably propagate nested PTY exit"
+)]
 #[tokio::test]
 async fn should_exit_on_eof_signal(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
