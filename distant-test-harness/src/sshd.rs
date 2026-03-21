@@ -211,6 +211,7 @@ impl Default for SshdConfig {
         config.set_allow_tcp_forwarding(true);
         config.set_max_startups(500, None);
         config.set_strict_modes(false);
+        config.set_accept_env("*");
         config.set_log_level(SshdLogLevel::Debug3);
 
         config
@@ -311,6 +312,11 @@ impl SshdConfig {
     pub fn set_strict_modes(&mut self, yes: bool) {
         self.0
             .insert("StrictModes".to_string(), Self::yes_value(yes));
+    }
+
+    pub fn set_accept_env(&mut self, pattern: &str) {
+        self.0
+            .insert("AcceptEnv".to_string(), vec![pattern.to_string()]);
     }
 
     pub fn set_log_level(&mut self, log_level: SshdLogLevel) {
