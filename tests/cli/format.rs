@@ -8,7 +8,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn status_json_format_produces_valid_json(ctx: ManagerCtx) {
+fn status_json_format_produces_valid_json(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["status", "--format", "json"])
         .output()
@@ -26,7 +26,7 @@ fn status_json_format_produces_valid_json(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn kill_should_succeed_with_valid_id(ctx: ManagerCtx) {
+fn kill_should_succeed_with_valid_id(ctx: HostManagerCtx) {
     // Get the connection ID
     let output = ctx
         .new_std_cmd(["status", "--format", "json"])
@@ -72,7 +72,7 @@ fn kill_should_succeed_with_valid_id(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn kill_without_id_produces_error(ctx: ManagerCtx) {
+fn kill_without_id_produces_error(ctx: HostManagerCtx) {
     // Kill without an ID should produce a clap error (missing required arg)
     let output = ctx
         .new_std_cmd(["kill"])
@@ -84,7 +84,7 @@ fn kill_without_id_produces_error(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn kill_with_invalid_id_produces_error(ctx: ManagerCtx) {
+fn kill_with_invalid_id_produces_error(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["kill"])
         .arg("99999")

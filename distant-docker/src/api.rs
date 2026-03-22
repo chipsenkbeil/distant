@@ -5,8 +5,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use async_once_cell::OnceCell;
+use bollard::container::LogOutput;
+use bollard::errors::Error as BollardError;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use distant_core::constants::TUNNEL_CHANNEL_CAPACITY;
 use distant_core::net::server::Reply;
@@ -27,6 +30,10 @@ use crate::search;
 use crate::utils::{self, SearchTools, TunnelTools};
 use crate::{DockerClient, DockerOpts};
 
+/// Timeout for draining remaining Docker exec stdout after the write side closes.
+/// Allows the remote relay process to flush its response before the session is torn down.
+const TUNNEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Global counter for generating unique tunnel IDs across all Docker connections.
 static NEXT_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -45,7 +52,8 @@ struct DockerTunnel {
 /// Translates distant operations to Docker API calls using a combination of the tar archive
 /// API (for file I/O) and container exec (for process and filesystem operations).
 ///
-/// Only Unix containers are supported.
+/// Only Unix containers are supported. The implementation assumes POSIX standard tools
+/// are available in the container.
 pub struct DockerApi {
     /// Docker client handle.
     client: DockerClient,
@@ -213,6 +221,18 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async move {
             let path_str = path.as_str();
+
+            // Verify the file exists before attempting to read it so the error
+            // kind is NotFound rather than a generic Docker API error.
+            if let Ok(output) = self.run_cmd(&["test", "-e", path_str]).await
+                && !output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("File not found: {}", path_str),
+                ));
+            }
+
             utils::tar_read_file(self.client.inner(), &self.container, path_str).await
         }
     }
@@ -308,7 +328,7 @@ impl Api for DockerApi {
         path: RemotePath,
         depth: usize,
         absolute: bool,
-        _canonicalize: bool,
+        canonicalize: bool,
         include_root: bool,
     ) -> impl std::future::Future<Output = io::Result<(Vec<DirEntry>, Vec<io::Error>)>> + Send {
         async move {
@@ -316,6 +336,33 @@ impl Api for DockerApi {
             // and strip_prefix work correctly
             let path = self.resolve_path(Path::new(path.as_str())).await?;
             let path_str = path.to_string_lossy().to_string();
+
+            // When canonicalize is requested, resolve symlinks in the path
+            // so that `find` output uses the real directory location
+            // (consistent with Host and SSH backends).
+            let path_str = if canonicalize {
+                self.run_cmd(&["readlink", "-f", &path_str])
+                    .await
+                    .ok()
+                    .filter(|o| o.success())
+                    .map(|o| o.stdout_str().trim().to_string())
+                    .unwrap_or(path_str)
+            } else {
+                path_str
+            };
+            let path = PathBuf::from(&path_str);
+
+            // Verify the directory exists before attempting to list it (consistent
+            // with Host and SSH backends which return NotFound for missing paths).
+            if let Ok(output) = self.run_cmd(&["test", "-d", &path_str]).await
+                && !output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Directory not found: {}", path_str),
+                ));
+            }
+
             let mut entries = Vec::new();
             let mut errors: Vec<io::Error> = Vec::new();
 
@@ -434,6 +481,18 @@ impl Api for DockerApi {
         async move {
             let path_str = path.as_str().to_string();
 
+            // When not using --all, fail if the directory already exists (consistent
+            // with Host and SSH backends which use mkdir without -p).
+            if !all
+                && let Ok(output) = self.run_cmd(&["test", "-d", &path_str]).await
+                && output.success()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("Directory already exists: {}", path_str),
+                ));
+            }
+
             // Try exec-based mkdir first (faster, simpler)
             let cmd: Vec<&str> = if all {
                 vec!["mkdir", "-p", &path_str]
@@ -493,6 +552,23 @@ impl Api for DockerApi {
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
             let path_str = path.as_str();
+
+            // When force is not set, reject non-empty directories (consistent
+            // with Host and SSH backends).
+            if !force {
+                let check = format!(
+                    "test -d {0} && test -n \"$(ls -A {0} | head -1)\"",
+                    utils::shell_quote(path_str),
+                );
+                if let Ok(output) = self.run_shell_cmd(&check).await
+                    && output.success()
+                {
+                    return Err(io::Error::other(format!(
+                        "Directory is not empty: {}",
+                        path_str
+                    )));
+                }
+            }
 
             let cmd: Vec<&str> = if force {
                 vec!["rm", "-rf", path_str]
@@ -598,24 +674,57 @@ impl Api for DockerApi {
         _ctx: Ctx,
         path: RemotePath,
         canonicalize: bool,
-        _resolve_file_type: bool,
+        resolve_file_type: bool,
     ) -> impl std::future::Future<Output = io::Result<Metadata>> + Send {
         async move {
             let path_str = path.as_str();
 
+            // Resolve the canonical path when requested (used for both
+            // canonicalize output and as the stat target when resolving
+            // symlinks).
+            let canonical = if canonicalize || resolve_file_type {
+                self.run_cmd(&["readlink", "-f", path_str])
+                    .await
+                    .ok()
+                    .filter(|o| o.success())
+                    .map(|o| o.stdout_str().trim().to_string())
+            } else {
+                None
+            };
+
+            // When resolve_file_type is set, stat the resolved target so
+            // the file type reflects the destination rather than the link.
+            // Use `stat -L` which follows symlinks natively.
+            let stat_cmd: &[&str] = if resolve_file_type {
+                &[
+                    "stat",
+                    "-L",
+                    "-c",
+                    "%F %s %Y %X %W %a %u %g %h %i",
+                    path_str,
+                ]
+            } else {
+                &["stat", "-c", "%F %s %Y %X %W %a %u %g %h %i", path_str]
+            };
+
             // Try exec-based stat first
-            if let Ok(output) = self
-                .run_cmd(&["stat", "-c", "%F %s %Y %X %W %a %u %g %h %i", path_str])
-                .await
+            if let Ok(output) = self.run_cmd(stat_cmd).await
                 && output.success()
             {
                 let stdout = output.stdout_str();
-                if let Some(metadata) = parse_stat_output(stdout.trim(), path_str, canonicalize) {
+                let canon_path = if canonicalize {
+                    canonical.as_deref()
+                } else {
+                    None
+                };
+                if let Some(metadata) = parse_stat_output(stdout.trim(), canon_path) {
                     return Ok(metadata);
                 }
             }
 
-            // Fallback to tar-based metadata
+            // Fallback to tar-based metadata (tar always follows symlinks
+            // for the top-level entry, so resolve_file_type is inherently
+            // handled).
             let entries =
                 utils::tar_list_dir(self.client.inner(), &self.container, path_str).await?;
 
@@ -628,7 +737,9 @@ impl Api for DockerApi {
 
                 Ok(Metadata {
                     canonicalized_path: if canonicalize {
-                        Some(path.clone())
+                        canonical
+                            .map(RemotePath::new)
+                            .or_else(|| Some(path.clone()))
                     } else {
                         None
                     },
@@ -686,35 +797,61 @@ impl Api for DockerApi {
                 ));
             }
 
-            let search_cmd = search::build_search_command(&query, &self.search_tools)?;
+            let search_cmds = search::build_search_commands(&query, &self.search_tools)?;
             let search_id: SearchId = rand::random();
 
-            // Run the search command
-            let output = self.run_shell_cmd(&search_cmd.command).await?;
+            // Pre-compute include/exclude patterns for parsers that need them
+            // (rg JSON output cannot use shell-level awk filters).
+            let include_pattern = query
+                .options
+                .include
+                .as_ref()
+                .map(search::build_unix_pattern);
+            let exclude_pattern = query
+                .options
+                .exclude
+                .as_ref()
+                .map(search::build_unix_pattern);
 
-            // Check for real errors (exit code >= 2 for grep/rg, >= 1 for find)
-            if search_cmd.is_error_exit(output.exit_code) {
-                return Err(io::Error::other(format!(
-                    "Search command failed (exit {}): {}",
-                    output.exit_code,
-                    output.stderr_str()
-                )));
+            let mut all_matches = Vec::new();
+
+            for search_cmd in &search_cmds {
+                let output = self.run_shell_cmd(&search_cmd.command).await?;
+
+                // Check for real errors (exit code >= 2 for grep/rg, >= 1 for find)
+                if search_cmd.is_error_exit(output.exit_code) {
+                    return Err(io::Error::other(format!(
+                        "Search command failed (exit {}): {}",
+                        output.exit_code,
+                        output.stderr_str()
+                    )));
+                }
+
+                let stdout = output.stdout_str();
+
+                let matches = match query.target {
+                    SearchQueryTarget::Contents => search::parse_contents_matches(
+                        &stdout,
+                        search_cmd.tool,
+                        include_pattern.as_deref(),
+                        exclude_pattern.as_deref(),
+                    ),
+                    SearchQueryTarget::Path => search::parse_path_matches(
+                        &stdout,
+                        &query.condition,
+                        include_pattern.as_deref(),
+                        exclude_pattern.as_deref(),
+                    ),
+                };
+                all_matches.extend(matches);
             }
-
-            let stdout = output.stdout_str();
-
-            // Parse results based on search target
-            let matches = match query.target {
-                SearchQueryTarget::Contents => search::parse_contents_matches(&stdout),
-                SearchQueryTarget::Path => search::parse_path_matches(&stdout),
-            };
 
             // Send results via reply
             use distant_core::protocol::Response;
-            if !matches.is_empty() {
+            if !all_matches.is_empty() {
                 let _ = ctx.reply.send(Response::SearchResults {
                     id: search_id,
-                    matches,
+                    matches: all_matches,
                 });
             }
 
@@ -1146,10 +1283,7 @@ impl Api for DockerApi {
 /// `TunnelClosed` and removes the tunnel from the map when the connection ends.
 async fn docker_tunnel_relay_task(
     id: TunnelId,
-    mut output: impl futures::Stream<
-        Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
-    > + Unpin
-    + Send,
+    mut output: impl futures::Stream<Item = Result<LogOutput, BollardError>> + Unpin + Send,
     mut input: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
     mut write_rx: mpsc::Receiver<Vec<u8>>,
     reply: Box<dyn Reply<Data = Response>>,
@@ -1165,35 +1299,49 @@ async fn docker_tunnel_relay_task(
         }
     });
 
-    tokio::select! {
-        _ = async {
-            while let Some(msg) = output.next().await {
-                match msg {
-                    Ok(bollard::container::LogOutput::StdOut { message }) => {
-                        if !message.is_empty()
-                            && reply
-                                .send(Response::TunnelData {
-                                    id,
-                                    data: message.to_vec(),
-                                })
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        debug!("[Tunnel {id}] Read error: {e}");
+    /// Drain remaining stdout from the Docker exec stream, forwarding as TunnelData.
+    ///
+    /// Used after the write side closes to give the remote process time to flush
+    /// its response before the exec session is torn down.
+    async fn drain_output(
+        id: TunnelId,
+        output: &mut (impl futures::Stream<Item = Result<LogOutput, BollardError>> + Unpin),
+        reply: &dyn Reply<Data = Response>,
+    ) {
+        while let Some(msg) = output.next().await {
+            match msg {
+                Ok(LogOutput::StdOut { message }) => {
+                    if !message.is_empty()
+                        && reply
+                            .send(Response::TunnelData {
+                                id,
+                                data: message.to_vec(),
+                            })
+                            .is_err()
+                    {
                         break;
                     }
                 }
+                Ok(_) => {}
+                Err(_) => break,
             }
-        } => {
+        }
+    }
+
+    tokio::select! {
+        _ = drain_output(id, &mut output, &*reply) => {
             write_task.abort();
         }
         _ = &mut write_task => {
             // Write channel closed (tunnel_close dropped write_tx).
-            // output will be dropped here, closing the Docker exec stream.
+            // Docker exec doesn't support half-close: closing stdin may tear
+            // down the entire attach stream. Drain remaining stdout with a
+            // timeout so the remote process can flush its response.
+            let _ = tokio::time::timeout(
+                TUNNEL_DRAIN_TIMEOUT,
+                drain_output(id, &mut output, &*reply),
+            )
+            .await;
         }
     }
 
@@ -1201,11 +1349,11 @@ async fn docker_tunnel_relay_task(
     tunnels.write().await.remove(&id);
 }
 
-/// Parse Unix `stat` output into [`Metadata`].
+/// Parses the output of `stat -c` into [`Metadata`].
 ///
-/// Expected format: `%F %s %Y %X %W %a %u %g %h %i`
-/// Example: `regular file 1234 1700000000 1700000000 1699000000 644 1000 1000 1 12345`
-fn parse_stat_output(line: &str, path: &str, canonicalize: bool) -> Option<Metadata> {
+/// `canonical_path`, when `Some`, is stored as the canonicalized path in the
+/// returned metadata (typically the result of `readlink -f`).
+fn parse_stat_output(line: &str, canonical_path: Option<&str>) -> Option<Metadata> {
     let parts: Vec<&str> = line.splitn(10, ' ').collect();
     if parts.len() < 6 {
         return None;
@@ -1256,11 +1404,7 @@ fn parse_stat_output(line: &str, path: &str, canonicalize: bool) -> Option<Metad
     });
 
     Some(Metadata {
-        canonicalized_path: if canonicalize {
-            Some(RemotePath::new(path))
-        } else {
-            None
-        },
+        canonicalized_path: canonical_path.map(RemotePath::new),
         file_type,
         len: size,
         readonly,

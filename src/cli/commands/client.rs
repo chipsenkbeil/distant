@@ -1610,7 +1610,7 @@ fn format_system_info(info: &SystemInfo) -> String {
             "Operating System: {:?}\n",
             "Arch: {:?}\n",
             "Cwd: {:?}\n",
-            "Path Sep: {:?}\n",
+            "Path Sep: '{}'\n",
             "Username: {:?}\n",
             "Shell: {:?}\n"
         ),

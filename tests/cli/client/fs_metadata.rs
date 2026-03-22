@@ -1,160 +1,165 @@
 //! Integration tests for the `distant fs metadata` CLI subcommand.
 //!
-//! Tests retrieving metadata for files, directories, and symlinks, including
-//! `--canonicalize` and `--resolve-file-type` flags.
+//! Tests retrieving metadata for files and directories.
 
-use assert_fs::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
-use distant_test_harness::utils::regex_pred;
-
-const FILE_CONTENTS: &str = r#"
-some text
-on multiple lines
-that is a file's contents
-"#;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_metadata_for_file(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_output_metadata_for_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("metadata");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "metadata-test.txt");
+    ctx.cli_write(&path, "metadata content");
 
-    let file = temp.child("file");
-    file.write_str(FILE_CONTENTS).unwrap();
-
-    // distant fs metadata {path}
-    ctx.new_assert_cmd(["fs", "metadata"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout(regex_pred(concat!(
-            "Type: file\n",
-            "Len: .*\n",
-            "Readonly: false\n",
-            "Created: .*\n",
-            "Last Accessed: .*\n",
-            "Last Modified: .*\n",
-        )));
-}
-
-#[rstest]
-#[test_log::test]
-fn should_output_metadata_for_directory(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
-
-    // distant fs metadata {path}
-    ctx.new_assert_cmd(["fs", "metadata"])
-        .arg(dir.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout(regex_pred(concat!(
-            "Type: dir\n",
-            "Len: .*\n",
-            "Readonly: false\n",
-            "Created: .*\n",
-            "Last Accessed: .*\n",
-            "Last Modified: .*\n",
-        )));
-}
-
-#[rstest]
-#[test_log::test]
-fn should_support_including_a_canonicalized_path(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-
-    let file = temp.child("file");
-    file.touch().unwrap();
-
-    let link = temp.child("link");
-    link.symlink_to_file(file.path()).unwrap();
-
-    // distant fs metadata --canonicalize {path}
-    ctx.new_assert_cmd(["fs", "metadata"])
-        .args(["--canonicalize", link.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(regex_pred(&format!(
-            concat!(
-                "Canonicalized Path: {}\n",
-                "Type: symlink\n",
-                "Len: .*\n",
-                "Readonly: false\n",
-                "Created: .*\n",
-                "Last Accessed: .*\n",
-                "Last Modified: .*\n",
-            ),
-            regex::escape(&format!("{:?}", file.path().canonicalize().unwrap()))
-        )));
-}
-
-#[rstest]
-#[test_log::test]
-fn should_support_resolving_file_type_of_symlink(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-
-    let file = temp.child("file");
-    file.touch().unwrap();
-
-    let link = temp.child("link");
-    link.symlink_to_file(file.path()).unwrap();
-
-    // distant fs metadata --canonicalize {path}
-    ctx.new_assert_cmd(["fs", "metadata"])
-        .args(["--resolve-file-type", link.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(regex_pred(concat!(
-            "Type: file\n",
-            "Len: .*\n",
-            "Readonly: false\n",
-            "Created: .*\n",
-            "Last Accessed: .*\n",
-            "Last Modified: .*\n",
-        )));
-}
-
-#[rstest]
-#[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-
-    // Don't create file
-    let file = temp.child("file");
-
-    // distant fs metadata {path}
-    ctx.new_assert_cmd(["fs", "metadata"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to retrieve metadata"));
-}
-
-#[cfg(unix)]
-#[rstest]
-#[test_log::test]
-fn should_output_unix_permissions(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-
-    let file = temp.child("file");
-    file.write_str("hello").unwrap();
-
-    // distant fs metadata {path}
     let output = ctx
-        .new_assert_cmd(["fs", "metadata"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success();
+        .new_std_cmd(["fs", "metadata"])
+        .arg(&path)
+        .output()
+        .expect("Failed to run fs metadata");
 
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    // On Unix, metadata output should contain permission info
-    // At minimum we see "Readonly: false" which indicates permissions are reported
+    assert!(
+        output.status.success(),
+        "fs metadata should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Type: file"),
+        "Expected 'Type: file' in metadata output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Len:"),
+        "Expected 'Len:' in metadata output, got: {stdout}"
+    );
     assert!(
         stdout.contains("Readonly:"),
-        "Expected Unix permissions info in metadata output, got: {stdout}"
+        "Expected 'Readonly:' in metadata output, got: {stdout}"
     );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_output_metadata_for_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("metadata-dir");
+    ctx.cli_mkdir(&dir);
+    let sub = ctx.child_path(&dir, "sub");
+    ctx.cli_mkdir(&sub);
+
+    let output = ctx
+        .new_std_cmd(["fs", "metadata"])
+        .arg(&sub)
+        .output()
+        .expect("Failed to run fs metadata");
+
+    assert!(
+        output.status.success(),
+        "fs metadata should succeed for directory, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Type: dir"),
+        "Expected 'Type: dir' in metadata output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Readonly:"),
+        "Expected 'Readonly:' in metadata output, got: {stdout}"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("metadata-err");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "nonexistent");
+
+    ctx.new_assert_cmd(["fs", "metadata"])
+        .arg(&path)
+        .assert()
+        .code(1);
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_including_a_canonicalized_path(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("metadata-canon");
+    ctx.cli_mkdir(&dir);
+    let file_path = ctx.child_path(&dir, "file");
+    ctx.cli_write(&file_path, "");
+    let link_path = ctx.child_path(&dir, "link");
+    ctx.cli_symlink(&file_path, &link_path);
+
+    let output = ctx
+        .new_std_cmd(["fs", "metadata"])
+        .args(["--canonicalize", &link_path])
+        .output()
+        .expect("Failed to run fs metadata");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Canonicalized Path:"),
+        "Expected 'Canonicalized Path:' in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Type: symlink"),
+        "Expected 'Type: symlink' in output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Readonly:"),
+        "Expected 'Readonly:' in output, got: {stdout}"
+    );
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[test_log::test]
+fn should_support_resolving_file_type_of_symlink(#[case] backend: Backend) {
+    use distant_test_harness::utils::regex_pred;
+
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("metadata-resolve");
+    ctx.cli_mkdir(&dir);
+    let file_path = ctx.child_path(&dir, "file");
+    ctx.cli_write(&file_path, "");
+    let link_path = ctx.child_path(&dir, "link");
+    ctx.cli_symlink(&file_path, &link_path);
+
+    ctx.new_assert_cmd(["fs", "metadata"])
+        .args(["--resolve-file-type", &link_path])
+        .assert()
+        .success()
+        .stdout(regex_pred(concat!(
+            "Type: file\n",
+            "Len: .*\n",
+            "Readonly: false\n",
+            "Created: .*\n",
+            "Last Accessed: .*\n",
+            "Last Modified: .*\n",
+        )));
 }

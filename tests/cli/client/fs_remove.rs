@@ -3,86 +3,102 @@
 //! Tests removing files, empty directories, non-empty directories with `--force`,
 //! and error handling when force is not specified for non-empty directories.
 
-use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_removing_file(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("file");
-    file.touch().unwrap();
+fn should_support_removing_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("remove");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "remove-test.txt");
+    ctx.cli_write(&path, "to be removed");
+    assert!(ctx.cli_exists(&path), "File should exist before removal");
 
-    // distant action remove {path}
     ctx.new_assert_cmd(["fs", "remove"])
-        .args([file.to_str().unwrap()])
+        .arg(&path)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    file.assert(predicate::path::missing());
+    assert!(
+        !ctx.cli_exists(&path),
+        "File should be removed (verified via CLI)"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_removing_empty_directory(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_removing_empty_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("remove-emptydir");
+    ctx.cli_mkdir(&dir);
+    let empty_dir = ctx.child_path(&dir, "empty");
+    ctx.cli_mkdir(&empty_dir);
 
-    // Make an empty directory
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
-
-    // distant action remove {path}
     ctx.new_assert_cmd(["fs", "remove"])
-        .args([dir.to_str().unwrap()])
+        .arg(&empty_dir)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    dir.assert(predicate::path::missing());
+    assert!(
+        !ctx.cli_exists(&empty_dir),
+        "Empty directory should be removed (verified via CLI)"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_removing_nonempty_directory_if_force_specified(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_removing_nonempty_directory_if_force_specified(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("remove-force");
+    ctx.cli_mkdir(&dir);
+    let nonempty = ctx.child_path(&dir, "nonempty");
+    ctx.cli_mkdir(&nonempty);
+    ctx.cli_write(&ctx.child_path(&nonempty, "file.txt"), "content");
 
-    // Make a non-empty directory
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
-    dir.child("file").touch().unwrap();
-
-    // distant action remove --force {path}
     ctx.new_assert_cmd(["fs", "remove"])
-        .args(["--force", dir.to_str().unwrap()])
+        .args(["--force", &nonempty])
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    dir.assert(predicate::path::missing());
+    assert!(
+        !ctx.cli_exists(&nonempty),
+        "Non-empty directory should be removed with --force (verified via CLI)"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("remove-err");
+    ctx.cli_mkdir(&dir);
+    let nonempty = ctx.child_path(&dir, "nonempty");
+    ctx.cli_mkdir(&nonempty);
+    ctx.cli_write(&ctx.child_path(&nonempty, "file.txt"), "content");
 
-    // Make a non-empty directory
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
-    dir.child("file").touch().unwrap();
-
-    // distant action remove {path}
     ctx.new_assert_cmd(["fs", "remove"])
-        .args([dir.to_str().unwrap()])
+        .arg(&nonempty)
         .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to remove"));
+        .code(1);
 
-    dir.assert(predicate::path::exists());
-    dir.assert(predicate::path::is_dir());
+    assert!(
+        ctx.cli_exists(&nonempty),
+        "Directory should still exist after failed removal"
+    );
 }

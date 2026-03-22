@@ -10,7 +10,7 @@ use distant_test_harness::manager::*;
 
 #[rstest]
 #[test_log::test]
-fn should_output_version(ctx: ManagerCtx) {
+fn should_output_version(ctx: HostManagerCtx) {
     ctx.new_assert_cmd(vec!["manager", "version"])
         .assert()
         .success()
@@ -19,7 +19,7 @@ fn should_output_version(ctx: ManagerCtx) {
 
 #[rstest]
 #[test_log::test]
-fn should_output_version_in_json_format(ctx: ManagerCtx) {
+fn should_output_version_in_json_format(ctx: HostManagerCtx) {
     let output = ctx
         .new_std_cmd(["manager", "version", "--format", "json"])
         .stdin(Stdio::null())

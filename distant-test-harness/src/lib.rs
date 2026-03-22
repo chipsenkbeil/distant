@@ -1,7 +1,9 @@
+pub mod backend;
 pub mod exe;
 pub mod host;
 pub mod manager;
 pub mod process;
+pub mod pty;
 pub mod scripts;
 pub mod sshd;
 pub mod utils;

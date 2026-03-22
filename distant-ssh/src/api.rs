@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_once_cell::OnceCell;
@@ -21,6 +21,7 @@ use tokio::task::JoinHandle;
 use crate::SshFamily;
 use crate::pool::{ChannelPool, PooledSftp};
 use crate::process::Process;
+use crate::search;
 use crate::utils;
 use crate::utils::SftpPathBuf;
 
@@ -85,6 +86,12 @@ pub struct SshApi {
     /// Username for the remote connection.
     username: String,
 
+    /// Detected search tools available on the remote host.
+    search_tools: search::SearchTools,
+
+    /// Active search cancellation flags, keyed by search ID.
+    searches: Arc<RwLock<HashMap<SearchId, Arc<AtomicBool>>>>,
+
     /// Cached current working directory.
     cached_current_dir: OnceCell<String>,
 
@@ -98,6 +105,7 @@ impl SshApi {
         family: SshFamily,
         username: String,
         tunnel_state: Arc<SshTunnelSharedState>,
+        search_tools: search::SearchTools,
     ) -> Self {
         let tunnels = Arc::clone(&tunnel_state.tunnels);
         Self {
@@ -107,6 +115,8 @@ impl SshApi {
             tunnel_state,
             family,
             username,
+            search_tools,
+            searches: Arc::new(RwLock::new(HashMap::new())),
             cached_current_dir: OnceCell::new(),
             cached_shell: OnceCell::new(),
         }
@@ -781,9 +791,20 @@ impl Api for SshApi {
 
             use distant_core::protocol::FileType;
 
+            // Windows OpenSSH's SFTP lstat doesn't reliably set the symlink
+            // mode bit, so is_symlink() returns false even for real symlinks.
+            // Fall back to read_link() to detect symlinks on Windows.
+            let is_symlink = if attrs.is_symlink() {
+                true
+            } else if self.family == SshFamily::Windows && !resolve_file_type {
+                sftp.read_link(sftp_path.as_str()).await.is_ok()
+            } else {
+                false
+            };
+
             let file_type = if attrs.is_dir() {
                 FileType::Dir
-            } else if attrs.is_symlink() {
+            } else if is_symlink {
                 FileType::Symlink
             } else {
                 FileType::File
@@ -791,7 +812,7 @@ impl Api for SshApi {
 
             let canonical_path = if canonicalize {
                 // On Windows, SFTP realpath doesn't resolve symlinks
-                let resolved = if self.family == SshFamily::Windows && attrs.is_symlink() {
+                let resolved = if self.family == SshFamily::Windows && is_symlink {
                     match sftp.read_link(sftp_path.as_str()).await {
                         Ok(target) => sftp.canonicalize(&target).await.ok(),
                         Err(_) => sftp.canonicalize(sftp_path.as_str()).await.ok(),
@@ -895,31 +916,129 @@ impl Api for SshApi {
         }
     }
 
-    #[allow(unused_variables)]
     fn search(
         &self,
-        _ctx: Ctx,
-        _query: SearchQuery,
+        ctx: Ctx,
+        query: SearchQuery,
     ) -> impl Future<Output = io::Result<SearchId>> + Send {
-        async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Search is not supported over SSH. Use proc_spawn with find/grep commands instead.",
-            ))
+        let pool = Arc::clone(&self.pool);
+        let search_tools = self.search_tools.clone();
+        let searches = Arc::clone(&self.searches);
+
+        async move {
+            if !search_tools.has_any() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "No search tools available on the remote host. \
+                     Install ripgrep, grep, or find for search support.",
+                ));
+            }
+
+            let search_cmds = search::build_search_commands(&query, &search_tools)?;
+            let search_id: SearchId = rand::random();
+
+            // Register cancellation flag before spawning the search task.
+            let cancelled = Arc::new(AtomicBool::new(false));
+            searches
+                .write()
+                .await
+                .insert(search_id, Arc::clone(&cancelled));
+
+            let searches_cleanup = Arc::clone(&searches);
+            tokio::spawn(async move {
+                let result = async {
+                    let mut all_matches = Vec::new();
+
+                    let is_multi_cmd = search_cmds.len() > 1;
+
+                    for search_cmd in &search_cmds {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return Ok(());
+                        }
+
+                        let exec_result = async {
+                            let (channel, _permit) = pool.open_exec().await?.take();
+                            utils::execute_output_on_channel(channel, &search_cmd.command, None)
+                                .await
+                        }
+                        .await;
+
+                        let output = match exec_result {
+                            Ok(o) => o,
+                            Err(e) => {
+                                // For multi-command searches (upward), log and
+                                // continue — one ancestor failing should not
+                                // abort the entire search.
+                                if is_multi_cmd {
+                                    warn!("Search sub-command failed, continuing: {e}");
+                                    continue;
+                                }
+                                return Err(e);
+                            }
+                        };
+
+                        // For grep/rg, exit code 1 means "no matches" (not an
+                        // error), while exit >= 2 is a real error. For find,
+                        // any non-zero exit is an error. For multi-command
+                        // searches, log the error and continue.
+                        if search_cmd.is_error_exit(output.exit_code.unwrap_or(0)) {
+                            if is_multi_cmd {
+                                let stderr_str = String::from_utf8_lossy(&output.stderr);
+                                warn!(
+                                    "Search sub-command error (continuing): \
+                                     {stderr_str}"
+                                );
+                                continue;
+                            }
+                            let stderr_str = String::from_utf8_lossy(&output.stderr);
+                            return Err(io::Error::other(format!(
+                                "Search command failed: {stderr_str}",
+                            )));
+                        }
+
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        all_matches.extend(search_cmd.parse_output(&stdout));
+                    }
+
+                    if !all_matches.is_empty() && !cancelled.load(Ordering::Relaxed) {
+                        let _ = ctx.reply.send(Response::SearchResults {
+                            id: search_id,
+                            matches: all_matches,
+                        });
+                    }
+
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = result {
+                    error!("Search {search_id} failed: {e}");
+                }
+
+                // Always send SearchDone (even on cancellation), matching
+                // distant-host behavior so clients see a clean lifecycle end.
+                let _ = ctx.reply.send(Response::SearchDone { id: search_id });
+
+                searches_cleanup.write().await.remove(&search_id);
+            });
+
+            Ok(search_id)
         }
     }
 
-    #[allow(unused_variables)]
     fn cancel_search(
         &self,
         _ctx: Ctx,
-        _id: SearchId,
+        id: SearchId,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        async {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Search is not supported over SSH",
-            ))
+        let searches = Arc::clone(&self.searches);
+
+        async move {
+            if let Some(cancelled) = searches.read().await.get(&id).cloned() {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+            // Return Ok even if search not found — it may have already completed
+            Ok(())
         }
     }
 
@@ -934,6 +1053,7 @@ impl Api for SshApi {
         let pool = &self.pool;
         let processes = &self.processes;
         let global_processes = Arc::downgrade(processes);
+        let family = self.family;
         async move {
             debug!(
                 "[Conn {}] Spawning {} {{environment: {:?}, current_dir: {:?}, pty: {:?}}}",
@@ -967,6 +1087,7 @@ impl Api for SshApi {
                         &cmd,
                         environment,
                         current_dir,
+                        family,
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),
                     )
@@ -979,6 +1100,7 @@ impl Api for SshApi {
                         &cmd,
                         environment,
                         current_dir,
+                        family,
                         size,
                         ctx.reply.clone_reply(),
                         make_cleanup(global_processes),
@@ -1331,13 +1453,18 @@ impl Api for SshApi {
         async move {
             debug!("[Conn {}] Querying capabilities", ctx.connection_id);
 
-            let capabilities = vec![
+            let mut capabilities = vec![
                 Version::CAP_EXEC.to_string(),
                 Version::CAP_FS_IO.to_string(),
                 Version::CAP_SYS_INFO.to_string(),
                 Version::CAP_TCP_TUNNEL.to_string(),
                 Version::CAP_TCP_REV_TUNNEL.to_string(),
             ];
+
+            // Only advertise search if we have tools
+            if self.search_tools.has_any() {
+                capabilities.push(Version::CAP_FS_SEARCH.to_string());
+            }
 
             use distant_core::protocol::semver;
 

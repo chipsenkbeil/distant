@@ -7,6 +7,7 @@ use distant_core::protocol::{Environment, ProcessId, PtySize, RemotePath, Respon
 use russh::{Channel, ChannelMsg, Sig};
 use tokio::sync::mpsc;
 
+use crate::SshFamily;
 use crate::pool::PoolPermit;
 
 /// Safety fallback timeout when ExitStatus arrives without Eof.
@@ -33,12 +34,14 @@ pub struct SpawnResult {
 ///
 /// Takes ownership of an already-opened channel and a pool permit.
 /// The permit is moved into the background task and freed when the process exits.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_simple<F, Fut>(
     channel: Channel<russh::client::Msg>,
     permit: PoolPermit,
     cmd: &str,
     environment: Environment,
     current_dir: Option<RemotePath>,
+    family: SshFamily,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
 ) -> io::Result<SpawnResult>
@@ -46,21 +49,34 @@ where
     F: FnOnce(ProcessId) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    if current_dir.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "current_dir is not supported for SSH process spawning",
-        ));
+    // Try set_env for each variable; fall back to command-inlining on Windows
+    // if the server rejects AcceptEnv (common with Windows OpenSSH).
+    let mut env_via_channel = true;
+    for (key, value) in environment.iter() {
+        if channel.set_env(true, key, value).await.is_err() {
+            env_via_channel = false;
+            break;
+        }
     }
 
-    // Set environment variables before executing the command
-    for (key, value) in environment.iter() {
-        // set_env may fail if the server rejects it (AcceptEnv), but we ignore failures
-        let _ = channel.set_env(true, key, value).await;
-    }
+    let cmd = if family == SshFamily::Windows && !environment.is_empty() {
+        // Always inline env vars on Windows: `set_env` (SSH env channel request)
+        // returns Ok but Windows OpenSSH silently ignores the variable.
+        wrap_with_inline_env(cmd, &environment, family)
+    } else if !env_via_channel && !environment.is_empty() {
+        wrap_with_inline_env(cmd, &environment, family)
+    } else {
+        cmd.to_string()
+    };
+
+    // Wrap command with cd if current_dir is set
+    let effective_cmd = wrap_with_current_dir(&cmd, current_dir.as_ref(), family);
 
     // Execute the command via SSH channel
-    channel.exec(true, cmd).await.map_err(io::Error::other)?;
+    channel
+        .exec(true, effective_cmd.as_str())
+        .await
+        .map_err(io::Error::other)?;
 
     let id = rand::random();
 
@@ -235,6 +251,7 @@ pub async fn spawn_pty<F, Fut>(
     cmd: &str,
     environment: Environment,
     current_dir: Option<RemotePath>,
+    family: SshFamily,
     size: PtySize,
     reply: Box<dyn Reply<Data = Response>>,
     cleanup: F,
@@ -243,13 +260,6 @@ where
     F: FnOnce(ProcessId) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    if current_dir.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "current_dir is not supported for SSH process spawning",
-        ));
-    }
-
     // Set environment variables before requesting PTY
     // Extract TERM for PTY request, but still pass all env vars via set_env
     let term_type = environment
@@ -257,8 +267,14 @@ where
         .map(|s| s.as_str().to_string())
         .unwrap_or_else(|| "xterm-256color".to_string());
 
+    // Try set_env for each variable; fall back to command-inlining on Windows
+    // if the server rejects AcceptEnv (common with Windows OpenSSH).
+    let mut env_via_channel = true;
     for (key, value) in environment.iter() {
-        let _ = channel.set_env(true, key, value).await;
+        if channel.set_env(true, key, value).await.is_err() {
+            env_via_channel = false;
+            break;
+        }
     }
 
     // Request PTY with specified size
@@ -275,14 +291,43 @@ where
         .await
         .map_err(io::Error::other)?;
 
+    let cmd = if family == SshFamily::Windows && !environment.is_empty() {
+        // Always inline env vars on Windows: `set_env` (SSH env channel request)
+        // returns Ok but Windows OpenSSH silently ignores the variable.
+        wrap_with_inline_env(cmd, &environment, family)
+    } else if !env_via_channel && !environment.is_empty() {
+        wrap_with_inline_env(cmd, &environment, family)
+    } else {
+        cmd.to_string()
+    };
+
+    // Wrap command with cd if current_dir is set
+    let effective_cmd = wrap_with_current_dir(&cmd, current_dir.as_ref(), family);
+
     // Run the command (or request a shell if cmd is empty)
-    if cmd.is_empty() {
+    if effective_cmd.is_empty() {
         channel
             .request_shell(true)
             .await
             .map_err(io::Error::other)?;
+
+        // If an interactive shell was requested with current_dir, send cd as
+        // initial input so the shell starts in the right directory.
+        if let Some(dir) = &current_dir {
+            let cd_cmd = match family {
+                SshFamily::Unix => format!("cd {}\n", shell_words::quote(dir.as_str())),
+                SshFamily::Windows => format!("cd /d {}\n", dir.as_str()),
+            };
+            channel
+                .data(std::io::Cursor::new(cd_cmd.into_bytes()))
+                .await
+                .map_err(io::Error::other)?;
+        }
     } else {
-        channel.exec(true, cmd).await.map_err(io::Error::other)?;
+        channel
+            .exec(true, effective_cmd.as_str())
+            .await
+            .map_err(io::Error::other)?;
     }
 
     let id = rand::random();
@@ -429,6 +474,65 @@ where
         killer: kill_tx,
         resizer: resize_tx,
     })
+}
+
+/// Inlines environment variables into the command string.
+///
+/// When SSH `set_env` channel requests are rejected, this wraps the command so
+/// that env vars are set inline before the user's command runs.
+///
+/// On Windows, uses `set "K=V"&& call <cmd>` with `%` → `%%` escaping.
+/// On Unix, uses `export K='value' && <cmd>` with `shell_words::quote`.
+fn wrap_with_inline_env(cmd: &str, env: &Environment, family: SshFamily) -> String {
+    if cmd.is_empty() || env.is_empty() {
+        return cmd.to_string();
+    }
+    match family {
+        SshFamily::Windows => {
+            let mut prefix = String::new();
+            for (key, value) in env.iter() {
+                // Use `set "KEY=VALUE"` quoting to protect cmd.exe metacharacters
+                // (&, |, >, <, spaces) in values. Escape `%` → `%%` to prevent
+                // premature variable expansion.
+                let escaped_value = value.replace('%', "%%");
+                prefix.push_str(&format!("set \"{key}={escaped_value}\"&& "));
+            }
+            // Escape % to %% in the original command to survive the outer cmd.exe's
+            // first parse pass. The `call` prefix triggers a second expansion where
+            // %VAR% references resolve to the values set above.
+            let escaped_cmd = cmd.replace('%', "%%");
+            format!("{prefix}call {escaped_cmd}")
+        }
+        SshFamily::Unix => {
+            let mut prefix = String::new();
+            for (key, value) in env.iter() {
+                prefix.push_str(&format!("export {}={} && ", key, shell_words::quote(value)));
+            }
+            format!("{prefix}{cmd}")
+        }
+    }
+}
+
+/// Wraps a command with `cd <dir> && <cmd>` when `current_dir` is set.
+///
+/// Returns the original command unchanged when `current_dir` is `None` or
+/// `cmd` is empty (empty means "request an interactive shell", which uses
+/// a different SSH channel mechanism).
+///
+/// OpenSSH sshd passes exec strings through the user's login shell, so
+/// `cd` and `&&` work on both Unix and Windows targets.
+fn wrap_with_current_dir(cmd: &str, current_dir: Option<&RemotePath>, family: SshFamily) -> String {
+    match current_dir {
+        Some(dir) if !cmd.is_empty() => match family {
+            SshFamily::Unix => {
+                format!("cd {} && {}", shell_words::quote(dir.as_str()), cmd)
+            }
+            SshFamily::Windows => {
+                format!("cd /d {} && {}", dir.as_str(), cmd)
+            }
+        },
+        _ => cmd.to_string(),
+    }
 }
 
 #[cfg(test)]

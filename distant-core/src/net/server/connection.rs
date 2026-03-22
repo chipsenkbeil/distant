@@ -962,6 +962,11 @@ mod tests {
 
         let response = task.await.unwrap();
         assert_eq!(response.payload, "hello");
+
+        // Await the connection task so it shuts down cleanly after the
+        // client drops its transport. Without this, nextest's leak-timeout
+        // fires before the server loop detects the disconnection.
+        let _ = _conn.await;
     }
 
     #[test(tokio::test)]
@@ -1022,6 +1027,9 @@ mod tests {
         });
 
         task.await.unwrap();
+
+        // Await the connection task so it shuts down cleanly.
+        let _ = _conn.await;
     }
 
     #[test(tokio::test)]

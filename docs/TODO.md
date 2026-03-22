@@ -34,18 +34,25 @@ integration may be incomplete/untested.
 ### TD-2: Windows CI SSH test flakiness
 
 **(Acknowledgement)** Windows CI SSH tests have intermittent failures tied to
-VM performance variance on `windows-latest` — mitigated with nextest retries
-(4x) and generous timeouts. Historical issues:
+VM performance variance on `windows-latest`. Mitigated with nextest retries
+(4x in the default profile) and generous timeouts. Root causes found and fixed:
+system sshd service conflicts, SFTP timeout defaults, and aggressive test read
+deadlines.
 
-- **Consistent 19/47 failures**: System sshd service conflicting with per-test
-  instances; resolved by stopping the system service in CI.
-- **SFTP timeout**: `russh-sftp` defaults to a 10-second per-request timeout.
-  Windows `sftp-server.exe` startup under CI load exceeded this. Resolved by
-  using `SftpSession::new_opts()` with a unified SSH timeout constant (60s).
-- **Test read deadlines**: proc_spawn tests had 5–15 second deadlines for
-  reading stdout/stderr, too aggressive for slow Windows VMs. Increased to 30s.
+### TD-3: `spawn --current-dir` flaky under parallel load
 
-### TD-3: Windows SSH copy cyclic-copy edge case
+**(Bug)** `should_support_current_dir` test intermittently gets empty
+stdout when running under parallel load. Root cause: `ProcDone` can arrive in
+a separate transport frame before `ProcStdout`, causing
+`process_incoming_responses` (in `distant-core/src/client/process.rs`) to
+return immediately and drop `stdout_tx` before the stdout data is received.
+
+- **Crate:** `distant-core`
+- **File:** `distant-core/src/client/process.rs` (`process_incoming_responses`)
+- **Fix:** After receiving `ProcDone`, continue draining the mailbox briefly
+  to collect any remaining `ProcStdout`/`ProcStderr` data before returning.
+
+### TD-4: Windows SSH copy cyclic-copy edge case
 
 **(Workaround)** `distant-ssh` Windows `copy` uses a cmd.exe conditional
 (`if exist "src\*"`) to dispatch between `copy /Y` (files) and
@@ -54,9 +61,9 @@ directory, which causes "Cannot perform a cyclic copy" when src and dst are
 sibling files in the same directory.
 
 - **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/utils.rs`
+- **File:** `distant-ssh/src/api.rs`
 
-### TD-4: Docker image pull has no CLI-visible progress
+### TD-5: Docker image pull has no CLI-visible progress
 
 **(Limitation)** Docker image pull has no CLI-visible progress — `info!` logs
 require `--log-level info` and go to the log file. Need a progress callback
@@ -65,20 +72,19 @@ during long plugin operations like image pulls.
 
 - **Crate:** `distant-docker`
 
-### TD-5: Terminal programs hang after termwiz removal
+### TD-6: Terminal programs hang in shell/ssh modes
 
-**(Bug)** Running `distant ssh` or `distant shell` after removing termwiz has
-resulted in programs like `nvim` (neovim) hanging and not displaying anything
-other than the cursor, or `ntop` (top on windows) hanging after the first
-visual display of the processes (no refresh, no time tick displayed).
+**(Bug)** Running `distant ssh` or `distant shell` causes programs like `nvim`
+(neovim) to hang with only a cursor visible, or `ntop` (top on Windows) to
+hang after the first display frame. Terminal infrastructure has been rebuilt
+with `TerminalSanitizer`, `TerminalFramebuffer`, and `PredictMode`
+(in `src/cli/commands/common/`), but full-screen applications using alternate
+screen buffers or relying on specific terminal capabilities may still have
+issues. Needs retesting with current code.
 
 - **Crate:** `distant` (binary), `distant-ssh`
-- **Context:** The PTY handling was changed when termwiz was removed. The
-  current pty implementation may not correctly handle full-screen terminal
-  applications that use alternate screen buffers or rely on specific terminal
-  capabilities.
 
-### TD-6: SSH config HostName not respected
+### TD-7: SSH config HostName not respected
 
 **(Bug)** Performing `distant ssh windows-vm` fails to connect to
 `ssh://windows-vm` with "failed to lookup address information: nodename nor
@@ -86,91 +92,41 @@ servname provided, or not known" even though regular `ssh windows-vm` works
 via `~/.ssh/config` with `HostName` directive.
 
 - **Crate:** `distant-ssh`
-- **File:** `distant-ssh/src/lib.rs` (connect logic, host resolution)
+- **File:** `distant-ssh/src/lib.rs` (connect logic, host resolution ~line 682)
 - **Context:** The SSH config parsing uses `ssh2-config-rs` and does resolve
-  `HostName` from config at line ~356 (`ssh_config.host_name.as_deref()`).
+  `HostName` from config at line ~682 (`ssh_config.host_name.as_deref()`).
   The issue may be that the config is not loaded or queried with the right
   host alias, or that the destination is parsed before config lookup happens.
-  This is also reported by external user in issue #251.
-- **Related:** [#251](#issue-251), [#252](#issue-252)
+
+### TD-8: Windows ConPTY nested PTY exit detection
+
+**(Bug)** `should_exit_on_eof_signal` test hangs on Windows for both Host and
+SSH backends. After `pty-interactive` exits via "exit" command, `distant shell`
+does not exit within 60s. The nested ConPTY chain (test ConPTY → distant shell
+→ server ConPTY → pty-interactive) doesn't reliably propagate process exit
+back to the outer ConPTY. Test is currently `#[ignore]` on Windows.
+
+- **Crate:** `distant` (binary)
+- **Files:** `src/cli/commands/common/terminal.rs`, `distant-host/src/api/process/pty.rs`
+- **Context:** ConPTY is known to not send EOF on stdout pipes after child
+  exit. The server has a 5s drain timeout for this, so ProcDone should still
+  arrive. The hang may be in `distant shell`'s crossterm event loop or tokio
+  runtime shutdown blocking on a ConPTY resource.
+
+### TD-9: Windows CI SSH exec channel output failures
+
+**(Bug)** Several `distant-ssh` integration tests fail on `windows-latest` CI:
+commands execute but produce empty stdout/stderr, or hang waiting for output.
+Tests pass on real Windows machines. Likely Windows OpenSSH exec channel
+behavior under CI VM constraints. Tests are skipped via
+`#[cfg_attr(all(windows, ci), ignore)]`.
+
+- **Crate:** `distant-ssh`
+- **Files:** `distant-ssh/tests/ssh/client.rs`, `distant-ssh/tests/ssh/ssh.rs`
 
 ---
 
 ## Open Issues
-
-### Issue #252: Does not use keys from agent or from `identity_files` option
-
-- **Type:** Bug
-- **URL:** https://github.com/chipsenkbeil/distant/issues/252
-- **Crate:** `distant-ssh`
-
-**Problem:** SSH authentication fails with "unhandled auth case;
-methods=PUBLIC_KEY, status={PUBLIC_KEY: Denied}" when using `identity_files`
-option or when an ssh-agent is running. Users must explicitly set
-`IdentityFile` in `~/.ssh/config` for keys to work.
-
-**Codebase context:** The `distant-ssh` crate loads keys directly from files
-only — there is no ssh-agent integration. Key loading logic is in
-`distant-ssh/src/lib.rs` (lines ~675-738) with a three-tier resolution:
-explicit CLI options → SSH config `IdentityFile` → default paths
-(`~/.ssh/id_ed25519`, `id_rsa`, `id_ecdsa`). The `identity_files` CLI option
-may not be correctly propagated or parsed (comma-separated paths from the
-`--options` string in `plugin.rs` line ~196).
-
-**Work needed:**
-1. Fix `identity_files` option parsing to correctly load specified keys
-2. Add ssh-agent support via `russh`'s agent client capabilities
-3. Related to [#238](#issue-238)
-
----
-
-### Issue #251: Fails to authenticate using public key if host is named in .ssh/config
-
-- **Type:** Bug
-- **URL:** https://github.com/chipsenkbeil/distant/issues/251
-
-**Problem:** Using a Host alias (e.g. `ssh://nostromo`) from `~/.ssh/config`
-fails with "Socket error: Connection reset by peer" or "unhandled auth case"
-unless there is also a `Host` entry matching the raw IP address. Works only
-after adding a `Host <IP>` entry alongside the named `Host` entry.
-
-**Codebase context:** SSH config is parsed via `ssh2-config-rs`. The
-`HostName` resolution at `distant-ssh/src/lib.rs:356` uses
-`ssh_config.host_name.as_deref().unwrap_or(host.as_ref())`. The issue may be
-that the config query doesn't match the alias correctly, or that the
-`IdentityFile` from the config is not applied when connecting via alias.
-
-**Work needed:**
-1. Ensure SSH config is queried by the host alias (not the resolved hostname)
-2. Verify all config directives (HostName, IdentityFile, User, Port) are
-   applied when connecting via alias
-3. Related to [#252](#issue-252), [TD-6](#td-6)
-
----
-
----
-
-### Issue #238: Does not use ssh-agent to retrieve passwords for ssh-keys
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/238
-
-**Problem:** `distant launch ssh://...` prompts for passphrase to decrypt SSH
-key even when ssh-agent is running and has the key loaded. Regular `ssh` does
-not prompt because it uses the agent.
-
-**Codebase context:** The `distant-ssh` crate uses `russh` for SSH, which
-does have agent client support (`russh-keys::agent`). However, the current
-authentication flow in `lib.rs` only loads keys from files via
-`decode_secret_key()` and never queries the SSH agent.
-
-**Work needed:**
-1. Add ssh-agent support using `russh-keys::agent::client`
-2. Try agent authentication before falling back to key file loading
-3. Handle agent forwarding if applicable
-4. Related to [#252](#issue-252)
-
----
 
 ### Issue #229: Distant client-server hangs when switching networks
 
@@ -291,28 +247,6 @@ may not be exposed to consumers of the client API or the neovim plugin.
 
 ---
 
-### Issue #186: Modernize release output
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/186
-
-**Problem:** Release binaries are larger than necessary and may require newer
-glibc than target systems provide.
-
-**Codebase context:** Release profile already uses `opt-level = "z"` and
-`strip = true`. UPX compression was tried but causes issues on macOS.
-
-**Work needed:**
-1. Use release profile to strip (already done with `strip = true`)
-2. Consider `panic = "abort"` to reduce binary size
-3. Support nightly builds with `-Zbuild-std` for further optimization
-4. Windows-specific size optimizations
-5. Build Linux releases on older distros (via Docker) to reduce glibc
-   version requirements
-6. Consider static linking or musl target for Linux
-
----
-
 ### Issue #177: Support optional checksum for reading & writing files
 
 - **Type:** Enhancement
@@ -353,49 +287,6 @@ exists.
 2. Evaluate impact on all backends (host, SSH, Docker)
 3. Consider backwards compatibility or version negotiation
 4. Decision should be made before 1.0
-
----
-
-### Issue #163: Support for Termux (Android)
-
-- **Type:** Enhancement / Refactor
-- **URL:** https://github.com/chipsenkbeil/distant/issues/163
-
-**Problem:** Building on Termux (`aarch64-linux-android`) fails due to
-`termios` crate incompatibility.
-
-**Codebase context:** The `termios` issue was from the old `termwiz`
-dependency which has since been removed. The nightly CI already builds for
-`aarch64-linux-android` target. The `pty` feature in `distant-host` is
-gated and can be disabled for Android. A Termux package was created upstream
-(termux-packages PR #15610).
-
-**Work needed:**
-1. Verify current codebase compiles for `aarch64-linux-android` without
-   `pty` feature (nightly CI already does this)
-2. Ensure the Termux package stays up to date with releases
-3. Document Termux installation and limitations (no PTY/shell support)
-4. This may already be resolved — verify and close if so
-
----
-
-### Issue #162: Cannot find known_hosts file if username has whitespace on Windows
-
-- **Type:** Bug
-- **URL:** https://github.com/chipsenkbeil/distant/issues/162
-
-**Problem:** On Windows, if the username contains spaces (e.g. `C:\Users\fa
-fa\.ssh\known_hosts`), distant cannot find the known_hosts file.
-
-**Codebase context:** The old `wezterm-ssh` backend was the culprit. Current
-`distant-ssh` uses `PathBuf` for known_hosts paths which handles spaces
-correctly. Host key verification is now implemented (TOFU via russh's
-`known_hosts` module). The path parsing in `plugin.rs` uses `PathBuf::from()`
-which handles spaces fine.
-
-**Work needed:**
-1. Test known_hosts file paths with Windows usernames containing spaces
-2. May be resolved by the backend switch — verify and close if so
 
 ---
 
@@ -503,29 +394,6 @@ behind feature flags.
 2. Split `distant-core` non-wasm code into optional features
 3. Create wasm-bindgen client that uses WebSocket transport
 4. Large scope — requires significant refactoring of core
-
----
-
-### Issue #7: Support transfer command
-
-- **Type:** Enhancement
-- **URL:** https://github.com/chipsenkbeil/distant/issues/7
-
-**Problem:** Want an scp-like `distant copy` command for local↔remote file
-transfer.
-
-**Codebase context:** Remote-to-remote `Copy` already exists in the
-protocol. `FileRead`/`FileWrite` can be composed client-side for
-local↔remote transfers but there's no dedicated CLI command. The CLI was
-refactored to support top-level `distant copy` (comment from author).
-
-**Work needed:**
-1. Add `distant copy <src> <dst>` CLI command parsing local vs remote paths
-   (e.g. `host:path/to/file` syntax)
-2. Implement client-side logic: read local + write remote (upload), or read
-   remote + write local (download)
-3. Support directory transfers with recursion
-4. Add progress indication for large transfers
 
 ---
 

@@ -6,9 +6,11 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::process::{kill_process_tree, set_process_group};
+use crate::process;
+use crate::sshd::{self, Sshd};
 
 use assert_cmd::Command;
+use assert_fs::prelude::*;
 use derive_more::{Deref, DerefMut};
 use std::sync::LazyLock;
 
@@ -29,7 +31,7 @@ const CHANNEL_BUFFER: usize = 100;
 
 #[derive(Deref, DerefMut)]
 pub struct CtxCommand<T> {
-    pub ctx: ManagerCtx,
+    pub ctx: HostManagerCtx,
 
     #[deref]
     #[deref_mut]
@@ -37,13 +39,13 @@ pub struct CtxCommand<T> {
 }
 
 /// Context for some listening distant server
-pub struct ManagerCtx {
+pub struct HostManagerCtx {
     manager: Child,
     server: Child,
     socket_or_pipe: String,
 }
 
-impl ManagerCtx {
+impl HostManagerCtx {
     /// Starts a manager and server so that clients can connect
     pub fn start() -> Self {
         eprintln!("Logging to {:?}", ROOT_LOG_DIR.as_path());
@@ -81,7 +83,7 @@ impl ManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -105,7 +107,7 @@ impl ManagerCtx {
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            set_process_group(&mut server_cmd);
+            process::set_process_group(&mut server_cmd);
             eprintln!("Spawning server cmd: {server_cmd:?}");
             server = match server_cmd.spawn() {
                 Ok(server) => Some(server),
@@ -168,7 +170,7 @@ impl ManagerCtx {
             for host in [
                 Host::Ipv4(Ipv4Addr::LOCALHOST),
                 Host::Ipv6(Ipv6Addr::LOCALHOST),
-                Host::Name("localhost".to_string()),
+                Host::Name("127.0.0.1".to_string()),
             ] {
                 credentials.host = host.clone();
                 // Connect manager to server
@@ -235,6 +237,11 @@ impl ManagerCtx {
             server: server.unwrap(),
             socket_or_pipe,
         }
+    }
+
+    /// Returns the socket/pipe path used by this manager.
+    pub fn socket_or_pipe(&self) -> &str {
+        &self.socket_or_pipe
     }
 
     /// Produces a new test command configured with a singular subcommand. Useful for root-level
@@ -423,7 +430,7 @@ fn resolve_bin_path() -> PathBuf {
 }
 
 /// Waits for the manager to be ready by polling for the socket/pipe.
-fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
+pub(crate) fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) {
     let start = Instant::now();
     let timeout = Duration::from_secs(2);
     let poll_interval = Duration::from_millis(25);
@@ -464,11 +471,11 @@ fn random_log_file(prefix: &str) -> PathBuf {
     ))
 }
 
-impl Drop for ManagerCtx {
+impl Drop for HostManagerCtx {
     /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
-        kill_process_tree(&mut self.server);
+        process::kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.server);
     }
 }
 
@@ -520,7 +527,7 @@ impl ManagerOnlyCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
-        set_process_group(&mut manager_cmd);
+        process::set_process_group(&mut manager_cmd);
         eprintln!("ManagerOnlyCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
         wait_for_manager_ready(&socket_or_pipe, &mut manager);
@@ -539,7 +546,7 @@ impl ManagerOnlyCtx {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        set_process_group(&mut server_cmd);
+        process::set_process_group(&mut server_cmd);
         eprintln!("ManagerOnlyCtx: Spawning server cmd: {server_cmd:?}");
         let mut server = server_cmd.spawn().expect("Failed to spawn server");
 
@@ -638,9 +645,489 @@ impl ManagerOnlyCtx {
 impl Drop for ManagerOnlyCtx {
     /// Kills manager, server, and all descendant processes upon drop.
     fn drop(&mut self) {
-        kill_process_tree(&mut self.manager);
-        kill_process_tree(&mut self.server);
+        process::kill_process_tree(&mut self.manager);
+        process::kill_process_tree(&mut self.server);
     }
+}
+
+/// Context that routes through the SSH plugin instead of a local distant server.
+///
+/// Starts a manager, spawns a per-test sshd via the existing [`Sshd`] harness,
+/// then connects the manager to the sshd with `distant connect ssh://...`. Tests
+/// using this context exercise the full SSH plugin path.
+pub struct SshManagerCtx {
+    manager: Child,
+
+    /// Kept alive so the sshd process and its temp directory persist for the test.
+    _sshd: Sshd,
+
+    socket_or_pipe: String,
+}
+
+impl SshManagerCtx {
+    /// Starts a manager, spawns an sshd, and connects them via SSH.
+    pub fn start() -> Self {
+        eprintln!("SshManagerCtx: Logging to {:?}", ROOT_LOG_DIR.as_path());
+        std::fs::create_dir_all(ROOT_LOG_DIR.as_path()).expect("Failed to create root log dir");
+
+        // Start the manager
+        let mut manager_cmd = StdCommand::new(bin_path());
+        manager_cmd
+            .arg("manager")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let socket_or_pipe = if cfg!(windows) {
+            format!("distant_test_{}", rand::random::<usize>())
+        } else {
+            std::env::temp_dir()
+                .join(format!("distant_test_{}.sock", rand::random::<usize>()))
+                .to_string_lossy()
+                .to_string()
+        };
+
+        if cfg!(windows) {
+            manager_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            manager_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        process::set_process_group(&mut manager_cmd);
+        eprintln!("SshManagerCtx: Spawning manager cmd: {manager_cmd:?}");
+        let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
+
+        // Spawn sshd with the same retry logic as the sshd() fixture
+        let sshd = sshd::sshd();
+
+        // Build SSH options for the connect command
+        let identity_file = sshd
+            .tmp
+            .child("id_ed25519")
+            .path()
+            .to_string_lossy()
+            .to_string();
+        let known_hosts = sshd
+            .tmp
+            .child("known_hosts")
+            .path()
+            .to_string_lossy()
+            .to_string();
+        let options = format!(
+            "identity_files={},user_known_hosts_files={},identities_only=true",
+            identity_file, known_hosts,
+        );
+        let destination = format!("ssh://{}@127.0.0.1:{}", *sshd::USERNAME, sshd.port);
+
+        // Connect manager to sshd via SSH with retry logic
+        for i in 1..=MAX_RETRY_ATTEMPTS {
+            let mut connect_cmd = StdCommand::new(bin_path());
+            let connect_log = random_log_file("connect");
+            connect_cmd
+                .arg("connect")
+                .arg("--log-file")
+                .arg(&connect_log)
+                .arg("--log-level")
+                .arg("trace")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            if cfg!(windows) {
+                connect_cmd
+                    .arg("--windows-pipe")
+                    .arg(socket_or_pipe.as_str());
+            } else {
+                connect_cmd
+                    .arg("--unix-socket")
+                    .arg(socket_or_pipe.as_str());
+            }
+
+            connect_cmd.arg(&destination).arg("--options").arg(&options);
+
+            eprintln!(
+                "SshManagerCtx: [{i}/{MAX_RETRY_ATTEMPTS}] Spawning connect cmd: {connect_cmd:?}"
+            );
+            let output = connect_cmd.output().expect("Failed to run connect command");
+
+            if output.status.success() {
+                eprintln!("SshManagerCtx: Connected via SSH! Proceeding with test...");
+                return Self {
+                    manager,
+                    _sshd: sshd,
+                    socket_or_pipe,
+                };
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("SshManagerCtx: [{i}/{MAX_RETRY_ATTEMPTS}] Connect failed: {stderr}");
+
+            // Log the connect log file for diagnostics
+            if let Ok(log_content) = std::fs::read_to_string(&connect_log)
+                && !log_content.trim().is_empty()
+            {
+                eprintln!("--- CONNECT LOG ---\n{log_content}\n-------------------");
+            }
+
+            if i == MAX_RETRY_ATTEMPTS {
+                panic!(
+                    "SshManagerCtx: Failed to connect to sshd after {MAX_RETRY_ATTEMPTS} attempts: {stderr}"
+                );
+            }
+
+            thread::sleep(RETRY_PAUSE_DURATION);
+        }
+
+        // Safety: the loop above either returns or panics
+        unreachable!()
+    }
+
+    /// Produces a new test command configured with a singular subcommand.
+    #[inline]
+    pub fn cmd(&self, subcommand: &'static str) -> Command {
+        self.new_assert_cmd(vec![subcommand])
+    }
+
+    /// Produces a new test command configured with an environment that can talk
+    /// to the remote server through the SSH-connected manager.
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
+        let mut cmd = Command::new(bin_path());
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        eprintln!("SshManagerCtx::new_assert_cmd: {cmd:?}");
+        cmd
+    }
+
+    /// Returns the binary path and argument list for a distant command.
+    /// Useful when an external library (e.g. `expectrl`) needs to spawn the process.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        let mut args: Vec<String> = Vec::new();
+
+        for subcommand in subcommands {
+            args.push(subcommand.to_string());
+        }
+
+        args.push("--log-file".to_string());
+        args.push(random_log_file("client").to_string_lossy().to_string());
+        args.push("--log-level".to_string());
+        args.push("trace".to_string());
+
+        if cfg!(windows) {
+            args.push("--windows-pipe".to_string());
+        } else {
+            args.push("--unix-socket".to_string());
+        }
+        args.push(self.socket_or_pipe.clone());
+
+        (bin_path(), args)
+    }
+
+    /// Configures a distant command with an environment that can talk to
+    /// the remote server through the SSH-connected manager, spawning it
+    /// as a child process.
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
+        let mut cmd = StdCommand::new(bin_path());
+
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        eprintln!("SshManagerCtx::new_std_cmd: {cmd:?}");
+        cmd
+    }
+}
+
+impl Drop for SshManagerCtx {
+    /// Kills the manager process. The sshd cleans itself up via its own Drop.
+    fn drop(&mut self) {
+        process::kill_process_tree(&mut self.manager);
+    }
+}
+
+#[fixture]
+pub fn ssh_manager_ctx() -> SshManagerCtx {
+    SshManagerCtx::start()
+}
+
+/// Context that launches a distant server on a remote host via SSH.
+///
+/// Starts a manager, spawns a per-test sshd via the existing [`Sshd`] harness,
+/// then uses `distant launch ssh://...` to upload and start a distant server on
+/// the remote host. Tests using this context exercise the full SSH launch path.
+pub struct SshLaunchCtx {
+    manager: Child,
+
+    /// Kept alive so the sshd process and its temp directory persist for the test.
+    _sshd: Sshd,
+
+    socket_or_pipe: String,
+}
+
+impl SshLaunchCtx {
+    /// Starts a manager, spawns an sshd, and launches a distant server via SSH.
+    pub fn start() -> Self {
+        eprintln!("SshLaunchCtx: Logging to {:?}", ROOT_LOG_DIR.as_path());
+        std::fs::create_dir_all(ROOT_LOG_DIR.as_path()).expect("Failed to create root log dir");
+
+        // Start the manager
+        let mut manager_cmd = StdCommand::new(bin_path());
+        manager_cmd
+            .arg("manager")
+            .arg("listen")
+            .arg("--log-file")
+            .arg(random_log_file("manager"))
+            .arg("--log-level")
+            .arg("trace")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let socket_or_pipe = if cfg!(windows) {
+            format!("distant_test_{}", rand::random::<usize>())
+        } else {
+            std::env::temp_dir()
+                .join(format!("distant_test_{}.sock", rand::random::<usize>()))
+                .to_string_lossy()
+                .to_string()
+        };
+
+        if cfg!(windows) {
+            manager_cmd
+                .arg("--windows-pipe")
+                .arg(socket_or_pipe.as_str());
+        } else {
+            manager_cmd
+                .arg("--unix-socket")
+                .arg(socket_or_pipe.as_str());
+        }
+
+        process::set_process_group(&mut manager_cmd);
+        eprintln!("SshLaunchCtx: Spawning manager cmd: {manager_cmd:?}");
+        let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
+        wait_for_manager_ready(&socket_or_pipe, &mut manager);
+
+        // Spawn sshd with the same retry logic as the sshd() fixture
+        let sshd = sshd::sshd();
+
+        // Build SSH options for the launch command
+        let identity_file = sshd
+            .tmp
+            .child("id_ed25519")
+            .path()
+            .to_string_lossy()
+            .to_string();
+        let known_hosts = sshd
+            .tmp
+            .child("known_hosts")
+            .path()
+            .to_string_lossy()
+            .to_string();
+        let options = format!(
+            "identity_files={},user_known_hosts_files={},identities_only=true",
+            identity_file, known_hosts,
+        );
+        let destination = format!("ssh://{}@127.0.0.1:{}", *sshd::USERNAME, sshd.port);
+
+        // Launch distant server on the remote host via SSH with retry logic
+        for i in 1..=MAX_RETRY_ATTEMPTS {
+            let mut launch_cmd = StdCommand::new(bin_path());
+            let launch_log = random_log_file("launch");
+            launch_cmd
+                .arg("launch")
+                .arg("--distant")
+                .arg(bin_path())
+                .arg("--log-file")
+                .arg(&launch_log)
+                .arg("--log-level")
+                .arg("trace")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            if cfg!(windows) {
+                launch_cmd
+                    .arg("--windows-pipe")
+                    .arg(socket_or_pipe.as_str());
+            } else {
+                launch_cmd.arg("--unix-socket").arg(socket_or_pipe.as_str());
+            }
+
+            launch_cmd.arg(&destination).arg("--options").arg(&options);
+
+            eprintln!(
+                "SshLaunchCtx: [{i}/{MAX_RETRY_ATTEMPTS}] Spawning launch cmd: {launch_cmd:?}"
+            );
+            let output = launch_cmd.output().expect("Failed to run launch command");
+
+            if output.status.success() {
+                eprintln!("SshLaunchCtx: Launched via SSH! Proceeding with test...");
+                return Self {
+                    manager,
+                    _sshd: sshd,
+                    socket_or_pipe,
+                };
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("SshLaunchCtx: [{i}/{MAX_RETRY_ATTEMPTS}] Launch failed: {stderr}");
+
+            // Log the launch log file for diagnostics
+            if let Ok(log_content) = std::fs::read_to_string(&launch_log)
+                && !log_content.trim().is_empty()
+            {
+                eprintln!("--- LAUNCH LOG ---\n{log_content}\n------------------");
+            }
+
+            if i == MAX_RETRY_ATTEMPTS {
+                panic!(
+                    "SshLaunchCtx: Failed to launch via sshd after {MAX_RETRY_ATTEMPTS} attempts: {stderr}"
+                );
+            }
+
+            thread::sleep(RETRY_PAUSE_DURATION);
+        }
+
+        // Safety: the loop above either returns or panics
+        unreachable!()
+    }
+
+    /// Produces a new test command configured with a singular subcommand.
+    #[inline]
+    pub fn cmd(&self, subcommand: &'static str) -> Command {
+        self.new_assert_cmd(vec![subcommand])
+    }
+
+    /// Produces a new test command configured with an environment that can talk
+    /// to the remote server through the SSH-launched manager.
+    pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
+        let mut cmd = Command::new(bin_path());
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        eprintln!("SshLaunchCtx::new_assert_cmd: {cmd:?}");
+        cmd
+    }
+
+    /// Returns the binary path and argument list for a distant command.
+    /// Useful when an external library (e.g. `expectrl`) needs to spawn the process.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        let mut args: Vec<String> = Vec::new();
+
+        for subcommand in subcommands {
+            args.push(subcommand.to_string());
+        }
+
+        args.push("--log-file".to_string());
+        args.push(random_log_file("client").to_string_lossy().to_string());
+        args.push("--log-level".to_string());
+        args.push("trace".to_string());
+
+        if cfg!(windows) {
+            args.push("--windows-pipe".to_string());
+        } else {
+            args.push("--unix-socket".to_string());
+        }
+        args.push(self.socket_or_pipe.clone());
+
+        (bin_path(), args)
+    }
+
+    /// Configures a distant command with an environment that can talk to
+    /// the remote server through the SSH-launched manager, spawning it
+    /// as a child process.
+    pub fn new_std_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> StdCommand {
+        let mut cmd = StdCommand::new(bin_path());
+
+        for subcommand in subcommands {
+            cmd.arg(subcommand);
+        }
+
+        cmd.arg("--log-file")
+            .arg(random_log_file("client"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            cmd.arg("--windows-pipe").arg(self.socket_or_pipe.as_str());
+        } else {
+            cmd.arg("--unix-socket").arg(self.socket_or_pipe.as_str());
+        }
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        eprintln!("SshLaunchCtx::new_std_cmd: {cmd:?}");
+        cmd
+    }
+}
+
+impl Drop for SshLaunchCtx {
+    /// Kills the manager process. The sshd cleans itself up via its own Drop.
+    fn drop(&mut self) {
+        process::kill_process_tree(&mut self.manager);
+    }
+}
+
+#[fixture]
+pub fn ssh_launch_ctx() -> SshLaunchCtx {
+    SshLaunchCtx::start()
 }
 
 #[fixture]
@@ -649,24 +1136,24 @@ pub fn manager_only_ctx() -> ManagerOnlyCtx {
 }
 
 #[fixture]
-pub fn ctx() -> ManagerCtx {
-    ManagerCtx::start()
+pub fn ctx() -> HostManagerCtx {
+    HostManagerCtx::start()
 }
 
 #[fixture]
-pub fn lsp_cmd(ctx: ManagerCtx) -> CtxCommand<Command> {
+pub fn lsp_cmd(ctx: HostManagerCtx) -> CtxCommand<Command> {
     let cmd = ctx.new_assert_cmd(vec!["lsp"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn action_std_cmd(ctx: ManagerCtx) -> CtxCommand<StdCommand> {
+pub fn action_std_cmd(ctx: HostManagerCtx) -> CtxCommand<StdCommand> {
     let cmd = ctx.new_std_cmd(vec!["action"]);
     CtxCommand { ctx, cmd }
 }
 
 #[fixture]
-pub fn api_process(ctx: ManagerCtx) -> CtxCommand<ApiProcess> {
+pub fn api_process(ctx: HostManagerCtx) -> CtxCommand<ApiProcess> {
     let child = ctx
         .new_std_cmd(vec!["api"])
         .spawn()

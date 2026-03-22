@@ -4,7 +4,10 @@
 //! group and kill entire process trees, preventing leaked handles detected
 //! by nextest.
 
-use std::process::Child;
+use std::io;
+use std::mem::ManuallyDrop;
+use std::ops;
+use std::process::{Child, Command, Output, Stdio};
 
 /// Configures a command to spawn in its own process group.
 ///
@@ -100,4 +103,81 @@ pub fn kill_process_tree(child: &mut Child) {
     }
 
     let _ = child.wait();
+}
+
+/// RAII wrapper around a child process that ensures cleanup on drop.
+///
+/// When a `TestChild` is dropped — including during a test panic unwind — it
+/// kills the wrapped process and all of its descendants via [`kill_process_tree`],
+/// then waits for the direct child to exit. This prevents leaked processes from
+/// causing nextest handle-leak failures or accumulating between test runs.
+///
+/// Use [`Deref`]/[`DerefMut`] to access the underlying [`Child`] fields
+/// (`.stdin`, `.stdout`, `.stderr`) and methods (`.try_wait()`, etc.).
+pub struct TestChild {
+    inner: ManuallyDrop<Child>,
+}
+
+impl TestChild {
+    /// Spawns a command as a new child process with piped stdio.
+    ///
+    /// The command is configured to run in its own process group (on Unix) so
+    /// that [`kill_process_tree`] can reliably kill all descendants. All three
+    /// stdio handles are piped for test inspection.
+    pub fn spawn(cmd: &mut Command) -> io::Result<Self> {
+        set_process_group(cmd);
+        let child = cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::piped())
+            .spawn()?;
+
+        Ok(Self {
+            inner: ManuallyDrop::new(child),
+        })
+    }
+
+    /// Consumes the wrapper and waits for the child to finish, collecting its
+    /// output.
+    ///
+    /// This bypasses the kill-on-drop behavior, allowing the child to exit
+    /// naturally.
+    pub fn wait_with_output(mut self) -> io::Result<Output> {
+        // SAFETY: We take ownership of the inner Child before forgetting self,
+        // so Drop will not run and no double-free occurs.
+        let child = unsafe { ManuallyDrop::take(&mut self.inner) };
+        std::mem::forget(self);
+        child.wait_with_output()
+    }
+
+    /// Explicitly kills the child process tree and consumes the wrapper.
+    ///
+    /// Equivalent to the automatic cleanup on drop, but makes the intent
+    /// explicit.
+    pub fn kill(self) {
+        drop(self);
+    }
+}
+
+impl ops::Deref for TestChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.inner
+    }
+}
+
+impl ops::DerefMut for TestChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.inner
+    }
+}
+
+impl Drop for TestChild {
+    fn drop(&mut self) {
+        // SAFETY: This runs exactly once during drop. After taking, the
+        // ManuallyDrop is consumed and no further access occurs.
+        let mut child = unsafe { ManuallyDrop::take(&mut self.inner) };
+        kill_process_tree(&mut child);
+    }
 }

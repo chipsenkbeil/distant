@@ -30,6 +30,7 @@ pub struct ExecOutput {
     pub success: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    pub exit_code: Option<u32>,
 }
 
 impl std::fmt::Debug for ExecOutput {
@@ -46,6 +47,8 @@ impl std::fmt::Debug for ExecOutput {
             s.field("stdout", &self.stdout)
                 .field("stderr", &self.stderr);
         }
+
+        s.field("exit_code", &self.exit_code);
 
         s.finish()
     }
@@ -183,6 +186,7 @@ async fn execute_output_read_loop(
             success: exit_status.map(|s| s == 0).unwrap_or(false),
             stdout,
             stderr,
+            exit_code: exit_status,
         })
     };
 
@@ -602,6 +606,7 @@ mod tests {
             success: true,
             stdout: b"hello".to_vec(),
             stderr: b"world".to_vec(),
+            exit_code: None,
         };
         let debug_str = format!("{:#?}", output);
         assert!(
@@ -622,6 +627,7 @@ mod tests {
             success: false,
             stdout: b"out".to_vec(),
             stderr: b"err".to_vec(),
+            exit_code: None,
         };
         let debug_str = format!("{:?}", output);
         assert!(
@@ -637,6 +643,7 @@ mod tests {
             success: true,
             stdout: vec![0xff, 0xfe, 0x41],
             stderr: vec![0x42, 0xff],
+            exit_code: None,
         };
         let alt_debug = format!("{:#?}", output);
         // from_utf8_lossy should produce replacement characters
@@ -653,6 +660,7 @@ mod tests {
             success: true,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         let debug_str = format!("{:?}", output);
         assert!(
@@ -671,6 +679,7 @@ mod tests {
             success: false,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         let alt_debug = format!("{:#?}", output);
         assert!(
@@ -685,6 +694,7 @@ mod tests {
             success: true,
             stdout: b"line1\nline2\nline3".to_vec(),
             stderr: b"err1\nerr2".to_vec(),
+            exit_code: None,
         };
         let alt_debug = format!("{:#?}", output);
         assert!(
@@ -699,6 +709,7 @@ mod tests {
             success: true,
             stdout: b"ok".to_vec(),
             stderr: vec![],
+            exit_code: None,
         };
         let debug = format!("{:?}", output);
         assert!(
@@ -715,11 +726,13 @@ mod tests {
             success: true,
             stdout: b"hello".to_vec(),
             stderr: b"world".to_vec(),
+            exit_code: None,
         };
         let b = ExecOutput {
             success: true,
             stdout: b"hello".to_vec(),
             stderr: b"world".to_vec(),
+            exit_code: None,
         };
         assert_eq!(a, b);
     }
@@ -730,11 +743,13 @@ mod tests {
             success: true,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         let b = ExecOutput {
             success: false,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         assert_ne!(a, b);
     }
@@ -745,11 +760,13 @@ mod tests {
             success: true,
             stdout: b"abc".to_vec(),
             stderr: vec![],
+            exit_code: None,
         };
         let b = ExecOutput {
             success: true,
             stdout: b"xyz".to_vec(),
             stderr: vec![],
+            exit_code: None,
         };
         assert_ne!(a, b);
     }
@@ -760,11 +777,13 @@ mod tests {
             success: true,
             stdout: vec![],
             stderr: b"err1".to_vec(),
+            exit_code: None,
         };
         let b = ExecOutput {
             success: true,
             stdout: vec![],
             stderr: b"err2".to_vec(),
+            exit_code: None,
         };
         assert_ne!(a, b);
     }
@@ -775,6 +794,7 @@ mod tests {
             success: true,
             stdout: b"output data".to_vec(),
             stderr: b"error data".to_vec(),
+            exit_code: None,
         };
         let cloned = original.clone();
         assert_eq!(original, cloned);
@@ -789,6 +809,7 @@ mod tests {
             success: false,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         assert!(!output.success);
         assert!(output.stdout.is_empty());
@@ -802,6 +823,7 @@ mod tests {
             success: true,
             stdout: big_stdout.clone(),
             stderr: vec![],
+            exit_code: None,
         };
         assert_eq!(output.stdout.len(), 10_000);
         assert_eq!(output.stdout, big_stdout);
@@ -813,6 +835,7 @@ mod tests {
             success: true,
             stdout: b"readable text".to_vec(),
             stderr: b"error text".to_vec(),
+            exit_code: None,
         };
         let alt_debug = format!("{:#?}", output);
         assert!(
@@ -833,6 +856,7 @@ mod tests {
             success: true,
             stdout: vec![72, 105], // "Hi"
             stderr: vec![],
+            exit_code: None,
         };
         let normal_debug = format!("{:?}", output);
         assert!(
@@ -848,6 +872,7 @@ mod tests {
             success: true,
             stdout: b"data".to_vec(),
             stderr: b"err".to_vec(),
+            exit_code: None,
         };
         assert_eq!(a, a);
     }
@@ -858,6 +883,7 @@ mod tests {
             success: true,
             stdout: b"original".to_vec(),
             stderr: vec![],
+            exit_code: None,
         };
         let mut cloned = original.clone();
         cloned.stdout = b"modified".to_vec();
@@ -876,6 +902,7 @@ mod tests {
             success: true,
             stdout: vec![0x00, 0x01, 0x02, 0xff, 0xfe],
             stderr: vec![0xde, 0xad, 0xbe, 0xef],
+            exit_code: None,
         };
         assert_eq!(output.stdout.len(), 5);
         assert_eq!(output.stderr.len(), 4);
@@ -887,6 +914,7 @@ mod tests {
             success: false,
             stdout: b"partial output".to_vec(),
             stderr: b"command failed with exit code 1".to_vec(),
+            exit_code: None,
         };
         assert!(!output.success);
         assert!(!output.stdout.is_empty());
@@ -1004,6 +1032,7 @@ mod tests {
             success: true,
             stdout: "unicode content".as_bytes().to_vec(),
             stderr: "error message".as_bytes().to_vec(),
+            exit_code: None,
         };
         let alt_debug = format!("{:#?}", output);
         assert!(
@@ -1018,6 +1047,7 @@ mod tests {
             success: true,
             stdout: vec![],
             stderr: vec![],
+            exit_code: None,
         };
         let debug = format!("{:?}", output);
         assert!(
@@ -1032,6 +1062,7 @@ mod tests {
             success: false,
             stdout: b"test".to_vec(),
             stderr: b"err".to_vec(),
+            exit_code: None,
         };
         let b = a.clone();
         assert_eq!(a, b);
@@ -1044,6 +1075,7 @@ mod tests {
             success: true,
             stdout: b"x".to_vec(),
             stderr: vec![],
+            exit_code: None,
         };
         let b = a.clone();
         let c = b.clone();

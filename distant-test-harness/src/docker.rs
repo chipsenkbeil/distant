@@ -4,8 +4,10 @@
 //! for obtaining [`Client`] instances connected to Docker containers.
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command as StdCommand, Stdio};
-use std::time::Duration;
+
+use tokio::process::Command as TokioCommand;
 
 use assert_cmd::Command;
 use derive_more::{Deref, DerefMut};
@@ -14,7 +16,11 @@ use distant_docker::{Docker, DockerClient, DockerOpts};
 use log::*;
 use rstest::*;
 
-use crate::manager::bin_path;
+use crate::manager::{self, bin_path};
+use crate::process;
+
+/// Docker image used for building test binaries inside containers.
+const DOCKER_BUILD_IMAGE: &str = "rust:1.88-slim";
 
 /// Checks whether a Linux Docker daemon is available.
 ///
@@ -89,6 +95,88 @@ impl DockerContainer {
     /// Delegates to [`DockerClient::exec_cmd`].
     pub async fn exec(&self, cmd: &[&str]) -> io::Result<()> {
         self.client.exec_cmd(&self.name, cmd).await
+    }
+
+    /// Upload a local file into the container and make it executable.
+    ///
+    /// Uses `docker cp` to copy the file and `chmod +x` to set the executable bit.
+    pub async fn upload_binary(&self, local_path: &Path, remote_path: &str) -> io::Result<()> {
+        // Ensure the parent directory exists
+        if let Some(parent) = Path::new(remote_path).parent() {
+            let parent_str = parent.to_string_lossy();
+            if !parent_str.is_empty() && parent_str != "/" {
+                let _ = self.exec(&["mkdir", "-p", &parent_str]).await;
+            }
+        }
+
+        let dest = format!("{}:{}", self.name, remote_path);
+        let status = TokioCommand::new("docker")
+            .args(["cp", &local_path.to_string_lossy(), &dest])
+            .status()
+            .await?;
+
+        if !status.success() {
+            return Err(io::Error::other(format!(
+                "docker cp to {} failed",
+                remote_path
+            )));
+        }
+
+        self.exec(&["chmod", "+x", remote_path]).await
+    }
+
+    /// Detect the container's architecture via `uname -m`.
+    async fn container_arch(&self) -> io::Result<String> {
+        let output = TokioCommand::new("docker")
+            .args(["exec", &self.name, "uname", "-m"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(io::Error::other("Failed to detect container architecture"));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Maps a `uname -m` value to a Rust target triple for cross-compilation.
+    fn target_triple_for_arch(arch: &str) -> io::Result<&'static str> {
+        match arch {
+            "x86_64" => Ok("x86_64-unknown-linux-gnu"),
+            "aarch64" => Ok("aarch64-unknown-linux-gnu"),
+            other => Err(io::Error::other(format!(
+                "Unsupported container architecture: {other}"
+            ))),
+        }
+    }
+
+    /// Build a test harness binary for this container and upload it.
+    ///
+    /// Tries cross-compilation with `--target` first (fast if a cross-linker
+    /// is installed or the host already matches). Falls back to building inside
+    /// a [`DOCKER_BUILD_IMAGE`] Docker container with a minimal generated project.
+    ///
+    /// Returns the remote path where the binary was placed (`/usr/local/bin/<name>`).
+    pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
+        let arch = self.container_arch().await?;
+        let triple = Self::target_triple_for_arch(&arch)?;
+
+        // Fast path: try cross-compile (works natively on matching Linux hosts,
+        // or when a cross-linker like `aarch64-linux-gnu-gcc` is installed)
+        let local_path = match crate::exe::build_harness_bin(bin_name, Some(triple)).await {
+            Ok(path) => {
+                log::info!("Cross-compiled {bin_name} for {triple}");
+                path
+            }
+            Err(e) => {
+                log::info!("Cross-compile failed ({e}), falling back to Docker build");
+                build_in_docker(bin_name).await?
+            }
+        };
+
+        let remote_path = format!("/usr/local/bin/{bin_name}");
+        self.upload_binary(&local_path, &remote_path).await?;
+        Ok(remote_path)
     }
 }
 
@@ -203,6 +291,137 @@ pub async fn client_with_tunnel_tools(
     })
 }
 
+/// Returns the minimal Cargo.toml content for a standalone binary.
+///
+/// Each test binary only needs a fraction of the dependencies that the full
+/// `distant-test-harness` crate pulls in. Building a minimal project inside
+/// Docker is dramatically faster than compiling the entire workspace.
+///
+/// Returns a `String` so that templates can be built dynamically.
+fn minimal_cargo_toml(bin_name: &str) -> String {
+    let deps = match bin_name {
+        "pty-echo" => "",
+        "pty-password" => "rpassword = \"7\"\n",
+        "pty-interactive" => "ctrlc = \"3\"\nrpassword = \"7\"\n",
+        "tcp-echo-server" => {
+            "tokio = { version = \"1\", features = [\"net\", \"io-util\", \"time\", \"macros\", \"rt-multi-thread\"] }\n"
+        }
+        "tcp-to-stdio" => {
+            "tokio = { version = \"1\", features = [\"net\", \"io-util\", \"io-std\", \"macros\", \"rt-multi-thread\"] }\n"
+        }
+        _ => panic!("unknown test binary: {bin_name}"),
+    };
+
+    let mut toml = format!(
+        "\
+[package]
+name = \"{bin_name}\"
+version = \"0.0.0\"
+edition = \"2024\"
+"
+    );
+
+    if !deps.is_empty() {
+        toml.push_str("\n[dependencies]\n");
+        toml.push_str(deps);
+    }
+
+    toml.push_str(&format!(
+        "\n[[bin]]\nname = \"{bin_name}\"\npath = \"main.rs\"\n"
+    ));
+
+    toml
+}
+
+/// Returns the source file path for a test binary (underscore-named in src/bin/).
+fn bin_source_path(bin_name: &str) -> PathBuf {
+    let file_name = format!("{}.rs", bin_name.replace('-', "_"));
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("bin")
+        .join(file_name)
+}
+
+/// Builds a test binary inside Docker using a minimal generated Cargo project.
+///
+/// Instead of compiling the entire distant workspace, this creates a tiny project
+/// with only the dependencies the binary actually needs (e.g., just `tokio` for
+/// tcp-echo-server). The result is cached on disk so subsequent runs are instant.
+async fn build_in_docker(bin_name: &str) -> io::Result<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().expect("workspace root");
+
+    let cache_dir = workspace_root.join("target").join("docker-build");
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let output_path = cache_dir.join(bin_name);
+
+    if output_path.exists() {
+        log::info!(
+            "Using cached Docker-built binary: {}",
+            output_path.display()
+        );
+        return Ok(output_path);
+    }
+
+    log::info!("Building {bin_name} inside Docker (minimal project)...");
+
+    // Create a temp directory with a minimal Cargo project
+    let build_dir = cache_dir.join(format!("{bin_name}-src"));
+    std::fs::create_dir_all(&build_dir)?;
+    std::fs::write(build_dir.join("Cargo.toml"), minimal_cargo_toml(bin_name))?;
+    std::fs::copy(bin_source_path(bin_name), build_dir.join("main.rs"))?;
+
+    let build_dir_str = build_dir.to_string_lossy();
+    let cache_dir_str = cache_dir.to_string_lossy();
+    let target_dir = "/tmp/build";
+
+    // Copy source to a writable location inside the container (Cargo needs to
+    // write Cargo.lock), then build and copy the result to the output volume.
+    let build_and_copy = format!(
+        "cp -r /src /build && cd /build \
+         && cargo build --release --target-dir {target_dir} \
+         && cp {target_dir}/release/{bin_name} /out/{bin_name}"
+    );
+
+    let status = TokioCommand::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &format!("{build_dir_str}:/src:ro"),
+            "-v",
+            &format!("{cache_dir_str}:/out"),
+            "-v",
+            "distant-docker-cargo-cache:/usr/local/cargo/registry",
+            "-w",
+            "/src",
+            DOCKER_BUILD_IMAGE,
+            "sh",
+            "-c",
+            &build_and_copy,
+        ])
+        .status()
+        .await?;
+
+    let _ = std::fs::remove_dir_all(&build_dir);
+
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "Docker build of {bin_name} failed"
+        )));
+    }
+
+    if !output_path.exists() {
+        return Err(io::Error::other(format!(
+            "Docker build completed but {} not found",
+            output_path.display()
+        )));
+    }
+
+    Ok(output_path)
+}
+
 /// Generate a short random suffix for container names.
 fn random_suffix() -> String {
     use rand::Rng;
@@ -211,7 +430,7 @@ fn random_suffix() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-fn random_log_file(prefix: &str) -> std::path::PathBuf {
+fn random_log_file(prefix: &str) -> PathBuf {
     let log_dir = std::env::temp_dir().join("distant");
     std::fs::create_dir_all(&log_dir).ok();
     log_dir.join(format!("docker-{}.{}.log", prefix, rand::random::<u16>()))
@@ -268,12 +487,10 @@ impl DockerManagerCtx {
                 .arg(socket_or_pipe.as_str());
         }
 
+        process::set_process_group(&mut manager_cmd);
         eprintln!("DockerManagerCtx: Spawning manager cmd: {manager_cmd:?}");
         let mut manager = manager_cmd.spawn().expect("Failed to spawn manager");
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(Some(status)) = manager.try_wait() {
-            panic!("Manager exited ({}): {:?}", status.success(), status.code());
-        }
+        manager::wait_for_manager_ready(&socket_or_pipe, &mut manager);
 
         // Connect to the Docker container via the manager
         let destination = format!("docker://{}", container.name);
@@ -323,6 +540,11 @@ impl DockerManagerCtx {
         &self.container.name
     }
 
+    /// Returns a reference to the underlying [`DockerContainer`].
+    pub fn container(&self) -> &DockerContainer {
+        &self.container
+    }
+
     /// Produces a new test command configured with subcommands.
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
         let mut cmd = Command::new(bin_path());
@@ -342,6 +564,33 @@ impl DockerManagerCtx {
         }
 
         cmd
+    }
+
+    /// Returns the binary path and argument list for running a distant
+    /// subcommand through this context's manager.
+    pub fn cmd_parts<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = &'a str>,
+    ) -> (PathBuf, Vec<String>) {
+        let mut args: Vec<String> = Vec::new();
+
+        for subcommand in subcommands {
+            args.push(subcommand.to_string());
+        }
+
+        args.push("--log-file".to_string());
+        args.push(random_log_file("client").to_string_lossy().to_string());
+        args.push("--log-level".to_string());
+        args.push("trace".to_string());
+
+        if cfg!(windows) {
+            args.push("--windows-pipe".to_string());
+        } else {
+            args.push("--unix-socket".to_string());
+        }
+        args.push(self.socket_or_pipe.clone());
+
+        (bin_path(), args)
     }
 
     /// Produces a new [`StdCommand`] configured with subcommands.
@@ -373,8 +622,7 @@ impl DockerManagerCtx {
 
 impl Drop for DockerManagerCtx {
     fn drop(&mut self) {
-        let _ = self.manager.kill();
-        let _ = self.manager.wait();
+        process::kill_process_tree(&mut self.manager);
         // container cleanup handled by DockerContainer::drop
     }
 }

@@ -44,7 +44,7 @@ fn distant_manager_help_should_only_show_daemon_commands() {
     let output = cmd.args(["manager", "--help"]).assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    for cmd in ["listen", "version", "service"] {
+    for cmd in ["listen", "version"] {
         assert!(
             stdout.contains(cmd),
             "Expected manager help to contain '{cmd}', got:\n{stdout}"

@@ -2,70 +2,86 @@
 //!
 //! Tests checking whether a path exists on the filesystem.
 
-use assert_fs::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_true_if_exists(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_output_true_if_file_exists(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("exists");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "exists-test.txt");
+    ctx.cli_write(&path, "exists");
 
-    // Create file
-    let file = temp.child("file");
-    file.touch().unwrap();
+    let output = ctx
+        .new_std_cmd(["fs", "exists"])
+        .arg(&path)
+        .output()
+        .expect("Failed to run fs exists");
 
-    // distant fs exists {path}
-    ctx.new_assert_cmd(["fs", "exists"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout("true\n");
+    assert!(
+        output.status.success(),
+        "fs exists should succeed for existing file, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("true"),
+        "Expected 'true' for existing file, got: {stdout}"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_false_if_not_exists(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_output_false_if_not_exists(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("exists-false");
+    ctx.cli_mkdir(&dir);
+    let path = ctx.child_path(&dir, "nonexistent");
 
-    // Don't create file
-    let file = temp.child("file");
+    let output = ctx
+        .new_std_cmd(["fs", "exists"])
+        .arg(&path)
+        .output()
+        .expect("Failed to run fs exists");
 
-    // distant fs exists {path}
-    ctx.new_assert_cmd(["fs", "exists"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout("false\n");
+    assert!(output.status.success(), "fs exists should always exit zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("false"),
+        "Expected 'false' for nonexistent file, got: {stdout}"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_output_true_for_directory(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_output_true_for_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("exists-dir");
+    ctx.cli_mkdir(&dir);
 
-    let dir = temp.child("dir");
-    dir.create_dir_all().unwrap();
+    let output = ctx
+        .new_std_cmd(["fs", "exists"])
+        .arg(&dir)
+        .output()
+        .expect("Failed to run fs exists");
 
-    // distant fs exists {path}
-    ctx.new_assert_cmd(["fs", "exists"])
-        .arg(dir.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout("true\n");
-}
-
-#[rstest]
-#[test_log::test]
-fn should_always_exit_zero_for_false(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let file = temp.child("nonexistent");
-
-    // Even when path doesn't exist, exit code should be 0 (success)
-    ctx.new_assert_cmd(["fs", "exists"])
-        .arg(file.to_str().unwrap())
-        .assert()
-        .success()
-        .stdout("false\n");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("true"),
+        "Expected 'true' for existing directory, got: {stdout}"
+    );
 }

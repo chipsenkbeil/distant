@@ -72,7 +72,7 @@ Every feature must have tests at the appropriate tiers.
 - **Location:** `tests/cli/` directory
 - **Naming:** `should_<behavior>` or descriptive phrase — no `test_` prefix
 - **Attributes:** `#[rstest]` + `#[test_log::test]`
-- **Fixtures:** `ctx: ManagerCtx` for host, `docker_ctx: Option<DockerManagerCtx>`
+- **Fixtures:** `ctx: HostManagerCtx` for host, `docker_ctx: Option<DockerManagerCtx>`
   for Docker
 
 **CLI stdout/stderr rules:**

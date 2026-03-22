@@ -14,6 +14,9 @@ use crate::cli::common::ui::{Spinner, Ui};
 use crate::cli::common::{MsgReceiver, MsgSender};
 use crate::options::{Format, NetworkSettings};
 
+/// Timeout for connecting to the manager socket/pipe.
+const MANAGER_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct Client<T> {
     network: NetworkSettings,
     auth_handler: T,
@@ -62,6 +65,7 @@ impl<T: AuthHandler + Clone> Client<T> {
             for path in self.network.to_unix_socket_path_candidates() {
                 match NetClient::unix_socket(path)
                     .auth_handler(self.auth_handler.clone())
+                    .connect_timeout(MANAGER_CONNECT_TIMEOUT)
                     .config(ClientConfig {
                         reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
                             base: Duration::from_secs(1),
@@ -105,6 +109,7 @@ impl<T: AuthHandler + Clone> Client<T> {
             for name in self.network.to_windows_pipe_name_candidates() {
                 match NetClient::local_windows_pipe(name)
                     .auth_handler(self.auth_handler.clone())
+                    .connect_timeout(MANAGER_CONNECT_TIMEOUT)
                     .config(ClientConfig {
                         reconnect_strategy: ReconnectStrategy::ExponentialBackoff {
                             base: Duration::from_secs(1),

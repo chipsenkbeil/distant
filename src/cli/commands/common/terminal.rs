@@ -490,7 +490,7 @@ impl TerminalSanitizer {
 /// All three `Shell::spawn()` call sites (distant shell, distant spawn --pty,
 /// distant ssh) go through this struct, ensuring consistent terminal handling.
 pub struct TerminalSession {
-    _input_task: JoinHandle<()>,
+    input_task: JoinHandle<()>,
     link: RemoteProcessLink,
     framebuffer: Option<Arc<Mutex<TerminalFramebuffer>>>,
 }
@@ -554,7 +554,7 @@ impl TerminalSession {
         );
 
         Ok(Self {
-            _input_task: input_task,
+            input_task,
             link,
             framebuffer: Some(framebuffer),
         })
@@ -566,6 +566,7 @@ impl TerminalSession {
     /// disable any DEC private modes that may have been enabled by the
     /// remote host (mouse tracking, etc.).
     pub async fn shutdown(self) {
+        self.input_task.abort();
         self.link.shutdown().await;
 
         let _ = crossterm::terminal::disable_raw_mode();

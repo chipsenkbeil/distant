@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fmt, io, thread};
 
 use anyhow::Context;
@@ -42,10 +42,19 @@ const PORT_RANGE: (u16, u16) = (49152, 65535);
 pub static USERNAME: LazyLock<String> = LazyLock::new(|| whoami::username().unwrap_or_default());
 
 /// Time to wait after spawning sshd before continuing. Will check if still alive
-const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(300);
+const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(100);
 
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
+
+/// Maximum time to wait for sshd to accept TCP connections after spawning.
+const SSHD_READY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between TCP connection attempts when polling for sshd readiness.
+const SSHD_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Per-attempt TCP connect timeout when checking if sshd is ready.
+const SSHD_TCP_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Sets restrictive Windows ACLs on a file so that Windows OpenSSH accepts it.
 /// In admin contexts, removes inherited permissions and sets exact ACLs.
@@ -211,6 +220,7 @@ impl Default for SshdConfig {
         config.set_allow_tcp_forwarding(true);
         config.set_max_startups(500, None);
         config.set_strict_modes(false);
+        config.set_accept_env("*");
         config.set_log_level(SshdLogLevel::Debug3);
 
         config
@@ -311,6 +321,11 @@ impl SshdConfig {
     pub fn set_strict_modes(&mut self, yes: bool) {
         self.0
             .insert("StrictModes".to_string(), Self::yes_value(yes));
+    }
+
+    pub fn set_accept_env(&mut self, pattern: &str) {
+        self.0
+            .insert("AcceptEnv".to_string(), vec![pattern.to_string()]);
     }
 
     pub fn set_log_level(&mut self, log_level: SshdLogLevel) {
@@ -600,19 +615,38 @@ impl Sshd {
             )));
         }
 
-        // Pause for a little bit to make sure that the server didn't die due to an error
-        thread::sleep(Duration::from_millis(100));
+        // Poll for TCP connectivity instead of fixed sleeps. This detects
+        // actual readiness rather than hoping 200ms is enough.
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let deadline = Instant::now() + SSHD_READY_TIMEOUT;
+        let poll_interval = SSHD_READY_POLL_INTERVAL;
 
-        let child = match check(child).context("Sshd encountered problems (after 100ms)")? {
-            Ok(child) => child,
-            Err(x) => return Ok(Err(x)),
-        };
+        loop {
+            // Check if sshd crashed
+            let child_ref =
+                match check(child).context("Sshd encountered problems during startup")? {
+                    Ok(c) => c,
+                    Err(x) => return Ok(Err(x)),
+                };
+            child = child_ref;
 
-        // Pause for a little bit to make sure that the server didn't die due to an error
-        thread::sleep(Duration::from_millis(100));
+            // Try TCP connect to see if sshd is accepting connections
+            if TcpStream::connect_timeout(&addr, SSHD_TCP_CONNECT_TIMEOUT).is_ok() {
+                return Ok(Ok(child));
+            }
 
-        let result = check(child).context("Sshd encountered problems (after 200ms)")?;
-        Ok(result)
+            if Instant::now() >= deadline {
+                return Ok(Err((
+                    None,
+                    format!(
+                        "sshd did not accept TCP connections on port {port} within {}s",
+                        SSHD_READY_TIMEOUT.as_secs()
+                    ),
+                )));
+            }
+
+            thread::sleep(poll_interval);
+        }
     }
 
     /// Checks if still alive

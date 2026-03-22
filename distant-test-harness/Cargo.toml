@@ -27,6 +27,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 whoami = "2"
 which = "8"
+portable-pty = "0.9.0"
 rand = "0.8"
 rpassword = "7.4.0"
 ctrlc = "3"
@@ -49,6 +50,18 @@ path = "src/bin/pty_interactive.rs"
 [[bin]]
 name = "tcp-to-stdio"
 path = "src/bin/tcp_to_stdio.rs"
+
+[[bin]]
+name = "stdin-line"
+path = "src/bin/stdin_line.rs"
+
+[[bin]]
+name = "print-cwd"
+path = "src/bin/print_cwd.rs"
+
+[[bin]]
+name = "tcp-echo-server"
+path = "src/bin/tcp_echo_server.rs"
 
 [lints]
 workspace = true

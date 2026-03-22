@@ -4,6 +4,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use crate::cli::PredictMode;
+use crate::constants;
+use crate::constants::user::CACHE_FILE_PATH_STR;
 #[cfg(feature = "host")]
 use clap::Args;
 use clap::builder::TypedValueParser as _;
@@ -16,11 +19,6 @@ use distant_core::net::common::{ConnectionId, Map};
 #[cfg(feature = "host")]
 use distant_core::net::server::Shutdown;
 use distant_core::protocol::ChangeKind;
-use service_manager::ServiceManagerKind;
-
-use crate::cli::PredictMode;
-use crate::constants;
-use crate::constants::user::CACHE_FILE_PATH_STR;
 
 mod common;
 mod config;
@@ -265,7 +263,6 @@ impl Options {
                         *access = access.take().or(config.manager.access);
                         network.merge(config.manager.network);
                     }
-                    ManagerSubcommand::Service(_) => (),
                 }
             }
             #[cfg(feature = "host")]
@@ -1473,10 +1470,6 @@ fn parse_plugin_flag(s: &str) -> Result<(String, PathBuf), String> {
 /// Subcommands for `distant manager`.
 #[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
 pub enum ManagerSubcommand {
-    /// Interact with a manager being run by a service management platform
-    #[clap(subcommand)]
-    Service(ManagerServiceSubcommand),
-
     /// Listen for incoming requests as a manager
     Listen {
         /// Type of access to apply to created unix socket or windows pipe
@@ -1515,60 +1508,10 @@ impl ManagerSubcommand {
     #[inline]
     pub fn format(&self) -> Format {
         match self {
-            Self::Service(_) => Format::Shell,
             Self::Listen { .. } => Format::Shell,
             Self::Version { format, .. } => *format,
         }
     }
-}
-
-/// Subcommands for `distant manager service`.
-#[derive(Debug, PartialEq, Eq, Subcommand, IsVariant)]
-pub enum ManagerServiceSubcommand {
-    /// Start the manager as a service
-    Start {
-        /// Type of service manager used to run this service, defaulting to platform native
-        #[clap(long, value_enum)]
-        kind: Option<ServiceManagerKind>,
-
-        /// If specified, starts as a user-level service
-        #[clap(long)]
-        user: bool,
-    },
-
-    /// Stop the manager as a service
-    Stop {
-        #[clap(long, value_enum)]
-        kind: Option<ServiceManagerKind>,
-
-        /// If specified, stops a user-level service
-        #[clap(long)]
-        user: bool,
-    },
-
-    /// Install the manager as a service
-    Install {
-        #[clap(long, value_enum)]
-        kind: Option<ServiceManagerKind>,
-
-        /// If specified, installs as a user-level service
-        #[clap(long)]
-        user: bool,
-
-        /// Additional arguments to provide to the manager when started
-        #[clap(name = "ARGS", last = true)]
-        args: Vec<String>,
-    },
-
-    /// Uninstall the manager as a service
-    Uninstall {
-        #[clap(long, value_enum)]
-        kind: Option<ServiceManagerKind>,
-
-        /// If specified, uninstalls a user-level service
-        #[clap(long)]
-        user: bool,
-    },
 }
 
 /// Subcommands for `distant server`.
@@ -4555,104 +4498,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn distant_manager_service_should_support_merging_with_config() {
-        let mut options = Options {
-            quiet: false,
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: None,
-                log_level: None,
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Install {
-                    kind: None,
-                    user: false,
-                    args: Vec::new(),
-                },
-            )),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                quiet: false,
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Service(
-                    ManagerServiceSubcommand::Install {
-                        kind: None,
-                        user: false,
-                        args: Vec::new(),
-                    },
-                )),
-            }
-        );
-    }
-
-    #[test]
-    fn distant_manager_service_should_prioritize_explicit_cli_options_when_merging() {
-        let mut options = Options {
-            quiet: false,
-            config_path: None,
-            logging: LoggingSettings {
-                log_file: Some(PathBuf::from("cli-log-file")),
-                log_level: Some(LogLevel::Info),
-            },
-            command: DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Install {
-                    kind: None,
-                    user: false,
-                    args: Vec::new(),
-                },
-            )),
-        };
-
-        options.merge(Config {
-            manager: ManagerConfig {
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("config-log-file")),
-                    log_level: Some(LogLevel::Trace),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        assert_eq!(
-            options,
-            Options {
-                quiet: false,
-                config_path: None,
-                logging: LoggingSettings {
-                    log_file: Some(PathBuf::from("cli-log-file")),
-                    log_level: Some(LogLevel::Info),
-                },
-                command: DistantSubcommand::Manager(ManagerSubcommand::Service(
-                    ManagerServiceSubcommand::Install {
-                        kind: None,
-                        user: false,
-                        args: Vec::new(),
-                    },
-                )),
-            }
-        );
-    }
-
     #[cfg(feature = "host")]
     #[test]
     fn distant_server_listen_should_support_merging_with_config() {
@@ -5126,14 +4971,6 @@ mod tests {
             network: NetworkSettings::default(),
         });
         assert!(sub.format().is_json());
-
-        let sub = DistantSubcommand::Manager(ManagerSubcommand::Service(
-            ManagerServiceSubcommand::Start {
-                kind: None,
-                user: false,
-            },
-        ));
-        assert_eq!(sub.format(), Format::Shell);
     }
 
     // -------------------------------------------------------
@@ -5608,15 +5445,6 @@ mod tests {
         assert!(!cmd.is_listen());
     }
 
-    #[test]
-    fn manager_subcommand_is_listen_returns_false_for_service() {
-        let cmd = ManagerSubcommand::Service(ManagerServiceSubcommand::Start {
-            kind: None,
-            user: false,
-        });
-        assert!(!cmd.is_listen());
-    }
-
     // -------------------------------------------------------
     // GenerateSubcommand::format tests
     // -------------------------------------------------------
@@ -5961,87 +5789,6 @@ mod tests {
             }
             other => panic!("Expected Manager Listen with plugins, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn distant_manager_service_install_should_parse() {
-        let options =
-            Options::try_parse_from(["distant", "manager", "service", "install", "--user"])
-                .unwrap();
-        match options.command {
-            DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Install { user, kind, args },
-            )) => {
-                assert!(user);
-                assert!(kind.is_none());
-                assert!(args.is_empty());
-            }
-            other => panic!("Expected Manager Service Install, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn distant_manager_service_uninstall_should_parse() {
-        let options =
-            Options::try_parse_from(["distant", "manager", "service", "uninstall"]).unwrap();
-        match options.command {
-            DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Uninstall { user, kind },
-            )) => {
-                assert!(!user);
-                assert!(kind.is_none());
-            }
-            other => panic!("Expected Manager Service Uninstall, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn distant_manager_service_start_should_parse() {
-        let options = Options::try_parse_from(["distant", "manager", "service", "start"]).unwrap();
-        match options.command {
-            DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Start { user, kind },
-            )) => {
-                assert!(!user);
-                assert!(kind.is_none());
-            }
-            other => panic!("Expected Manager Service Start, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn distant_manager_service_stop_should_parse() {
-        let options = Options::try_parse_from(["distant", "manager", "service", "stop"]).unwrap();
-        match options.command {
-            DistantSubcommand::Manager(ManagerSubcommand::Service(
-                ManagerServiceSubcommand::Stop { user, kind },
-            )) => {
-                assert!(!user);
-                assert!(kind.is_none());
-            }
-            other => panic!("Expected Manager Service Stop, got {other:?}"),
-        }
-    }
-
-    // -------------------------------------------------------
-    // ManagerServiceSubcommand IsVariant
-    // -------------------------------------------------------
-    #[test]
-    fn manager_service_subcommand_is_variant() {
-        let start = ManagerServiceSubcommand::Start {
-            kind: None,
-            user: false,
-        };
-        assert!(start.is_start());
-        assert!(!start.is_stop());
-        assert!(!start.is_install());
-        assert!(!start.is_uninstall());
-
-        let stop = ManagerServiceSubcommand::Stop {
-            kind: None,
-            user: false,
-        };
-        assert!(stop.is_stop());
     }
 
     // -------------------------------------------------------

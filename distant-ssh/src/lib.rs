@@ -36,6 +36,7 @@ mod config;
 mod plugin;
 mod pool;
 mod process;
+mod search;
 mod utils;
 
 pub use plugin::SshPlugin;
@@ -47,6 +48,9 @@ use api::{SshApi, SshTunnelSharedState};
 use auth::{expand_tilde, format_methods};
 use config::ResolvedConfig;
 use pool::ChannelPool;
+
+/// Buffer capacity for the in-memory transport connecting the client and server halves.
+const INMEMORY_TRANSPORT_BUFFER_SIZE: usize = 100;
 
 /// Represents the family of the remote machine connected over SSH
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -1089,9 +1093,16 @@ impl Ssh {
     /// Converts into a distant client
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.pool, family, self.user.clone(), self.tunnel_state);
+        let search_tools = search::probe_search_tools(&self.pool).await;
+        let api = SshApi::new(
+            self.pool,
+            family,
+            self.user.clone(),
+            self.tunnel_state,
+            search_tools,
+        );
 
-        let (t1, t2) = InmemoryTransport::pair(100);
+        let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
             .handler(ApiServerHandler::new(api))
@@ -1115,9 +1126,16 @@ impl Ssh {
     /// Converts into a pair of distant client and server ref
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
-        let api = SshApi::new(self.pool, family, self.user.clone(), self.tunnel_state);
+        let search_tools = search::probe_search_tools(&self.pool).await;
+        let api = SshApi::new(
+            self.pool,
+            family,
+            self.user.clone(),
+            self.tunnel_state,
+            search_tools,
+        );
 
-        let (t1, t2) = InmemoryTransport::pair(100);
+        let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
             .handler(ApiServerHandler::new(api))

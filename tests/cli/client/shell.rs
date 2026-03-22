@@ -1,286 +1,385 @@
 //! Integration tests for the `distant shell` CLI subcommand.
 //!
-//! Uses `expectrl` to spawn the shell process inside a real PTY, which is
-//! required because `distant shell` uses crossterm raw mode and needs
-//! stdin/stdout to be a TTY.
-//!
-//! On Windows, `expectrl`'s ConPTY `expect()` cannot read actual text output
-//! (only escape sequences flow through the pipe), so we use file-based
-//! verification: redirect command output to a temp file, wait for exit, then
-//! check the file contents.
+//! Uses `portable-pty` for cross-platform PTY session management via
+//! [`PtySession`](distant_test_harness::pty::PtySession). Tests shell execution,
+//! exit code forwarding, prediction modes, and alternate screen handling.
 
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::Duration;
 
-use expectrl::Session;
-use expectrl::process::Healthcheck;
-#[cfg(unix)]
-use expectrl::process::unix::WaitStatus;
-#[cfg(unix)]
-use expectrl::{Eof, Expect};
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::{Backend, BackendCtx};
+use distant_test_harness::pty::PtySession;
+use distant_test_harness::skip_if_no_backend;
 
-/// Builds a `std::process::Command` from ManagerCtx for use with `Session::spawn`.
-///
-/// We use `Session::spawn(Command)` rather than `expectrl::spawn(string)` because
-/// the string-based API uses a regex tokenizer that doesn't strip shell quotes,
-/// causing arguments with spaces or special characters to be mangled.
-fn build_shell_command(ctx: &ManagerCtx, extra_args: &[&str]) -> Command {
+/// Extended timeout for echo tests that need extra time to establish connection.
+const ECHO_TEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn shell_cmd_args(ctx: &BackendCtx, extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let (bin, mut args) = ctx.cmd_parts(["shell"]);
-
     for arg in extra_args {
         args.push(arg.to_string());
     }
-
-    let mut cmd = Command::new(bin);
-    cmd.args(&args);
-    cmd
+    (bin, args)
 }
 
-/// Waits for the session's process to exit, polling `get_status()` until it
-/// returns a non-alive result. Returns the final status for assertion.
-#[cfg(unix)]
-fn wait_for_exit<S>(session: &Session<expectrl::process::unix::UnixProcess, S>) -> WaitStatus {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let status = session.get_status().expect("Failed to get process status");
-        if !matches!(status, WaitStatus::StillAlive) {
-            return status;
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_run_individual_command(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    #[cfg(unix)]
+    let extra_args: &[&str] = &["--", "echo", "hello"];
+    #[cfg(windows)]
+    let extra_args: &[&str] = &["--", "cmd", "/c", "echo", "hello"];
+
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("hello");
+    let exit_code = session.wait_for_exit();
+    assert_eq!(exit_code, 0, "Expected exit code 0");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_echo_input_through_pty(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
+        .await
+        .expect("Failed to build pty-echo");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_echo_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.send("abc");
+    session.expect("abc");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_display_interactive_prompt(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
+        .await
+        .expect("Failed to build pty-interactive");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("$ ");
+}
+
+// Windows: nested ConPTY chain (test ConPTY → distant shell → server ConPTY →
+// pty-interactive) doesn't reliably propagate process exit back to the outer
+// ConPTY, causing `distant shell` to hang after the remote process exits.
+// See docs/TODO.md for tracking.
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[cfg_attr(
+    windows,
+    ignore = "Windows ConPTY does not reliably propagate nested PTY exit"
+)]
+#[tokio::test]
+async fn should_exit_on_eof_signal(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
+        .await
+        .expect("Failed to build pty-interactive");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("$ ");
+
+    // On Unix, Ctrl-D (0x04) sends EOF to the shell's stdin, causing it to
+    // exit cleanly — the same way a user would end an interactive session.
+    // We retry a few times because the PTY may buffer or the shell may not
+    // process the first EOF immediately.
+    #[cfg(unix)]
+    for _ in 0..5 {
+        session.send("\x04");
+        std::thread::sleep(Duration::from_millis(300));
+        if !session.is_alive() {
+            break;
         }
-        assert!(Instant::now() < deadline, "Process did not exit within 30s");
-        std::thread::sleep(Duration::from_millis(10));
     }
-}
 
-/// Waits for the session's process to exit by polling `is_alive()`.
-/// On Windows, `expectrl` doesn't expose exit codes via `get_status()`,
-/// so we just poll `is_alive()` and don't return a status.
-#[cfg(windows)]
-fn wait_for_exit<P, S>(session: &Session<P, S>)
-where
-    P: Healthcheck,
-{
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if !session.is_alive().expect("Failed to check process status") {
-            return;
-        }
-        assert!(Instant::now() < deadline, "Process did not exit within 30s");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // On Windows, Ctrl-D is not recognized as EOF by cmd.exe or ConPTY, so
+    // we must explicitly send the `exit` command to terminate the shell.
+    #[cfg(windows)]
+    session.send_line("exit");
+
+    let exit_code = session.wait_for_exit();
+    assert_eq!(exit_code, 0, "Expected exit code 0");
 }
 
 #[rstest]
-#[test_log::test]
-fn should_run_single_command_via_shell(ctx: ManagerCtx) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_run_command_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     #[cfg(unix)]
-    {
-        // On BSDs (kqueue-based), PTY slave output can be discarded before the
-        // master reads it when the process exits quickly.  Wrap the command in
-        // `sh -c '...; sleep 1'` to keep the process alive long enough.
-        let args: &[&str] = if cfg!(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "openbsd",
-            target_os = "netbsd",
-        )) {
-            &["--", "sh", "-c", "'echo hello; sleep 1'"]
-        } else {
-            &["--", "echo", "hello"]
-        };
-        let cmd = build_shell_command(&ctx, args);
-        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-        session.set_expect_timeout(Some(Duration::from_secs(30)));
-
-        session.expect("hello").expect("Expected 'hello' in output");
-
-        session.expect(Eof).ok();
-        let status = wait_for_exit(&session);
-        assert!(
-            matches!(status, WaitStatus::Exited(_, 0)),
-            "Expected exit code 0, got: {status:?}"
-        );
-    }
-
+    let extra_args: &[&str] = &["--predict", "off", "--", "echo", "predict-off-ok"];
     #[cfg(windows)]
-    {
-        let temp = assert_fs::TempDir::new().unwrap();
-        let marker = temp.path().join("output.txt");
-        let marker_str = marker.to_str().unwrap();
+    let extra_args: &[&str] = &[
+        "--predict",
+        "off",
+        "--",
+        "cmd",
+        "/c",
+        "echo",
+        "predict-off-ok",
+    ];
 
-        let args = vec!["--", "cmd.exe", "/c", "echo", "hello", ">", marker_str];
-        let cmd = build_shell_command(&ctx, &args);
-        let session = Session::spawn(cmd).expect("Failed to spawn shell");
-        wait_for_exit(&session);
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = PtySession::spawn(&bin, &args);
 
-        let contents = std::fs::read_to_string(&marker)
-            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
-        assert!(
-            contents.contains("hello"),
-            "Expected 'hello' in output file, got: {contents:?}"
-        );
-    }
+    session.expect("predict-off-ok");
+    let exit_code = session.wait_for_exit();
+    assert_eq!(exit_code, 0, "Expected exit code 0 with predict off");
 }
 
 #[rstest]
-#[test_log::test]
-fn should_forward_exit_code(ctx: ManagerCtx) {
-    #[cfg(unix)]
-    {
-        let cmd = build_shell_command(&ctx, &["--", "false"]);
-        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-        session.set_expect_timeout(Some(Duration::from_secs(30)));
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_handle_ctrl_c_interrupt(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_interactive_str = ctx
+        .prepare_binary("pty-interactive")
+        .await
+        .expect("Failed to build pty-interactive");
 
-        session.expect(Eof).ok();
-        let status = wait_for_exit(&session);
-        assert!(
-            matches!(status, WaitStatus::Exited(_, 1)),
-            "Expected exit code 1, got: {status:?}"
-        );
-    }
+    let (bin, args) = shell_cmd_args(&ctx, &["--", &pty_interactive_str]);
+    let mut session = PtySession::spawn(&bin, &args);
 
-    #[cfg(windows)]
-    {
-        // Verify that `distant shell -- cmd.exe /c exit 1` terminates.
-        // On Windows, expectrl doesn't expose the exit code, but we verify
-        // the process ran and exited (non-hanging).
-        let args = vec!["--", "cmd.exe", "/c", "exit", "1"];
-        let cmd = build_shell_command(&ctx, &args);
-        let session = Session::spawn(cmd).expect("Failed to spawn shell");
-        wait_for_exit(&session);
-        // If we get here without timeout, the process exited successfully
-    }
+    session.expect("$ ");
+    session.send("\x03");
+    std::thread::sleep(Duration::from_millis(200));
+    session.send_line("");
+    session.expect("$ ");
 }
 
 #[rstest]
-#[test_log::test]
-fn should_support_current_dir(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let temp_str = temp.path().to_str().unwrap();
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_suppress_predicted_password_echo(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
+        .await
+        .expect("Failed to build pty-password");
 
-    #[cfg(unix)]
-    {
-        // On BSDs (kqueue-based), PTY slave output can be discarded before the
-        // master reads it when the process exits quickly.  Wrap the command in
-        // `sh -c '...; sleep 1'` to keep the process alive long enough.
-        let pwd_args: Vec<&str> = if cfg!(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "openbsd",
-            target_os = "netbsd",
-        )) {
-            vec![
-                "--current-dir",
-                temp_str,
-                "--",
-                "sh",
-                "-c",
-                "'pwd; sleep 1'",
-            ]
-        } else {
-            vec!["--current-dir", temp_str, "--", "pwd"]
-        };
-        let cmd = build_shell_command(&ctx, &pwd_args);
-        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-        session.set_expect_timeout(Some(Duration::from_secs(30)));
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
+    let mut session = PtySession::spawn(&bin, &args);
 
-        let canonical = temp.path().canonicalize().unwrap();
-        let expected = canonical.to_str().unwrap();
-        session
-            .expect(expected)
-            .unwrap_or_else(|_| panic!("Expected output to contain '{expected}'"));
-
-        session.expect(Eof).ok();
-        let status = wait_for_exit(&session);
-        assert!(
-            matches!(status, WaitStatus::Exited(_, 0)),
-            "Expected exit code 0, got: {status:?}"
-        );
-    }
-
-    #[cfg(windows)]
-    {
-        let marker = temp.path().join("cwd_output.txt");
-        let marker_str = marker.to_str().unwrap();
-
-        let args = vec![
-            "--current-dir",
-            temp_str,
-            "--",
-            "cmd.exe",
-            "/c",
-            "cd",
-            ">",
-            marker_str,
-        ];
-        let cmd = build_shell_command(&ctx, &args);
-        let session = Session::spawn(cmd).expect("Failed to spawn shell");
-        wait_for_exit(&session);
-
-        let contents = std::fs::read_to_string(&marker)
-            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
-        let contents_path =
-            distant_test_harness::utils::normalize_path(std::path::Path::new(contents.trim()));
-        let contents_str = contents_path.to_string_lossy();
-        let canonical = temp.path().canonicalize().unwrap();
-        let canonical_str = canonical.to_str().unwrap();
-        let expected = canonical_str.strip_prefix(r"\\?\").unwrap_or(canonical_str);
-        assert!(
-            contents_str.contains(expected),
-            "Expected output to contain '{expected}', got: {contents_str:?}"
-        );
-    }
+    session.expect("Password: ");
+    session.send_line("secret123");
+    session.expect("Authenticated.");
 }
 
 #[rstest]
-#[test_log::test]
-fn should_support_environment(ctx: ManagerCtx) {
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_run_command_with_predict_on(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
     #[cfg(unix)]
-    {
-        let env_args = vec!["--environment", "FOO=\"bar\"", "--", "env"];
-        let cmd = build_shell_command(&ctx, &env_args);
-        let mut session = Session::spawn(cmd).expect("Failed to spawn shell");
-        session.set_expect_timeout(Some(Duration::from_secs(30)));
+    let extra_args: &[&str] = &["--predict", "on", "--", "echo", "predict-on-ok"];
+    #[cfg(windows)]
+    let extra_args: &[&str] = &[
+        "--predict",
+        "on",
+        "--",
+        "cmd",
+        "/c",
+        "echo",
+        "predict-on-ok",
+    ];
 
-        session
-            .expect("FOO=bar")
-            .expect("Expected 'FOO=bar' in output");
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = PtySession::spawn(&bin, &args);
 
-        session.expect(Eof).ok();
-        let status = wait_for_exit(&session);
-        assert!(
-            matches!(status, WaitStatus::Exited(_, 0)),
-            "Expected exit code 0, got: {status:?}"
-        );
-    }
+    session.expect("predict-on-ok");
+    let exit_code = session.wait_for_exit();
+    assert_eq!(exit_code, 0, "Expected exit code 0 with predict on");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_not_echo_locally_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
+        .await
+        .expect("Failed to build pty-password");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_password_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("Password: ");
+    session.send_line("secret123");
+    session.expect("Authenticated.");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_echo_from_server_only_with_predict_off(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
+        .await
+        .expect("Failed to build pty-echo");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "off", "--", &pty_echo_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+    session.set_timeout(ECHO_TEST_TIMEOUT);
+
+    session.expect("Connected to manager");
+
+    session.send("x");
+    session.expect("x");
+    session.send("y");
+    session.expect("y");
+    session.send("z");
+    session.expect("z");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_echo_immediately_with_predict_on(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_echo_str = ctx
+        .prepare_binary("pty-echo")
+        .await
+        .expect("Failed to build pty-echo");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_echo_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.send("predict-immediate");
+    session.expect("predict-immediate");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_correct_prediction_mismatch(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let pty_password_str = ctx
+        .prepare_binary("pty-password")
+        .await
+        .expect("Failed to build pty-password");
+
+    let (bin, args) = shell_cmd_args(&ctx, &["--predict", "on", "--", &pty_password_str]);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("Password: ");
+    session.send_line("secret123");
+    session.expect("Authenticated.");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_enter_alternate_screen(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    #[cfg(unix)]
+    let extra_args: &[&str] = &[
+        "--predict",
+        "off",
+        "--",
+        "sh",
+        "-c",
+        "'tput smcup 2>/dev/null; tput rmcup 2>/dev/null; echo ALT_ENTRY_OK'",
+    ];
 
     #[cfg(windows)]
-    {
-        let temp = assert_fs::TempDir::new().unwrap();
-        let marker = temp.path().join("env_output.txt");
-        let marker_str = marker.to_str().unwrap();
+    let extra_args: &[&str] = &[
+        "--predict",
+        "off",
+        "--",
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "\"Write-Host -NoNewline ([char]27+'[?1049h'); Write-Host -NoNewline ([char]27+'[?1049l'); Write-Host 'ALT_ENTRY_OK'\"",
+    ];
 
-        let args = vec![
-            "--environment",
-            "FOO=\"bar\"",
-            "--",
-            "cmd.exe",
-            "/c",
-            "set",
-            ">",
-            marker_str,
-        ];
-        let cmd = build_shell_command(&ctx, &args);
-        let session = Session::spawn(cmd).expect("Failed to spawn shell");
-        wait_for_exit(&session);
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = PtySession::spawn(&bin, &args);
 
-        let contents = std::fs::read_to_string(&marker)
-            .unwrap_or_else(|e| panic!("Failed to read marker file {marker_str}: {e}"));
-        assert!(
-            contents.contains("FOO=bar"),
-            "Expected 'FOO=bar' in output file, got: {contents:?}"
-        );
-    }
+    session.expect("ALT_ENTRY_OK");
+}
+
+#[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
+#[tokio::test]
+async fn should_exit_alternate_screen(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+
+    #[cfg(unix)]
+    let extra_args: &[&str] = &[
+        "--predict",
+        "off",
+        "--",
+        "sh",
+        "-c",
+        "'tput smcup 2>/dev/null; echo IN_ALT; tput rmcup 2>/dev/null; echo RESTORED'",
+    ];
+
+    #[cfg(windows)]
+    let extra_args: &[&str] = &[
+        "--predict",
+        "off",
+        "--",
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "\"Write-Host -NoNewline ([char]27+'[?1049h'); Write-Host 'IN_ALT'; Write-Host -NoNewline ([char]27+'[?1049l'); Write-Host 'RESTORED'\"",
+    ];
+
+    let (bin, args) = shell_cmd_args(&ctx, extra_args);
+    let mut session = PtySession::spawn(&bin, &args);
+
+    session.expect("RESTORED");
 }

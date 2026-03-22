@@ -259,11 +259,24 @@ pub async fn tar_read_file(client: &Docker, container: &str, path: &str) -> io::
         let mut entry =
             entry.map_err(|e| io::Error::other(format!("Failed to read tar entry: {}", e)))?;
 
-        if entry.header().entry_type() == tar::EntryType::Directory {
+        let entry_type = entry.header().entry_type();
+        if entry_type == tar::EntryType::Directory {
             // If the first entry is a directory, the requested path is a directory
             if i == 0 {
                 return Err(io::Error::other(format!(
                     "Path is a directory, not a file: {}",
+                    path
+                )));
+            }
+            continue;
+        }
+        if matches!(entry_type, tar::EntryType::Symlink | tar::EntryType::Link) {
+            // Symlink/hardlink entries in tar don't contain file data;
+            // Docker's download API returns the link itself rather than
+            // following it, so we cannot read the target contents this way.
+            if i == 0 {
+                return Err(io::Error::other(format!(
+                    "Path is a symbolic link, not a regular file: {}",
                     path
                 )));
             }

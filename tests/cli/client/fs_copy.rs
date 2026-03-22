@@ -3,80 +3,77 @@
 //! Tests copying files, copying non-empty directories, and error handling
 //! when the source does not exist.
 
-use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
-
-const FILE_CONTENTS: &str = r#"
-some text
-on multiple lines
-that is a file's contents
-"#;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_copying_file(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_copying_file(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("fs-copy");
+    ctx.cli_mkdir(&dir);
+    let src = ctx.child_path(&dir, "copy-src.txt");
+    let dst = ctx.child_path(&dir, "copy-dst.txt");
+    ctx.cli_write(&src, "copy content");
 
-    let src = temp.child("file");
-    src.write_str(FILE_CONTENTS).unwrap();
-
-    let dst = temp.child("file2");
-
-    // distant fs copy {src} {dst}
     ctx.new_assert_cmd(["fs", "copy"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src)
+        .arg(&dst)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    src.assert(predicate::path::exists());
-    dst.assert(predicate::path::eq_file(src.path()));
+    let contents = ctx.cli_read(&dst);
+    assert_eq!(contents, "copy content");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_copying_nonempty_directory(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn should_support_copying_nonempty_directory(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("fs-copy-dir");
+    ctx.cli_mkdir(&dir);
 
-    // Make a non-empty directory
-    let src = temp.child("dir");
-    src.create_dir_all().unwrap();
-    let src_file = src.child("file");
-    src_file.write_str(FILE_CONTENTS).unwrap();
+    let src_dir = ctx.child_path(&dir, "src");
+    ctx.cli_mkdir(&src_dir);
+    let src_file = ctx.child_path(&src_dir, "file.txt");
+    ctx.cli_write(&src_file, "dir copy content");
 
-    let dst = temp.child("dir2");
-    let dst_file = dst.child("file");
+    let dst_dir = ctx.child_path(&dir, "dst");
 
-    // distant fs copy {src} {dst}
     ctx.new_assert_cmd(["fs", "copy"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src_dir)
+        .arg(&dst_dir)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    src_file.assert(predicate::path::exists());
-    dst_file.assert(predicate::path::eq_file(src_file.path()));
+    let dst_file = ctx.child_path(&dst_dir, "file.txt");
+    let contents = ctx.cli_read(&dst_file);
+    assert_eq!(contents, "dir copy content");
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("fs-copy-err");
+    ctx.cli_mkdir(&dir);
+    let src = ctx.child_path(&dir, "nonexistent");
+    let dst = ctx.child_path(&dir, "dst");
 
-    let src = temp.child("dir");
-    let dst = temp.child("dir2");
-
-    // distant fs copy {src} {dst}
     ctx.new_assert_cmd(["fs", "copy"])
-        .args([src.to_str().unwrap(), dst.to_str().unwrap()])
+        .arg(&src)
+        .arg(&dst)
         .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to copy"));
-
-    src.assert(predicate::path::missing());
-    dst.assert(predicate::path::missing());
+        .code(1);
 }

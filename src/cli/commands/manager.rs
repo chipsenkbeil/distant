@@ -1,32 +1,18 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use std::sync::LazyLock;
 
 use anyhow::Context;
 use distant_core::Plugin;
 use distant_core::net::manager::Config as NetManagerConfig;
 use log::*;
-use service_manager::{
-    ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
-    ServiceUninstallCtx,
-};
 
 #[cfg(unix)]
 use crate::CliError;
 use crate::CliResult;
 use crate::cli::Manager;
 use crate::cli::common::{Ui, connect_to_manager};
-use crate::options::{Format, ManagerServiceSubcommand, ManagerSubcommand};
-
-/// [`ServiceLabel`] for our manager in the form `rocks.distant.manager`
-static SERVICE_LABEL: LazyLock<ServiceLabel> = LazyLock::new(|| ServiceLabel {
-    qualifier: Some(String::from("rocks")),
-    organization: Some(String::from("distant")),
-    application: String::from("manager"),
-});
+use crate::options::{Format, ManagerSubcommand};
 
 mod plugins;
 
@@ -118,104 +104,6 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
     let ui = Ui::new(quiet);
 
     match cmd {
-        ManagerSubcommand::Service(ManagerServiceSubcommand::Start { kind, user }) => {
-            debug!("Starting manager service via {:?}", kind);
-            let mut manager = <dyn ServiceManager>::target_or_native(kind)
-                .context("Failed to detect native service manager")?;
-
-            if user {
-                manager
-                    .set_level(ServiceLevel::User)
-                    .context("Failed to set service manager to user level")?;
-            }
-
-            manager
-                .start(ServiceStartCtx {
-                    label: SERVICE_LABEL.clone(),
-                })
-                .context("Failed to start service")?;
-            Ok(())
-        }
-        ManagerSubcommand::Service(ManagerServiceSubcommand::Stop { kind, user }) => {
-            debug!("Stopping manager service via {:?}", kind);
-            let mut manager = <dyn ServiceManager>::target_or_native(kind)
-                .context("Failed to detect native service manager")?;
-
-            if user {
-                manager
-                    .set_level(ServiceLevel::User)
-                    .context("Failed to set service manager to user level")?;
-            }
-
-            manager
-                .stop(ServiceStopCtx {
-                    label: SERVICE_LABEL.clone(),
-                })
-                .context("Failed to stop service")?;
-            Ok(())
-        }
-        ManagerSubcommand::Service(ManagerServiceSubcommand::Install {
-            kind,
-            user,
-            args: extra_args,
-        }) => {
-            debug!("Installing manager service via {:?}", kind);
-            let mut manager = <dyn ServiceManager>::target_or_native(kind)
-                .context("Failed to detect native service manager")?;
-            let mut args = vec![OsString::from("manager"), OsString::from("listen")];
-
-            if user {
-                args.push(OsString::from("--user"));
-                manager
-                    .set_level(ServiceLevel::User)
-                    .context("Failed to set service manager to user level")?;
-            }
-
-            for arg in extra_args {
-                args.push(arg.into());
-            }
-
-            manager
-                .install(ServiceInstallCtx {
-                    label: SERVICE_LABEL.clone(),
-
-                    // distant manager listen
-                    program: std::env::current_exe()
-                        .ok()
-                        .unwrap_or_else(|| PathBuf::from("distant")),
-                    args,
-                    contents: None,
-                    username: None,
-                    working_directory: None,
-                    environment: None,
-                    autostart: false,
-                    restart_policy: service_manager::RestartPolicy::OnFailure {
-                        delay_secs: None,
-                        max_retries: None,
-                        reset_after_secs: None,
-                    },
-                })
-                .context("Failed to install service")?;
-
-            Ok(())
-        }
-        ManagerSubcommand::Service(ManagerServiceSubcommand::Uninstall { kind, user }) => {
-            debug!("Uninstalling manager service via {:?}", kind);
-            let mut manager = <dyn ServiceManager>::target_or_native(kind)
-                .context("Failed to detect native service manager")?;
-            if user {
-                manager
-                    .set_level(ServiceLevel::User)
-                    .context("Failed to set service manager to user level")?;
-            }
-            manager
-                .uninstall(ServiceUninstallCtx {
-                    label: SERVICE_LABEL.clone(),
-                })
-                .context("Failed to uninstall service")?;
-
-            Ok(())
-        }
         ManagerSubcommand::Listen {
             #[cfg_attr(not(unix), allow(unused_variables))]
             access,
@@ -292,22 +180,12 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for `SERVICE_LABEL` constants and `build_plugin_map` — verifying
-    //! built-in plugin registration, scheme naming, and duplicate rejection.
+    //! Tests for `build_plugin_map` — verifying built-in plugin registration,
+    //! scheme naming, and duplicate rejection.
 
     use test_log::test;
 
     use super::*;
-
-    // -------------------------------------------------------
-    // SERVICE_LABEL
-    // -------------------------------------------------------
-    #[test]
-    fn service_label_has_correct_fields() {
-        assert_eq!(SERVICE_LABEL.qualifier.as_deref(), Some("rocks"));
-        assert_eq!(SERVICE_LABEL.organization.as_deref(), Some("distant"));
-        assert_eq!(SERVICE_LABEL.application, "manager");
-    }
 
     // -------------------------------------------------------
     // build_plugin_map — no extra plugins

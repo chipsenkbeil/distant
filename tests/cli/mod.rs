@@ -1,16 +1,16 @@
 //! CLI integration test module tree.
-//!
-//! Declares all submodules: `api` (JSON protocol tests), `client` (CLI subcommand tests),
-//! `generate`, `help`, `manager`, and `server`.
 
 mod api;
 mod client;
 mod config;
-#[cfg(feature = "docker")]
-mod docker;
+mod connect;
 mod errors;
 mod format;
 mod generate;
+mod global_opts;
 mod help;
+mod launch;
 mod manager;
 mod server;
+mod ssh;
+mod tunnel;

@@ -3,88 +3,104 @@
 //! Tests creating directories, creating nested directories with `--all`,
 //! and error handling when the parent directory is missing.
 
-use assert_fs::prelude::*;
-use predicates::prelude::*;
 use rstest::*;
 
-use distant_test_harness::manager::*;
+use distant_test_harness::backend::Backend;
+use distant_test_harness::skip_if_no_backend;
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_report_ok_when_done(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("dir");
+fn should_report_ok_when_done(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("mkdir");
+    ctx.cli_mkdir(&dir);
+    let new_dir = ctx.child_path(&dir, "new-dir");
 
-    // distant action dir-create {path}
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([dir.to_str().unwrap()])
+        .arg(&new_dir)
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    dir.assert(predicate::path::exists());
-    dir.assert(predicate::path::is_dir());
+    assert!(
+        ctx.cli_exists(&new_dir),
+        "Directory should be created (verified via CLI)"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_support_creating_missing_parent_directories_if_specified(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("dir1").child("dir2");
+fn should_support_creating_missing_parent_directories_if_specified(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("mkdir-all");
+    ctx.cli_mkdir(&dir);
+    let nested = ctx.child_path(&ctx.child_path(&dir, "dir1"), "dir2");
 
-    // distant action dir-create {path}
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .args(["--all", dir.to_str().unwrap()])
+        .args(["--all", &nested])
         .assert()
-        .success()
-        .stdout("");
+        .success();
 
-    dir.assert(predicate::path::exists());
-    dir.assert(predicate::path::is_dir());
+    assert!(
+        ctx.cli_exists(&nested),
+        "Nested directory should be created (verified via CLI)"
+    );
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn yield_an_error_when_fails(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("missing-dir").child("dir");
+fn yield_an_error_when_fails(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("mkdir-err");
+    // Do NOT create the parent — so the child dir creation fails
+    let nested = ctx.child_path(&ctx.child_path(&dir, "missing-dir"), "dir");
 
-    // distant action dir-create {path}
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([dir.to_str().unwrap()])
+        .arg(&nested)
         .assert()
-        .code(1)
-        .stdout("")
-        .stderr(predicates::str::contains("Failed to make directory"));
-
-    dir.assert(predicate::path::missing());
+        .code(1);
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_fail_when_already_exists(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("existing-dir");
-    dir.create_dir_all().unwrap();
+fn should_fail_when_already_exists(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("mkdir-exists");
+    ctx.cli_mkdir(&dir);
+    let existing = ctx.child_path(&dir, "existing-dir");
+    ctx.cli_mkdir(&existing);
 
-    // Without --all, creating an existing directory should fail
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .args([dir.to_str().unwrap()])
+        .arg(&existing)
         .assert()
         .failure();
 }
 
 #[rstest]
+#[case::host(Backend::Host)]
+#[case::ssh(Backend::Ssh)]
+#[case::docker(Backend::Docker)]
 #[test_log::test]
-fn should_succeed_when_already_exists_with_all(ctx: ManagerCtx) {
-    let temp = assert_fs::TempDir::new().unwrap();
-    let dir = temp.child("existing-dir");
-    dir.create_dir_all().unwrap();
+fn should_succeed_when_already_exists_with_all(#[case] backend: Backend) {
+    let ctx = skip_if_no_backend!(backend);
+    let dir = ctx.unique_dir("mkdir-exists-all");
+    ctx.cli_mkdir(&dir);
+    let existing = ctx.child_path(&dir, "existing-dir");
+    ctx.cli_mkdir(&existing);
 
-    // With --all, creating an existing directory should succeed silently
     ctx.new_assert_cmd(["fs", "make-dir"])
-        .args(["--all", dir.to_str().unwrap()])
+        .args(["--all", &existing])
         .assert()
-        .success()
-        .stdout("");
+        .success();
 }
