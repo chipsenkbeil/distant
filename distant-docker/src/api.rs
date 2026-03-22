@@ -8,6 +8,8 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use async_once_cell::OnceCell;
+use bollard::container::LogOutput;
+use bollard::errors::Error as BollardError;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use distant_core::constants::TUNNEL_CHANNEL_CAPACITY;
 use distant_core::net::server::Reply;
@@ -1281,10 +1283,7 @@ impl Api for DockerApi {
 /// `TunnelClosed` and removes the tunnel from the map when the connection ends.
 async fn docker_tunnel_relay_task(
     id: TunnelId,
-    mut output: impl futures::Stream<
-        Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
-    > + Unpin
-    + Send,
+    mut output: impl futures::Stream<Item = Result<LogOutput, BollardError>> + Unpin + Send,
     mut input: impl tokio::io::AsyncWrite + Unpin + Send + 'static,
     mut write_rx: mpsc::Receiver<Vec<u8>>,
     reply: Box<dyn Reply<Data = Response>>,
@@ -1306,16 +1305,12 @@ async fn docker_tunnel_relay_task(
     /// its response before the exec session is torn down.
     async fn drain_output(
         id: TunnelId,
-        output: &mut (
-                 impl futures::Stream<
-            Item = Result<bollard::container::LogOutput, bollard::errors::Error>,
-        > + Unpin
-             ),
+        output: &mut (impl futures::Stream<Item = Result<LogOutput, BollardError>> + Unpin),
         reply: &dyn Reply<Data = Response>,
     ) {
         while let Some(msg) = output.next().await {
             match msg {
-                Ok(bollard::container::LogOutput::StdOut { message }) => {
+                Ok(LogOutput::StdOut { message }) => {
                     if !message.is_empty()
                         && reply
                             .send(Response::TunnelData {

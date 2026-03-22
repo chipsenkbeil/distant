@@ -35,6 +35,9 @@ fn platform_cmd(unix_cmd: &str, windows_cmd: &str) -> String {
 
 use distant_test_harness::utils::normalize_path;
 
+/// Timeout for reading accumulated stdout in current_dir tests.
+const STDOUT_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 static TEMP_SCRIPT_DIR: LazyLock<TempDir> = LazyLock::new(|| TempDir::new().unwrap());
 
 static DOES_NOT_EXIST_BIN: LazyLock<assert_fs::fixture::ChildPath> =
@@ -2168,7 +2171,7 @@ async fn proc_spawn_should_support_current_dir(#[future] client: Ctx<Client>) {
 
     let stdout_pipe = proc.stdout.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + STDOUT_READ_TIMEOUT;
     while let Ok(Ok(data)) = tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
         accumulated.extend_from_slice(&data);
     }
@@ -2336,7 +2339,7 @@ async fn proc_spawn_with_pty_should_support_current_dir(#[future] client: Ctx<Cl
 
     let stdout_pipe = proc.stdout.as_mut().unwrap();
     let mut accumulated = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + STDOUT_READ_TIMEOUT;
     while let Ok(Ok(data)) = tokio::time::timeout_at(deadline, stdout_pipe.read()).await {
         accumulated.extend_from_slice(&data);
     }

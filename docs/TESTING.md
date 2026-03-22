@@ -41,10 +41,7 @@ cargo test --all-features --test '*'
 # Standard cargo test
 cargo test --all-features --workspace
 
-# With nextest (preferred — parallel execution, better output)
-cargo nextest run --all-features --workspace
-
-# With retries + slow-timeout (configured in default profile)
+# With nextest (preferred — parallel execution, retries, better output)
 cargo nextest run --all-features --workspace
 ```
 

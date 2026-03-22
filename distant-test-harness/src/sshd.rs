@@ -47,6 +47,15 @@ const WAIT_AFTER_SPAWN: Duration = Duration::from_millis(100);
 /// Maximum times to retry spawning sshd when it fails
 const SPAWN_RETRY_CNT: usize = 3;
 
+/// Maximum time to wait for sshd to accept TCP connections after spawning.
+const SSHD_READY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between TCP connection attempts when polling for sshd readiness.
+const SSHD_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Per-attempt TCP connect timeout when checking if sshd is ready.
+const SSHD_TCP_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+
 /// Sets restrictive Windows ACLs on a file so that Windows OpenSSH accepts it.
 /// In admin contexts, removes inherited permissions and sets exact ACLs.
 /// In non-admin contexts, additively grants permissions without stripping inherited ones.
@@ -609,8 +618,8 @@ impl Sshd {
         // Poll for TCP connectivity instead of fixed sleeps. This detects
         // actual readiness rather than hoping 200ms is enough.
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let poll_interval = Duration::from_millis(50);
+        let deadline = Instant::now() + SSHD_READY_TIMEOUT;
+        let poll_interval = SSHD_READY_POLL_INTERVAL;
 
         loop {
             // Check if sshd crashed
@@ -622,14 +631,17 @@ impl Sshd {
             child = child_ref;
 
             // Try TCP connect to see if sshd is accepting connections
-            if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+            if TcpStream::connect_timeout(&addr, SSHD_TCP_CONNECT_TIMEOUT).is_ok() {
                 return Ok(Ok(child));
             }
 
             if Instant::now() >= deadline {
                 return Ok(Err((
                     None,
-                    format!("sshd did not accept TCP connections on port {port} within 5s"),
+                    format!(
+                        "sshd did not accept TCP connections on port {port} within {}s",
+                        SSHD_READY_TIMEOUT.as_secs()
+                    ),
                 )));
             }
 

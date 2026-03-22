@@ -62,9 +62,9 @@ where
     let cmd = if family == SshFamily::Windows && !environment.is_empty() {
         // Always inline env vars on Windows: `set_env` (SSH env channel request)
         // returns Ok but Windows OpenSSH silently ignores the variable.
-        wrap_with_inline_env(cmd, &environment)
+        wrap_with_inline_env(cmd, &environment, family)
     } else if !env_via_channel && !environment.is_empty() {
-        wrap_with_inline_env(cmd, &environment)
+        wrap_with_inline_env(cmd, &environment, family)
     } else {
         cmd.to_string()
     };
@@ -294,9 +294,9 @@ where
     let cmd = if family == SshFamily::Windows && !environment.is_empty() {
         // Always inline env vars on Windows: `set_env` (SSH env channel request)
         // returns Ok but Windows OpenSSH silently ignores the variable.
-        wrap_with_inline_env(cmd, &environment)
+        wrap_with_inline_env(cmd, &environment, family)
     } else if !env_via_channel && !environment.is_empty() {
-        wrap_with_inline_env(cmd, &environment)
+        wrap_with_inline_env(cmd, &environment, family)
     } else {
         cmd.to_string()
     };
@@ -476,29 +476,41 @@ where
     })
 }
 
-/// Inlines environment variables into a Windows command using `set` + `call`.
+/// Inlines environment variables into the command string.
 ///
-/// When SSH `set_env` channel requests are rejected (e.g. Windows OpenSSH),
-/// this wraps the command so that env vars are set in the cmd.exe process
-/// before the user's command runs. The `call` prefix triggers a second
-/// variable-expansion pass, allowing standard `%VAR%` syntax to work.
-fn wrap_with_inline_env(cmd: &str, env: &Environment) -> String {
+/// When SSH `set_env` channel requests are rejected, this wraps the command so
+/// that env vars are set inline before the user's command runs.
+///
+/// On Windows, uses `set "K=V"&& call <cmd>` with `%` → `%%` escaping.
+/// On Unix, uses `export K='value' && <cmd>` with `shell_words::quote`.
+fn wrap_with_inline_env(cmd: &str, env: &Environment, family: SshFamily) -> String {
     if cmd.is_empty() || env.is_empty() {
         return cmd.to_string();
     }
-    let mut prefix = String::new();
-    for (key, value) in env.iter() {
-        // Use `set "KEY=VALUE"` quoting to protect cmd.exe metacharacters
-        // (&, |, >, <, spaces) in values. Escape `%` → `%%` to prevent
-        // premature variable expansion.
-        let escaped_value = value.replace('%', "%%");
-        prefix.push_str(&format!("set \"{key}={escaped_value}\"&& "));
+    match family {
+        SshFamily::Windows => {
+            let mut prefix = String::new();
+            for (key, value) in env.iter() {
+                // Use `set "KEY=VALUE"` quoting to protect cmd.exe metacharacters
+                // (&, |, >, <, spaces) in values. Escape `%` → `%%` to prevent
+                // premature variable expansion.
+                let escaped_value = value.replace('%', "%%");
+                prefix.push_str(&format!("set \"{key}={escaped_value}\"&& "));
+            }
+            // Escape % to %% in the original command to survive the outer cmd.exe's
+            // first parse pass. The `call` prefix triggers a second expansion where
+            // %VAR% references resolve to the values set above.
+            let escaped_cmd = cmd.replace('%', "%%");
+            format!("{prefix}call {escaped_cmd}")
+        }
+        SshFamily::Unix => {
+            let mut prefix = String::new();
+            for (key, value) in env.iter() {
+                prefix.push_str(&format!("export {}={} && ", key, shell_words::quote(value)));
+            }
+            format!("{prefix}{cmd}")
+        }
     }
-    // Escape % to %% in the original command to survive the outer cmd.exe's
-    // first parse pass. The `call` prefix triggers a second expansion where
-    // %VAR% references resolve to the values set above.
-    let escaped_cmd = cmd.replace('%', "%%");
-    format!("{prefix}call {escaped_cmd}")
 }
 
 /// Wraps a command with `cd <dir> && <cmd>` when `current_dir` is set.
