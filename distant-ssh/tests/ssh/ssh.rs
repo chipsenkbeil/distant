@@ -126,6 +126,13 @@ async fn launch_with_nonexistent_binary_should_fail(sshd: Sshd) {
     );
 }
 
+// This test passes on real Windows machines but consistently fails on
+// windows-latest CI VMs — SSH exec channels produce empty output or
+// hang. Skipped in CI only; the `ci` cfg is set via RUSTFLAGS in CI.
+#[cfg_attr(
+    all(windows, ci),
+    ignore = "Windows CI: SSH exec channel output unreliable on windows-latest VM"
+)]
 #[rstest]
 #[test(tokio::test)]
 async fn launch_and_connect_should_return_working_client(sshd: Sshd) {

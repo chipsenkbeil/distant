@@ -115,6 +115,21 @@ fn should_use_absolute_paths_if_specified(#[case] backend: Backend) {
     let expected_file1 = ctx.child_path(&dir, "file1");
     let expected_file2 = ctx.child_path(&dir, "file2");
 
+    // On Windows host backend, the server canonicalizes paths (resolving
+    // short names like RUNNER~1 and adding \\?\ prefix). Match that here.
+    #[cfg(windows)]
+    let (expected_file1, expected_file2) = if matches!(backend, Backend::Host) {
+        let f1 = std::fs::canonicalize(&expected_file1)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(expected_file1);
+        let f2 = std::fs::canonicalize(&expected_file2)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(expected_file2);
+        (f1, f2)
+    } else {
+        (expected_file1, expected_file2)
+    };
+
     assert!(
         stdout.contains(&expected_file1),
         "Expected absolute path to file1 in output, got: {stdout}"
