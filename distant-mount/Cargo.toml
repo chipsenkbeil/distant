@@ -10,7 +10,7 @@ default = ["fuse"]
 fuse = ["dep:fuser", "dep:libc"]
 nfs = ["dep:nfsserve"]
 windows-cloud-files = ["dep:cloud-filter"]
-macos-file-provider = []  # placeholder — requires objc2 deps when implemented
+macos-file-provider = ["dep:objc2", "dep:objc2-file-provider", "dep:objc2-foundation", "dep:block2"]
 
 [dependencies]
 distant-core = { workspace = true }
@@ -25,6 +25,24 @@ libc = { version = "0.2", optional = true }
 
 [target.'cfg(any(target_os = "openbsd", target_os = "netbsd", target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
 nfsserve = { version = "0.10", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-file-provider = { version = "0.3", optional = true, features = [
+    "NSFileProviderReplicatedExtension",
+    "NSFileProviderEnumerating",
+    "NSFileProviderItem",
+    "NSFileProviderDomain",
+    "NSFileProviderRequest",
+    "NSFileProviderError",
+    "block2",
+    "bitflags",
+] }
+objc2-foundation = { version = "0.3", optional = true, features = [
+    "NSObject", "NSString", "NSError", "NSProgress", "NSURL",
+    "NSData", "NSArray", "NSDictionary",
+] }
+block2 = { version = "0.6", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cloud-filter = { version = "0.0.6", optional = true }
