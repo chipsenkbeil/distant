@@ -704,6 +704,22 @@ impl RemoteFs {
         }
     }
 
+    /// Returns the remote path associated with the given inode, if present.
+    ///
+    /// Unlike [`ino_to_path`](Self::ino_to_path), this returns `None` instead
+    /// of an error when the inode is unknown or the lock is poisoned.
+    pub(crate) fn get_path(&self, ino: u64) -> Option<RemotePath> {
+        let inodes = self.inodes.read().ok()?;
+        inodes.get_path(ino)
+    }
+
+    /// Returns the inode number associated with the given remote path, if
+    /// present.
+    pub(crate) fn get_ino_for_path(&self, path: &str) -> Option<u64> {
+        let inodes = self.inodes.read().ok()?;
+        inodes.get_ino(&RemotePath::new(path))
+    }
+
     /// Builds a child path by joining the parent inode's path with a name.
     ///
     /// # Errors

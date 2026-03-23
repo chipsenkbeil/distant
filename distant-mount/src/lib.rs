@@ -108,6 +108,39 @@ pub fn mount(
 /// Returns an error if the [`RemoteFs`] fails to initialize (e.g., the initial
 /// `system_info` call fails), the sync root registration fails, or the Cloud
 /// Filter session connection fails.
+/// Mount a remote filesystem using the macOS FileProvider framework.
+///
+/// Returns a [`MountHandle`] that keeps the FileProvider domain active.
+/// The system launches the `.appex` extension process when the domain
+/// is accessed in Finder.
+///
+/// Unlike FUSE, this provides native Finder integration with placeholder
+/// files, but requires a `.app` bundle containing the `.appex` extension.
+///
+/// # Errors
+///
+/// Returns an error if the [`RemoteFs`] fails to initialize.
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+pub fn mount_file_provider(
+    rt: tokio::runtime::Handle,
+    channel: distant_core::Channel,
+    config: MountConfig,
+) -> std::io::Result<MountHandle> {
+    use std::sync::Arc;
+
+    let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
+
+    backend::macos_file_provider::register_domain(fs)?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let join_handle = tokio::spawn(async move {
+        let _ = shutdown_rx.await;
+        Ok(())
+    });
+
+    Ok(MountHandle::new(shutdown_tx, join_handle))
+}
+
 #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
 pub fn mount(
     rt: tokio::runtime::Handle,
