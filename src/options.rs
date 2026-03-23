@@ -220,6 +220,12 @@ impl Options {
                                 .take()
                                 .or(config.client.launch.distant.bind_server);
                     }
+                    #[cfg(feature = "mount")]
+                    ClientSubcommand::Mount { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    #[cfg(feature = "mount")]
+                    ClientSubcommand::Unmount { .. } => {}
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
                     }
@@ -542,6 +548,52 @@ pub enum ClientSubcommand {
         destination: String,
     },
 
+    /// Mount a remote filesystem at a local directory
+    #[cfg(feature = "mount")]
+    Mount {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Remote directory to expose (defaults to server's working directory)
+        #[clap(long)]
+        remote_root: Option<String>,
+
+        /// Mount as read-only
+        #[clap(long)]
+        readonly: bool,
+
+        /// Attribute cache TTL in seconds
+        #[clap(long, default_value = "1")]
+        attr_ttl: f64,
+
+        /// Directory listing cache TTL in seconds
+        #[clap(long, default_value = "1")]
+        dir_ttl: f64,
+
+        /// Local mount point
+        mount_point: PathBuf,
+    },
+
+    /// Unmount a previously mounted remote filesystem
+    #[cfg(feature = "mount")]
+    Unmount {
+        /// Local mount point to unmount
+        mount_point: PathBuf,
+    },
+
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -814,6 +866,10 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Tunnel(sub) => sub.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
+            #[cfg(feature = "mount")]
+            Self::Mount { cache, .. } => cache.as_path(),
+            #[cfg(feature = "mount")]
+            Self::Unmount { .. } => constants::user::CACHE_FILE_PATH.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
@@ -834,6 +890,13 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Tunnel(sub) => sub.network_settings(),
             Self::Launch { network, .. } => network,
+            #[cfg(feature = "mount")]
+            Self::Mount { network, .. } => network,
+            #[cfg(feature = "mount")]
+            Self::Unmount { .. } => {
+                static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
+                &DEFAULT
+            }
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
@@ -857,6 +920,10 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.format(),
             Self::Tunnel(sub) => sub.format(),
             Self::Launch { format, .. } => *format,
+            #[cfg(feature = "mount")]
+            Self::Mount { .. } => Format::Shell,
+            #[cfg(feature = "mount")]
+            Self::Unmount { .. } => Format::Shell,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
             #[cfg(feature = "ssh")]
