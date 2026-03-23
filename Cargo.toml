@@ -17,6 +17,7 @@ members = [
     "distant-core",
     "distant-docker",
     "distant-host",
+    "distant-mount",
     "distant-ssh",
     "distant-test-harness",
 ]
@@ -36,6 +37,7 @@ all = { level = "deny", priority = -1 }
 distant-core = { version = "=0.21.0-dev", path = "distant-core" }
 distant-docker = { version = "=0.21.0-dev", path = "distant-docker" }
 distant-host = { version = "=0.21.0-dev", path = "distant-host", default-features = false }
+distant-mount = { version = "=0.21.0-dev", path = "distant-mount" }
 distant-ssh = { version = "=0.21.0-dev", path = "distant-ssh", default-features = false, features = ["serde"] }
 
 [profile.release]
@@ -49,6 +51,7 @@ panic = "abort"
 default = ["docker", "host", "ssh", "pty"]
 docker = ["dep:distant-docker"]
 host = ["dep:distant-host", "distant-host/macos-fsevent"]
+mount = ["dep:distant-mount"]
 pty = ["distant-host/pty"]
 ssh = ["dep:distant-ssh"]
 
@@ -83,6 +86,9 @@ whoami = "2.1.1"
 
 # Optional Docker backend
 distant-docker = { workspace = true, optional = true }
+
+# Optional mount backend
+distant-mount = { workspace = true, optional = true }
 
 # SSH backend (optional)
 distant-ssh = { workspace = true, optional = true }
