@@ -1,6 +1,7 @@
 mod change;
 mod cmd;
 mod error;
+mod file_options;
 mod filesystem;
 mod metadata;
 mod permissions;
@@ -15,6 +16,7 @@ mod version;
 pub use change::*;
 pub use cmd::*;
 pub use error::*;
+pub use file_options::*;
 pub use filesystem::*;
 pub use metadata::*;
 pub use permissions::*;

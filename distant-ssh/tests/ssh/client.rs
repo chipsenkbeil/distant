@@ -45,7 +45,10 @@ async fn read_file_should_fail_if_file_missing(#[future] client: Ctx<Client>) {
     let temp = assert_fs::TempDir::new().unwrap();
     let path = temp.child("missing-file").path().to_path_buf();
 
-    let _ = client.read_file(path).await.unwrap_err();
+    let _ = client
+        .read_file(path, Default::default())
+        .await
+        .unwrap_err();
 }
 
 #[rstest]
@@ -57,7 +60,10 @@ async fn read_file_should_send_blob_with_file_contents(#[future] client: Ctx<Cli
     let file = temp.child("test-file");
     file.write_str("some file contents").unwrap();
 
-    let bytes = client.read_file(file.path().to_path_buf()).await.unwrap();
+    let bytes = client
+        .read_file(file.path().to_path_buf(), Default::default())
+        .await
+        .unwrap();
     assert_eq!(bytes, b"some file contents");
 }
 
@@ -119,7 +125,11 @@ async fn write_file_should_send_error_if_fails_to_write_file(#[future] client: C
     let file = temp.child("dir").child("test-file");
 
     let _ = client
-        .write_file(file.path().to_path_buf(), b"some text".to_vec())
+        .write_file(
+            file.path().to_path_buf(),
+            b"some text".to_vec(),
+            Default::default(),
+        )
         .await
         .unwrap_err();
 
@@ -138,7 +148,11 @@ async fn write_file_should_send_ok_when_successful(#[future] client: Ctx<Client>
     let file = temp.child("test-file");
 
     client
-        .write_file(file.path().to_path_buf(), b"some text".to_vec())
+        .write_file(
+            file.path().to_path_buf(),
+            b"some text".to_vec(),
+            Default::default(),
+        )
         .await
         .unwrap();
 

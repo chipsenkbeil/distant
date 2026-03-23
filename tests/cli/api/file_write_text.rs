@@ -1,7 +1,8 @@
-//! Integration tests for the `file_write_text` JSON API endpoint.
+//! Integration tests for writing text content via the `file_write` JSON API endpoint.
 //!
-//! Tests writing text content to a file and error handling when the target
-//! file's parent directory is missing.
+//! Tests writing byte data (converted from text) to a file and error handling when
+//! the target file's parent directory is missing. The text convenience variants have
+//! been removed from the protocol.
 
 use assert_fs::prelude::*;
 use rstest::*;
@@ -28,9 +29,9 @@ async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_write_text",
+            "type": "file_write",
             "path": file.to_path_buf(),
-            "text": FILE_CONTENTS.to_string(),
+            "data": FILE_CONTENTS.as_bytes().to_vec(),
         },
     });
 
@@ -64,9 +65,9 @@ async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiPro
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_write_text",
+            "type": "file_write",
             "path": file.to_path_buf(),
-            "text": FILE_CONTENTS.to_string(),
+            "data": FILE_CONTENTS.as_bytes().to_vec(),
         },
     });
 
