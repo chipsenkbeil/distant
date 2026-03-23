@@ -457,6 +457,78 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
             debug!("Shutting down repl");
         }
+        #[cfg(feature = "mount")]
+        ClientSubcommand::Mount {
+            cache,
+            connection,
+            network,
+            remote_root,
+            readonly,
+            attr_ttl,
+            dir_ttl,
+            mount_point,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            debug!("Opening channel to connection {}", connection_id);
+            let channel = client
+                .open_raw_channel(connection_id)
+                .await
+                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
+
+            let channel: Channel = channel.into_client().into_channel();
+
+            let config = distant_mount::MountConfig {
+                mount_point: mount_point.clone(),
+                remote_root: remote_root.map(|s| s.into()),
+                readonly,
+                cache: distant_mount::CacheConfig {
+                    attr_ttl: Duration::from_secs_f64(attr_ttl),
+                    dir_ttl: Duration::from_secs_f64(dir_ttl),
+                    ..Default::default()
+                },
+            };
+
+            let handle = distant_mount::mount(tokio::runtime::Handle::current(), channel, config)
+                .context("Failed to mount filesystem")?;
+
+            println!("Mounted at {}", mount_point.display());
+            println!("Press Ctrl+C to unmount");
+
+            tokio::signal::ctrl_c()
+                .await
+                .context("Failed to listen for Ctrl+C")?;
+
+            handle
+                .unmount()
+                .await
+                .context("Failed to unmount filesystem")?;
+
+            println!("Unmounted");
+        }
+        #[cfg(feature = "mount")]
+        ClientSubcommand::Unmount { mount_point } => {
+            #[cfg(unix)]
+            {
+                let status = std::process::Command::new("umount")
+                    .arg(&mount_point)
+                    .status()
+                    .context("Failed to run umount")?;
+                if !status.success() {
+                    anyhow::bail!("umount failed with status {}", status);
+                }
+                println!("Unmounted {}", mount_point.display());
+            }
+            #[cfg(not(unix))]
+            {
+                anyhow::bail!("Unmount not supported on this platform");
+            }
+        }
         ClientSubcommand::Shell {
             cache,
             cmd,
