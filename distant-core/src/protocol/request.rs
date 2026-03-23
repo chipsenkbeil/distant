@@ -4,8 +4,8 @@ use derive_more::IsVariant;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::common::{
-    ChangeKind, Cmd, Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery,
-    SetPermissionsOptions, TunnelId,
+    ChangeKind, Cmd, Permissions, ProcessId, PtySize, ReadFileOptions, RemotePath, SearchId,
+    SearchQuery, SetPermissionsOptions, TunnelId, WriteFileOptions,
 };
 use crate::protocol::utils;
 
@@ -20,17 +20,14 @@ pub enum Request {
     FileRead {
         /// The path to the file on the remote machine
         path: RemotePath,
+
+        /// Options controlling the read operation
+        #[serde(default)]
+        options: ReadFileOptions,
     },
 
-    /// Reads a file from the specified path on the remote machine
-    /// and treats the contents as text
-    FileReadText {
-        /// The path to the file on the remote machine
-        path: RemotePath,
-    },
-
-    /// Writes a file, creating it if it does not exist, and overwriting any existing content
-    /// on the remote machine
+    /// Writes a file, creating it if it does not exist, on the remote machine.
+    /// Supports overwriting, appending, and offset-based writes via options.
     FileWrite {
         /// The path to the file on the remote machine
         path: RemotePath,
@@ -38,35 +35,10 @@ pub enum Request {
         /// Data for server-side writing of content
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
-    },
 
-    /// Writes a file using text instead of bytes, creating it if it does not exist,
-    /// and overwriting any existing content on the remote machine
-    FileWriteText {
-        /// The path to the file on the remote machine
-        path: RemotePath,
-
-        /// Data for server-side writing of content
-        text: String,
-    },
-
-    /// Appends to a file, creating it if it does not exist, on the remote machine
-    FileAppend {
-        /// The path to the file on the remote machine
-        path: RemotePath,
-
-        /// Data for server-side writing of content
-        #[serde(with = "serde_bytes")]
-        data: Vec<u8>,
-    },
-
-    /// Appends text to a file, creating it if it does not exist, on the remote machine
-    FileAppendText {
-        /// The path to the file on the remote machine
-        path: RemotePath,
-
-        /// Data for server-side writing of content
-        text: String,
+        /// Options controlling the write operation
+        #[serde(default)]
+        options: WriteFileOptions,
     },
 
     /// Reads a directory from the specified path on the remote machine
@@ -308,6 +280,7 @@ mod tests {
         fn should_be_able_to_serialize_to_json() {
             let payload = Request::FileRead {
                 path: RemotePath::new("path"),
+                options: Default::default(),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -316,6 +289,7 @@ mod tests {
                 serde_json::json!({
                     "type": "file_read",
                     "path": "path",
+                    "options": {},
                 })
             );
         }
@@ -332,6 +306,7 @@ mod tests {
                 payload,
                 Request::FileRead {
                     path: RemotePath::new("path"),
+                    options: Default::default(),
                 }
             );
         }
@@ -340,6 +315,7 @@ mod tests {
         fn should_be_able_to_serialize_to_msgpack() {
             let payload = Request::FileRead {
                 path: RemotePath::new("path"),
+                options: Default::default(),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -357,6 +333,7 @@ mod tests {
             // enough times with minor changes that we need tests to verify.
             let buf = rmp_serde::encode::to_vec_named(&Request::FileRead {
                 path: RemotePath::new("path"),
+                options: Default::default(),
             })
             .unwrap();
 
@@ -365,75 +342,79 @@ mod tests {
                 payload,
                 Request::FileRead {
                     path: RemotePath::new("path"),
+                    options: Default::default(),
                 }
             );
         }
-    }
-
-    mod file_read_text {
-        use super::*;
 
         #[test]
-        fn should_be_able_to_serialize_to_json() {
-            let payload = Request::FileReadText {
+        fn should_serialize_options_fields_when_set() {
+            let payload = Request::FileRead {
                 path: RemotePath::new("path"),
+                options: ReadFileOptions {
+                    offset: Some(100),
+                    len: Some(256),
+                },
             };
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "file_read_text",
+                    "type": "file_read",
                     "path": "path",
+                    "options": {
+                        "offset": 100,
+                        "len": 256,
+                    },
                 })
             );
         }
 
         #[test]
-        fn should_be_able_to_deserialize_from_json() {
+        fn should_deserialize_options_fields_when_set() {
             let value = serde_json::json!({
-                "type": "file_read_text",
+                "type": "file_read",
                 "path": "path",
+                "options": {
+                    "offset": 100,
+                    "len": 256,
+                },
             });
 
             let payload: Request = serde_json::from_value(value).unwrap();
             assert_eq!(
                 payload,
-                Request::FileReadText {
+                Request::FileRead {
                     path: RemotePath::new("path"),
+                    options: ReadFileOptions {
+                        offset: Some(100),
+                        len: Some(256),
+                    },
                 }
             );
         }
 
         #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::FileReadText {
+        fn should_be_able_to_roundtrip_options_via_msgpack() {
+            let buf = rmp_serde::encode::to_vec_named(&Request::FileRead {
                 path: RemotePath::new("path"),
-            };
-
-            // NOTE: We don't actually check the output here because it's an implementation detail
-            // and could change as we change how serialization is done. This is merely to verify
-            // that we can serialize since there are times when serde fails to serialize at
-            // runtime.
-            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
-            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or causing issues when serializing on a
-            // client/server and then trying to deserialize on the other side. This has happened
-            // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::FileReadText {
-                path: RemotePath::new("path"),
+                options: ReadFileOptions {
+                    offset: Some(100),
+                    len: Some(256),
+                },
             })
             .unwrap();
 
             let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 payload,
-                Request::FileReadText {
+                Request::FileRead {
                     path: RemotePath::new("path"),
+                    options: ReadFileOptions {
+                        offset: Some(100),
+                        len: Some(256),
+                    },
                 }
             );
         }
@@ -447,6 +428,7 @@ mod tests {
             let payload = Request::FileWrite {
                 path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
+                options: Default::default(),
             };
 
             let value = serde_json::to_value(payload).unwrap();
@@ -456,6 +438,7 @@ mod tests {
                     "type": "file_write",
                     "path": "path",
                     "data": [0, 1, 2, u8::MAX],
+                    "options": {},
                 })
             );
         }
@@ -474,6 +457,7 @@ mod tests {
                 Request::FileWrite {
                     path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
+                    options: Default::default(),
                 }
             );
         }
@@ -483,6 +467,7 @@ mod tests {
             let payload = Request::FileWrite {
                 path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
+                options: Default::default(),
             };
 
             // NOTE: We don't actually check the output here because it's an implementation detail
@@ -501,6 +486,7 @@ mod tests {
             let buf = rmp_serde::encode::to_vec_named(&Request::FileWrite {
                 path: RemotePath::new("path"),
                 data: vec![0, 1, 2, u8::MAX],
+                options: Default::default(),
             })
             .unwrap();
 
@@ -510,234 +496,83 @@ mod tests {
                 Request::FileWrite {
                     path: RemotePath::new("path"),
                     data: vec![0, 1, 2, u8::MAX],
+                    options: Default::default(),
                 }
             );
         }
-    }
-
-    mod file_write_text {
-        use super::*;
 
         #[test]
-        fn should_be_able_to_serialize_to_json() {
-            let payload = Request::FileWriteText {
+        fn should_serialize_append_option_when_true() {
+            let payload = Request::FileWrite {
                 path: RemotePath::new("path"),
-                text: String::from("text"),
+                data: vec![0, 1, 2],
+                options: WriteFileOptions {
+                    offset: None,
+                    append: true,
+                },
             };
 
             let value = serde_json::to_value(payload).unwrap();
             assert_eq!(
                 value,
                 serde_json::json!({
-                    "type": "file_write_text",
+                    "type": "file_write",
                     "path": "path",
-                    "text": "text",
+                    "data": [0, 1, 2],
+                    "options": {
+                        "append": true,
+                    },
                 })
             );
         }
 
         #[test]
-        fn should_be_able_to_deserialize_from_json() {
+        fn should_deserialize_append_option_when_true() {
             let value = serde_json::json!({
-                "type": "file_write_text",
+                "type": "file_write",
                 "path": "path",
-                "text": "text",
+                "data": [0, 1, 2],
+                "options": {
+                    "append": true,
+                },
             });
 
             let payload: Request = serde_json::from_value(value).unwrap();
             assert_eq!(
                 payload,
-                Request::FileWriteText {
+                Request::FileWrite {
                     path: RemotePath::new("path"),
-                    text: String::from("text"),
+                    data: vec![0, 1, 2],
+                    options: WriteFileOptions {
+                        offset: None,
+                        append: true,
+                    },
                 }
             );
         }
 
         #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::FileWriteText {
+        fn should_be_able_to_roundtrip_append_option_via_msgpack() {
+            let buf = rmp_serde::encode::to_vec_named(&Request::FileWrite {
                 path: RemotePath::new("path"),
-                text: String::from("text"),
-            };
-
-            // NOTE: We don't actually check the output here because it's an implementation detail
-            // and could change as we change how serialization is done. This is merely to verify
-            // that we can serialize since there are times when serde fails to serialize at
-            // runtime.
-            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
-            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or causing issues when serializing on a
-            // client/server and then trying to deserialize on the other side. This has happened
-            // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::FileWriteText {
-                path: RemotePath::new("path"),
-                text: String::from("text"),
+                data: vec![0, 1, 2],
+                options: WriteFileOptions {
+                    offset: None,
+                    append: true,
+                },
             })
             .unwrap();
 
             let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
             assert_eq!(
                 payload,
-                Request::FileWriteText {
+                Request::FileWrite {
                     path: RemotePath::new("path"),
-                    text: String::from("text"),
-                }
-            );
-        }
-    }
-
-    mod file_append {
-        use super::*;
-
-        #[test]
-        fn should_be_able_to_serialize_to_json() {
-            let payload = Request::FileAppend {
-                path: RemotePath::new("path"),
-                data: vec![0, 1, 2, u8::MAX],
-            };
-
-            let value = serde_json::to_value(payload).unwrap();
-            assert_eq!(
-                value,
-                serde_json::json!({
-                    "type": "file_append",
-                    "path": "path",
-                    "data": [0, 1, 2, u8::MAX],
-                })
-            );
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_json() {
-            let value = serde_json::json!({
-                "type": "file_append",
-                "path": "path",
-                "data": [0, 1, 2, u8::MAX],
-            });
-
-            let payload: Request = serde_json::from_value(value).unwrap();
-            assert_eq!(
-                payload,
-                Request::FileAppend {
-                    path: RemotePath::new("path"),
-                    data: vec![0, 1, 2, u8::MAX],
-                }
-            );
-        }
-
-        #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::FileAppend {
-                path: RemotePath::new("path"),
-                data: vec![0, 1, 2, u8::MAX],
-            };
-
-            // NOTE: We don't actually check the output here because it's an implementation detail
-            // and could change as we change how serialization is done. This is merely to verify
-            // that we can serialize since there are times when serde fails to serialize at
-            // runtime.
-            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
-            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or causing issues when serializing on a
-            // client/server and then trying to deserialize on the other side. This has happened
-            // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::FileAppend {
-                path: RemotePath::new("path"),
-                data: vec![0, 1, 2, u8::MAX],
-            })
-            .unwrap();
-
-            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(
-                payload,
-                Request::FileAppend {
-                    path: RemotePath::new("path"),
-                    data: vec![0, 1, 2, u8::MAX],
-                }
-            );
-        }
-    }
-
-    mod file_append_text {
-        use super::*;
-
-        #[test]
-        fn should_be_able_to_serialize_to_json() {
-            let payload = Request::FileAppendText {
-                path: RemotePath::new("path"),
-                text: String::from("text"),
-            };
-
-            let value = serde_json::to_value(payload).unwrap();
-            assert_eq!(
-                value,
-                serde_json::json!({
-                    "type": "file_append_text",
-                    "path": "path",
-                    "text": "text",
-                })
-            );
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_json() {
-            let value = serde_json::json!({
-                "type": "file_append_text",
-                "path": "path",
-                "text": "text",
-            });
-
-            let payload: Request = serde_json::from_value(value).unwrap();
-            assert_eq!(
-                payload,
-                Request::FileAppendText {
-                    path: RemotePath::new("path"),
-                    text: String::from("text"),
-                }
-            );
-        }
-
-        #[test]
-        fn should_be_able_to_serialize_to_msgpack() {
-            let payload = Request::FileAppendText {
-                path: RemotePath::new("path"),
-                text: String::from("text"),
-            };
-
-            // NOTE: We don't actually check the output here because it's an implementation detail
-            // and could change as we change how serialization is done. This is merely to verify
-            // that we can serialize since there are times when serde fails to serialize at
-            // runtime.
-            let _ = rmp_serde::encode::to_vec_named(&payload).unwrap();
-        }
-
-        #[test]
-        fn should_be_able_to_deserialize_from_msgpack() {
-            // NOTE: It may seem odd that we are serializing just to deserialize, but this is to
-            // verify that we are not corrupting or causing issues when serializing on a
-            // client/server and then trying to deserialize on the other side. This has happened
-            // enough times with minor changes that we need tests to verify.
-            let buf = rmp_serde::encode::to_vec_named(&Request::FileAppendText {
-                path: RemotePath::new("path"),
-                text: String::from("text"),
-            })
-            .unwrap();
-
-            let payload: Request = rmp_serde::decode::from_slice(&buf).unwrap();
-            assert_eq!(
-                payload,
-                Request::FileAppendText {
-                    path: RemotePath::new("path"),
-                    text: String::from("text"),
+                    data: vec![0, 1, 2],
+                    options: WriteFileOptions {
+                        offset: None,
+                        append: true,
+                    },
                 }
             );
         }

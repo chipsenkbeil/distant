@@ -4,13 +4,13 @@ use std::{env, io};
 
 use distant_core::protocol::{
     ChangeKind, ChangeKindSet, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION,
-    Permissions, ProcessId, PtySize, RemotePath, SearchId, SearchQuery, SetPermissionsOptions,
-    StatusInfo, SystemInfo, TunnelId, Version, semver,
+    Permissions, ProcessId, PtySize, ReadFileOptions, RemotePath, SearchId, SearchQuery,
+    SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId, Version, WriteFileOptions, semver,
 };
 use distant_core::{Api as DistantApi, Ctx};
 use ignore::{DirEntry as WalkDirEntry, WalkBuilder};
 use log::*;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use walkdir::WalkDir;
 
 use crate::config::Config;
@@ -37,74 +37,77 @@ impl Api {
 }
 
 impl DistantApi for Api {
-    async fn read_file(&self, ctx: Ctx, path: RemotePath) -> io::Result<Vec<u8>> {
+    async fn read_file(
+        &self,
+        ctx: Ctx,
+        path: RemotePath,
+        options: ReadFileOptions,
+    ) -> io::Result<Vec<u8>> {
         let path = PathBuf::from(path);
         debug!(
-            "[Conn {}] Reading bytes from file {:?}",
-            ctx.connection_id, path
+            "[Conn {}] Reading bytes from file {:?} (options: {:?})",
+            ctx.connection_id, path, options
         );
 
-        tokio::fs::read(path).await
+        if options.offset.is_none() && options.len.is_none() {
+            return tokio::fs::read(path).await;
+        }
+
+        let mut file = tokio::fs::File::open(path).await?;
+
+        if let Some(offset) = options.offset {
+            file.seek(io::SeekFrom::Start(offset)).await?;
+        }
+
+        match options.len {
+            Some(len) => {
+                let mut buf = vec![0u8; len as usize];
+                let n = file.read(&mut buf).await?;
+                buf.truncate(n);
+                Ok(buf)
+            }
+            None => {
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf).await?;
+                Ok(buf)
+            }
+        }
     }
 
-    async fn read_file_text(&self, ctx: Ctx, path: RemotePath) -> io::Result<String> {
+    async fn write_file(
+        &self,
+        ctx: Ctx,
+        path: RemotePath,
+        data: Vec<u8>,
+        options: WriteFileOptions,
+    ) -> io::Result<()> {
         let path = PathBuf::from(path);
         debug!(
-            "[Conn {}] Reading text from file {:?}",
-            ctx.connection_id, path
+            "[Conn {}] Writing bytes to file {:?} (options: {:?})",
+            ctx.connection_id, path, options
         );
 
-        tokio::fs::read_to_string(path).await
-    }
+        if options.append {
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await?;
+            return file.write_all(&data).await;
+        }
 
-    async fn write_file(&self, ctx: Ctx, path: RemotePath, data: Vec<u8>) -> io::Result<()> {
-        let path = PathBuf::from(path);
-        debug!(
-            "[Conn {}] Writing bytes to file {:?}",
-            ctx.connection_id, path
-        );
+        if let Some(offset) = options.offset {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)
+                .await?;
+            file.seek(io::SeekFrom::Start(offset)).await?;
+            return file.write_all(&data).await;
+        }
 
         tokio::fs::write(path, data).await
-    }
-
-    async fn write_file_text(&self, ctx: Ctx, path: RemotePath, data: String) -> io::Result<()> {
-        let path = PathBuf::from(path);
-        debug!(
-            "[Conn {}] Writing text to file {:?}",
-            ctx.connection_id, path
-        );
-
-        tokio::fs::write(path, data).await
-    }
-
-    async fn append_file(&self, ctx: Ctx, path: RemotePath, data: Vec<u8>) -> io::Result<()> {
-        let path = PathBuf::from(path);
-        debug!(
-            "[Conn {}] Appending bytes to file {:?}",
-            ctx.connection_id, path
-        );
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
-        file.write_all(data.as_ref()).await
-    }
-
-    async fn append_file_text(&self, ctx: Ctx, path: RemotePath, data: String) -> io::Result<()> {
-        let path = PathBuf::from(path);
-        debug!(
-            "[Conn {}] Appending text to file {:?}",
-            ctx.connection_id, path
-        );
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
-        file.write_all(data.as_ref()).await
     }
 
     async fn read_dir(
@@ -763,7 +766,7 @@ mod tests {
         let path = temp.child("missing-file").path().to_path_buf();
 
         let _ = api
-            .read_file(ctx, RemotePath::from(path))
+            .read_file(ctx, RemotePath::from(path), Default::default())
             .await
             .unwrap_err();
     }
@@ -777,38 +780,14 @@ mod tests {
         file.write_str("some file contents").unwrap();
 
         let bytes = api
-            .read_file(ctx, RemotePath::from(file.path().to_path_buf()))
+            .read_file(
+                ctx,
+                RemotePath::from(file.path().to_path_buf()),
+                Default::default(),
+            )
             .await
             .unwrap();
         assert_eq!(bytes, b"some file contents");
-    }
-
-    #[test(tokio::test)]
-    async fn read_file_text_should_send_error_if_fails_to_read_file() {
-        let (api, ctx, _rx) = setup().await;
-
-        let temp = assert_fs::TempDir::new().unwrap();
-        let path = temp.child("missing-file").path().to_path_buf();
-
-        let _ = api
-            .read_file_text(ctx, RemotePath::from(path))
-            .await
-            .unwrap_err();
-    }
-
-    #[test(tokio::test)]
-    async fn read_file_text_should_send_text_with_file_contents() {
-        let (api, ctx, _rx) = setup().await;
-
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("test-file");
-        file.write_str("some file contents").unwrap();
-
-        let text = api
-            .read_file_text(ctx, RemotePath::from(file.path().to_path_buf()))
-            .await
-            .unwrap();
-        assert_eq!(text, "some file contents");
     }
 
     #[test(tokio::test)]
@@ -825,6 +804,7 @@ mod tests {
                 ctx,
                 RemotePath::from(file.path().to_path_buf()),
                 b"some text".to_vec(),
+                Default::default(),
             )
             .await
             .unwrap_err();
@@ -846,6 +826,7 @@ mod tests {
             ctx,
             RemotePath::from(file.path().to_path_buf()),
             b"some text".to_vec(),
+            Default::default(),
         )
         .await
         .unwrap();
@@ -856,7 +837,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn write_file_text_should_send_error_if_fails_to_write_file() {
+    async fn write_file_append_should_send_error_if_fails_to_create_file() {
         let (api, ctx, _rx) = setup().await;
 
         // Create a temporary path and add to it to ensure that there are
@@ -864,53 +845,14 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("dir").child("test-file");
 
-        api.write_file_text(
-            ctx,
-            RemotePath::from(file.path().to_path_buf()),
-            "some text".to_string(),
-        )
-        .await
-        .unwrap_err();
-
-        // Also verify that we didn't actually create the file
-        file.assert(predicate::path::missing());
-    }
-
-    #[test(tokio::test)]
-    async fn write_file_text_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup().await;
-
-        // Path should point to a file that does not exist, but all
-        // other components leading up to it do
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("test-file");
-
-        api.write_file_text(
-            ctx,
-            RemotePath::from(file.path().to_path_buf()),
-            "some text".to_string(),
-        )
-        .await
-        .unwrap();
-
-        // Also verify that we actually did create the file
-        // with the associated contents
-        file.assert("some text");
-    }
-
-    #[test(tokio::test)]
-    async fn append_file_should_send_error_if_fails_to_create_file() {
-        let (api, ctx, _rx) = setup().await;
-
-        // Create a temporary path and add to it to ensure that there are
-        // extra components that don't exist to cause writing to fail
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("dir").child("test-file");
-
-        api.append_file(
+        api.write_file(
             ctx,
             RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
+            WriteFileOptions {
+                append: true,
+                ..Default::default()
+            },
         )
         .await
         .unwrap_err();
@@ -920,7 +862,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn append_file_should_create_file_if_missing() {
+    async fn write_file_append_should_create_file_if_missing() {
         let (api, ctx, _rx) = setup().await;
 
         // Don't create the file directly, but define path
@@ -928,10 +870,14 @@ mod tests {
         let temp = assert_fs::TempDir::new().unwrap();
         let file = temp.child("test-file");
 
-        api.append_file(
+        api.write_file(
             ctx,
             RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
+            WriteFileOptions {
+                append: true,
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -944,7 +890,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn append_file_should_send_ok_when_successful() {
+    async fn write_file_append_should_send_ok_when_successful() {
         let (api, ctx, _rx) = setup().await;
 
         // Create a temporary file and fill it with some contents
@@ -952,80 +898,14 @@ mod tests {
         let file = temp.child("test-file");
         file.write_str("some file contents").unwrap();
 
-        api.append_file(
+        api.write_file(
             ctx,
             RemotePath::from(file.path().to_path_buf()),
             b"some extra contents".to_vec(),
-        )
-        .await
-        .unwrap();
-
-        // Yield to allow chance to finish appending to file
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Also verify that we actually did append to the file
-        file.assert("some file contentssome extra contents");
-    }
-
-    #[test(tokio::test)]
-    async fn append_file_text_should_send_error_if_fails_to_create_file() {
-        let (api, ctx, _rx) = setup().await;
-
-        // Create a temporary path and add to it to ensure that there are
-        // extra components that don't exist to cause writing to fail
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("dir").child("test-file");
-
-        let _ = api
-            .append_file_text(
-                ctx,
-                RemotePath::from(file.path().to_path_buf()),
-                "some extra contents".to_string(),
-            )
-            .await
-            .unwrap_err();
-
-        // Also verify that we didn't actually create the file
-        file.assert(predicate::path::missing());
-    }
-
-    #[test(tokio::test)]
-    async fn append_file_text_should_create_file_if_missing() {
-        let (api, ctx, _rx) = setup().await;
-
-        // Don't create the file directly, but define path
-        // where the file should be
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("test-file");
-
-        api.append_file_text(
-            ctx,
-            RemotePath::from(file.path().to_path_buf()),
-            "some extra contents".to_string(),
-        )
-        .await
-        .unwrap();
-
-        // Yield to allow chance to finish appending to file
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Also verify that we actually did create to the file
-        file.assert("some extra contents");
-    }
-
-    #[test(tokio::test)]
-    async fn append_file_text_should_send_ok_when_successful() {
-        let (api, ctx, _rx) = setup().await;
-
-        // Create a temporary file and fill it with some contents
-        let temp = assert_fs::TempDir::new().unwrap();
-        let file = temp.child("test-file");
-        file.write_str("some file contents").unwrap();
-
-        api.append_file_text(
-            ctx,
-            RemotePath::from(file.path().to_path_buf()),
-            "some extra contents".to_string(),
+            WriteFileOptions {
+                append: true,
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
