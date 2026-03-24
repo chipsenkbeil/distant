@@ -4,7 +4,7 @@ set -euo pipefail
 BUNDLE="target/Distant.app"
 BINARY="${1:-target/release/distant}"
 IDENTITY="${CODESIGN_IDENTITY:--}"  # ad-hoc default, override for distribution
-ENTITLEMENTS="${ENTITLEMENTS:-resources/macos/distant-dev.entitlements}"
+ENTITLEMENTS="${ENTITLEMENTS:-}"    # empty = no entitlements (safe for ad-hoc)
 
 rm -rf "$BUNDLE"
 
@@ -21,12 +21,24 @@ cp resources/macos/Info.plist "$BUNDLE/Contents/"
 cp resources/macos/Extension-Info.plist \
    "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex/Contents/Info.plist"
 
-# Sign extension first, then app (order matters for Apple)
-codesign -s "$IDENTITY" -f --entitlements "$ENTITLEMENTS" \
+# Build codesign flags
+SIGN_FLAGS=(-s "$IDENTITY" -f)
+if [ -n "$ENTITLEMENTS" ]; then
+    SIGN_FLAGS+=(--entitlements "$ENTITLEMENTS")
+fi
+
+# Sign extension first, then app (order matters for Apple).
+# The appex contains a symlink to the main binary, so we sign the
+# appex bundle (not the symlink itself) — codesign handles this.
+codesign "${SIGN_FLAGS[@]}" \
     "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex"
-codesign -s "$IDENTITY" -f --entitlements "$ENTITLEMENTS" \
+codesign "${SIGN_FLAGS[@]}" \
     "$BUNDLE"
 
 echo "Bundle created at $BUNDLE"
 echo "Signed with identity: $IDENTITY"
-echo "Entitlements: $ENTITLEMENTS"
+if [ -n "$ENTITLEMENTS" ]; then
+    echo "Entitlements: $ENTITLEMENTS"
+else
+    echo "Entitlements: none (ad-hoc)"
+fi
