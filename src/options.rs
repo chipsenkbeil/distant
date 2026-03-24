@@ -57,6 +57,18 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
     if cfg!(feature = "host") {
         features.push("host");
     }
+    if cfg!(feature = "mount-fuse") {
+        features.push("mount-fuse");
+    }
+    if cfg!(feature = "mount-macos-file-provider") {
+        features.push("mount-macos-file-provider");
+    }
+    if cfg!(feature = "mount-nfs") {
+        features.push("mount-nfs");
+    }
+    if cfg!(feature = "mount-windows-cloud-files") {
+        features.push("mount-windows-cloud-files");
+    }
     if cfg!(feature = "pty") {
         features.push("pty");
     }
