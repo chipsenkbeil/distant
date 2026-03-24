@@ -11,6 +11,9 @@ pub(crate) use commands::common::PredictMode;
 pub(crate) use common::Manager;
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
+pub(crate) mod logger {
+    pub(crate) use super::common::logger::*;
+}
 
 /// Represents the primary CLI entrypoint
 #[derive(Debug)]

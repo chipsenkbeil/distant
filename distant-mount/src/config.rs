@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::{error, fmt};
 
+use distant_core::net::common::Map;
 use distant_core::protocol::RemotePath;
 
 /// Configuration for a FUSE mount of a remote filesystem.
@@ -23,6 +24,7 @@ use distant_core::protocol::RemotePath;
 /// ```
 /// use std::path::PathBuf;
 ///
+/// use distant_core::net::common::Map;
 /// use distant_mount::{CacheConfig, MountConfig};
 ///
 /// let config = MountConfig {
@@ -30,6 +32,7 @@ use distant_core::protocol::RemotePath;
 ///     remote_root: None,
 ///     readonly: false,
 ///     cache: CacheConfig::default(),
+///     extra: Map::new(),
 /// };
 /// ```
 #[derive(Clone, Debug)]
@@ -46,6 +49,12 @@ pub struct MountConfig {
 
     /// Cache configuration.
     pub cache: CacheConfig,
+
+    /// Backend-specific key-value data.
+    ///
+    /// For FileProvider: expects `connection_id` and `destination` keys.
+    /// For other backends: currently unused.
+    pub extra: Map,
 }
 
 /// Cache tuning parameters for a mounted filesystem.

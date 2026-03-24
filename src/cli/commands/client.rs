@@ -503,6 +503,15 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
             };
 
+            let info = client
+                .info(connection_id)
+                .await
+                .context("Failed to get connection info")?;
+
+            let mut extra = distant_core::net::common::Map::new();
+            extra.insert("connection_id".to_string(), connection_id.to_string());
+            extra.insert("destination".to_string(), info.destination);
+
             let config = distant_mount::MountConfig {
                 mount_point: mount_point.clone(),
                 remote_root: Some(resolved_root),
@@ -512,6 +521,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     dir_ttl: Duration::from_secs_f64(dir_ttl),
                     ..Default::default()
                 },
+                extra,
             };
 
             let handle =
