@@ -487,11 +487,25 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .await
                 .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
 
-            let channel: Channel = channel.into_client().into_channel();
+            let mut channel: Channel = channel.into_client().into_channel();
+
+            // Resolve the remote root now (while we're in an async context)
+            // so that RemoteFs::new() doesn't need to block_on(system_info).
+            let resolved_root = match remote_root {
+                Some(s) => s.into(),
+                None => {
+                    let info = channel
+                        .system_info()
+                        .await
+                        .context("Failed to get remote system info")?;
+                    debug!("remote root defaulting to server cwd: {}", info.current_dir);
+                    info.current_dir
+                }
+            };
 
             let config = distant_mount::MountConfig {
                 mount_point: mount_point.clone(),
-                remote_root: remote_root.map(|s| s.into()),
+                remote_root: Some(resolved_root),
                 readonly,
                 cache: distant_mount::CacheConfig {
                     attr_ttl: Duration::from_secs_f64(attr_ttl),
