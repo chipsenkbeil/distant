@@ -784,7 +784,7 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
         .ok_or_else(|| io::Error::other("FileProvider requires destination in extra map"))?;
 
     let domain_id = format!("dev.distant.{connection_id}");
-    let display_name = format!("distant - {destination}");
+    let display_name = format!("distant ({connection_id}) - {destination}");
 
     debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}",);
 
@@ -815,6 +815,10 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
             &display,
         )
     };
+
+    // Remove any existing domain with the same identifier so re-mounting
+    // the same connection doesn't fail with "already exists".
+    remove_domain_blocking(&domain);
 
     // addDomain is async with a completion handler. We block on it using
     // a channel to bridge to sync code.
@@ -847,5 +851,30 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
         Err(e) => Err(io::Error::other(format!(
             "FileProvider domain registration: completion handler never called: {e}"
         ))),
+    }
+}
+
+/// Removes a FileProvider domain, blocking until the operation completes.
+/// Errors are logged but not propagated — removal is best-effort cleanup.
+fn remove_domain_blocking(domain: &NSFileProviderDomain) {
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+
+    let completion = block2::RcBlock::new(move |error: *mut NSError| {
+        if error.is_null() {
+            let _ = tx.send(None);
+        } else {
+            let desc = unsafe { (*error).localizedDescription() }.to_string();
+            let _ = tx.send(Some(desc));
+        }
+    });
+
+    unsafe {
+        NSFileProviderManager::removeDomain_completionHandler(domain, &completion);
+    }
+
+    match rx.recv() {
+        Ok(None) => debug!("file_provider: removed existing domain"),
+        Ok(Some(err)) => debug!("file_provider: remove domain (best-effort): {err}"),
+        Err(_) => {}
     }
 }

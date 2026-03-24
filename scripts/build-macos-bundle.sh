@@ -12,6 +12,8 @@ IDENTITY="${CODESIGN_IDENTITY:--}"  # ad-hoc default, override for distribution
 # production entitlements files.
 ENTITLEMENTS="${ENTITLEMENTS:-resources/macos/distant-dev.entitlements}"
 APPEX_ENTITLEMENTS="${APPEX_ENTITLEMENTS:-resources/macos/distant-appex-dev.entitlements}"
+APP_PROFILE="${APP_PROFILE:-}"
+APPEX_PROFILE="${APPEX_PROFILE:-}"
 
 rm -rf "$BUNDLE"
 
@@ -28,6 +30,15 @@ ln "$BUNDLE/Contents/MacOS/distant" \
 cp resources/macos/Info.plist "$BUNDLE/Contents/"
 cp resources/macos/Extension-Info.plist \
    "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex/Contents/Info.plist"
+
+# Embed provisioning profiles (required for restricted entitlements)
+if [ -n "$APP_PROFILE" ]; then
+    cp "$APP_PROFILE" "$BUNDLE/Contents/embedded.provisionprofile"
+fi
+if [ -n "$APPEX_PROFILE" ]; then
+    cp "$APPEX_PROFILE" \
+        "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex/Contents/embedded.provisionprofile"
+fi
 
 # Build codesign flags for appex
 APPEX_SIGN_FLAGS=(-s "$IDENTITY" -f)

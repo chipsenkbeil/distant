@@ -13,7 +13,5 @@
     <true/>
     <key>com.apple.security.get-task-allow</key>
     <true/>
-    <key>com.apple.developer.fileprovider.testing-mode</key>
-    <true/>
 </dict>
 </plist>
