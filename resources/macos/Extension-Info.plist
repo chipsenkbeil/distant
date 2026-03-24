@@ -9,8 +9,20 @@
     <string>distant</string>
     <key>CFBundleName</key>
     <string>DistantFileProvider</string>
+    <key>CFBundleDisplayName</key>
+    <string>Distant File Provider</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>CFBundleVersion</key>
     <string>0.21.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.21.0</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>
@@ -19,6 +31,8 @@
         <string>DistantFileProvider</string>
         <key>NSExtensionFileProviderSupportsEnumeration</key>
         <true/>
+        <key>NSExtensionFileProviderDocumentGroup</key>
+        <string>group.dev.distant</string>
     </dict>
 </dict>
 </plist>
