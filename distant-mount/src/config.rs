@@ -274,6 +274,13 @@ pub struct MountHandle {
     /// [`unmount`]: MountHandle::unmount
     /// [`wait`]: MountHandle::wait
     join_handle: Option<tokio::task::JoinHandle<io::Result<()>>>,
+
+    /// Whether this mount requires a foreground process to stay alive.
+    ///
+    /// `true` for backends that run an in-process server (NFS, FUSE, Cloud
+    /// Files). `false` for FileProvider where domain registration persists
+    /// and macOS manages the extension lifecycle.
+    needs_foreground: bool,
 }
 
 impl MountHandle {
@@ -286,7 +293,22 @@ impl MountHandle {
         Self {
             shutdown_tx: Some(shutdown_tx),
             join_handle: Some(join_handle),
+            needs_foreground: true,
         }
+    }
+
+    /// Returns whether this mount requires a foreground process.
+    ///
+    /// Backends like NFS and FUSE run an in-process server that must stay
+    /// alive. FileProvider registers a persistent domain and can exit.
+    pub fn needs_foreground(&self) -> bool {
+        self.needs_foreground
+    }
+
+    /// Sets whether this mount needs a foreground process.
+    pub fn set_needs_foreground(mut self, needs: bool) -> Self {
+        self.needs_foreground = needs;
+        self
     }
 
     /// Sends a shutdown signal to the mount and waits for the background task

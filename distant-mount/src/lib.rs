@@ -137,7 +137,7 @@ fn mount_file_provider(
         Ok(())
     });
 
-    Ok(MountHandle::new(shutdown_tx, join_handle))
+    Ok(MountHandle::new(shutdown_tx, join_handle).set_needs_foreground(false))
 }
 
 #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]

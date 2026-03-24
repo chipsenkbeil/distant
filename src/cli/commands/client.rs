@@ -519,18 +519,22 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     .context("Failed to mount filesystem")?;
 
             println!("Mounted at {}", mount_point.display());
-            println!("Press Ctrl+C to unmount");
 
-            tokio::signal::ctrl_c()
-                .await
-                .context("Failed to listen for Ctrl+C")?;
-
-            handle
-                .unmount()
-                .await
-                .context("Failed to unmount filesystem")?;
-
-            println!("Unmounted");
+            // For backends that need a long-running process (NFS, FUSE,
+            // Cloud Files), wait for Ctrl+C to keep the server alive.
+            // For FileProvider, domain registration is persistent and
+            // macOS manages the .appex — no blocking needed.
+            if handle.needs_foreground() {
+                println!("Press Ctrl+C to unmount");
+                tokio::signal::ctrl_c()
+                    .await
+                    .context("Failed to listen for Ctrl+C")?;
+                handle
+                    .unmount()
+                    .await
+                    .context("Failed to unmount filesystem")?;
+                println!("Unmounted");
+            }
         }
         #[cfg(any(
             feature = "mount-fuse",
