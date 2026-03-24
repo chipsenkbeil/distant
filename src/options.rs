@@ -611,7 +611,14 @@ pub enum ClientSubcommand {
         dir_ttl: f64,
 
         /// Mount backend to use
-        #[clap(long, default_value_t)]
+        #[clap(
+            long,
+            default_value_t,
+            hide_possible_values = false,
+            value_parser = clap::builder::PossibleValuesParser::new(
+                distant_mount::MountBackend::available_backends()
+            ).map(|s| s.parse::<distant_mount::MountBackend>().unwrap())
+        )]
         backend: distant_mount::MountBackend,
 
         /// Local mount point
