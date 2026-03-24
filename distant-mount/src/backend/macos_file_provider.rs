@@ -23,6 +23,7 @@
 #![allow(dead_code)]
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use log::debug;
@@ -33,9 +34,20 @@ use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::*;
 use objc2_foundation::*;
 
+use crate::ChannelResolver;
 use crate::RemoteFs;
+use crate::config::{CacheConfig, MountConfig};
 
+use distant_core::net::common::Map;
 use distant_core::protocol::FileType;
+
+/// Tokio runtime handle for the `.appex` extension process, set once by
+/// [`init`] before macOS instantiates the FileProvider extension class.
+static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
+/// Channel resolver callback, set once by [`init`] before macOS instantiates
+/// the FileProvider extension class.
+static CHANNEL_RESOLVER: OnceLock<ChannelResolver> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Global RemoteFs access
@@ -54,6 +66,73 @@ fn get_remote_fs() -> Option<&'static Arc<RemoteFs>> {
 /// is invoked. Subsequent calls are ignored (the first value wins).
 pub(crate) fn set_remote_fs(fs: Arc<RemoteFs>) {
     let _ = REMOTE_FS.set(fs);
+}
+
+/// Stores the Tokio runtime handle and channel resolver for use by the
+/// `.appex` extension bootstrap flow.
+///
+/// Must be called once from the host process before macOS instantiates the
+/// `DistantFileProvider` class via `initWithDomain:`.
+pub(crate) fn init(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
+    let _ = TOKIO_HANDLE.set(rt);
+    let _ = CHANNEL_RESOLVER.set(resolve_channel);
+}
+
+/// Reads domain metadata from `NSUserDefaults` and initialises the global
+/// [`RemoteFs`] for this `.appex` process.
+///
+/// The metadata was persisted by [`register_domain`] as a serialised [`Map`]
+/// under the key `domain_id` in the `"group.dev.distant"` suite.
+fn bootstrap(domain_id: &str) -> io::Result<()> {
+    let suite_name = NSString::from_str("group.dev.distant");
+    let defaults = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&suite_name))
+        .ok_or_else(|| {
+            io::Error::other("failed to open NSUserDefaults suite \"group.dev.distant\"")
+        })?;
+
+    let key = NSString::from_str(domain_id);
+    let value_obj = defaults.stringForKey(&key).ok_or_else(|| {
+        io::Error::other(format!("no NSUserDefaults entry for domain {domain_id:?}"))
+    })?;
+
+    let value_str = value_obj.to_string();
+    let map: Map = value_str
+        .parse()
+        .map_err(|e| io::Error::other(format!("failed to parse domain metadata: {e}")))?;
+
+    let connection_id: u32 = map
+        .get("connection_id")
+        .ok_or_else(|| io::Error::other("domain metadata missing connection_id"))?
+        .parse()
+        .map_err(|e| io::Error::other(format!("invalid connection_id: {e}")))?;
+
+    let destination = map
+        .get("destination")
+        .ok_or_else(|| io::Error::other("domain metadata missing destination"))?
+        .clone();
+
+    let resolver = CHANNEL_RESOLVER
+        .get()
+        .ok_or_else(|| io::Error::other("CHANNEL_RESOLVER not initialised — init() not called"))?;
+    let channel = resolver(connection_id, &destination)?;
+
+    let rt = TOKIO_HANDLE
+        .get()
+        .ok_or_else(|| io::Error::other("TOKIO_HANDLE not initialised — init() not called"))?
+        .clone();
+
+    let config = MountConfig {
+        mount_point: PathBuf::new(),
+        remote_root: None,
+        readonly: false,
+        cache: CacheConfig::default(),
+        extra: Map::new(),
+    };
+
+    let fs = RemoteFs::new(rt, channel, config)?;
+    set_remote_fs(Arc::new(fs));
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -248,11 +327,21 @@ define_class!(
             debug!("file_provider: initWithDomain {:?}", unsafe {
                 domain.displayName()
             },);
+            let domain_id = unsafe { domain.identifier() }.to_string();
             let this = this.set_ivars(ExtensionIvars {
                 domain: Mutex::new(Some(domain.retain())),
             });
             // SAFETY: NSObject's `init` is always safe to call.
-            unsafe { msg_send![super(this), init] }
+            let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+
+            // Bootstrap the RemoteFs from persisted domain metadata.
+            // Errors are logged but not fatal — the enumerator handles
+            // get_remote_fs() returning None by signalling empty results.
+            if let Err(e) = bootstrap(&domain_id) {
+                debug!("file_provider: bootstrap failed for {domain_id:?}: {e}");
+            }
+
+            this
         }
 
         #[unsafe(method(invalidate))]
@@ -670,23 +759,93 @@ fn call_completion_create_error(
     ));
 }
 
-/// Registers a FileProvider domain for the given mount configuration.
+/// Registers a FileProvider domain with macOS.
 ///
-/// Sets the global [`RemoteFs`] and prepares for domain registration.
-/// The actual `.appex` extension process is launched by the system when
-/// the domain is accessed in Finder.
+/// Sets the global [`RemoteFs`] and calls `NSFileProviderManager.addDomain`
+/// to register a domain. The domain identifier is derived from the
+/// `connection_id` in `extra`, allowing multiple simultaneous mounts.
+///
+/// Domain metadata (`connection_id`, `destination`) is persisted in
+/// `NSUserDefaults` under the `"group.dev.distant"` suite so the `.appex`
+/// extension process can retrieve it later.
 ///
 /// # Errors
 ///
-/// Returns an error if the domain cannot be registered (currently a
-/// placeholder — domain registration will be implemented in the bundle
-/// assembly phase).
-pub(crate) fn register_domain(fs: Arc<RemoteFs>) -> io::Result<()> {
+/// Returns an error if `connection_id` or `destination` are missing from
+/// `extra`, or if the domain registration fails.
+pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> {
     set_remote_fs(fs);
 
-    // Domain registration would normally happen from the container app.
-    // For CLI-driven usage, we register the domain programmatically.
-    debug!("file_provider: domain registered (extension activation pending)");
+    let connection_id = extra
+        .get("connection_id")
+        .ok_or_else(|| io::Error::other("FileProvider requires connection_id in extra map"))?;
+    let destination = extra
+        .get("destination")
+        .ok_or_else(|| io::Error::other("FileProvider requires destination in extra map"))?;
 
-    Ok(())
+    let domain_id = format!("dev.distant.{connection_id}");
+    let display_name = format!("distant - {destination}");
+
+    debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}",);
+
+    // Persist domain metadata in App Group NSUserDefaults so the .appex
+    // extension process can look up connection info by domain identifier.
+    let suite_name = NSString::from_str("group.dev.distant");
+    let defaults = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&suite_name))
+        .ok_or_else(|| {
+            io::Error::other(
+                "Failed to open NSUserDefaults suite \"group.dev.distant\" — \
+                 the .appex extension will not be able to read domain metadata",
+            )
+        })?;
+    let key = NSString::from_str(&domain_id);
+    let value = NSString::from_str(&extra.to_string());
+    unsafe {
+        defaults.setObject_forKey(Some(&**value), &key);
+    }
+    debug!("file_provider: stored domain metadata in NSUserDefaults");
+
+    let identifier = NSString::from_str(&domain_id);
+    let display = NSString::from_str(&display_name);
+
+    let domain = unsafe {
+        NSFileProviderDomain::initWithIdentifier_displayName(
+            NSFileProviderDomain::alloc(),
+            &identifier,
+            &display,
+        )
+    };
+
+    // addDomain is async with a completion handler. We block on it using
+    // a channel to bridge to sync code.
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+
+    let completion = block2::RcBlock::new(move |error: *mut NSError| {
+        if error.is_null() {
+            let _ = tx.send(None);
+        } else {
+            let desc = unsafe { (*error).localizedDescription() }.to_string();
+            let _ = tx.send(Some(desc));
+        }
+    });
+
+    unsafe {
+        NSFileProviderManager::addDomain_completionHandler(&domain, &completion);
+    }
+
+    match rx.recv() {
+        Ok(None) => {
+            debug!("file_provider: domain {domain_id:?} registered successfully");
+            Ok(())
+        }
+        Ok(Some(err)) => {
+            debug!("file_provider: domain registration failed: {err}");
+            Err(io::Error::other(format!(
+                "FileProvider domain registration failed: {err}"
+            )))
+        }
+        Err(e) => Err(io::Error::other(format!(
+            "FileProvider domain registration: completion handler never called: {e}"
+        ))),
+    }
 }

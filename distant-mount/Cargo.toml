@@ -38,7 +38,7 @@ objc2-file-provider = { version = "0.3", optional = true, features = [
 ] }
 objc2-foundation = { version = "0.3", optional = true, features = [
     "NSObject", "NSString", "NSError", "NSProgress", "NSURL",
-    "NSData", "NSArray", "NSDictionary", "NSBundle",
+    "NSData", "NSArray", "NSDictionary", "NSBundle", "NSUserDefaults",
 ] }
 block2 = { version = "0.6", optional = true }
 

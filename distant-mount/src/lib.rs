@@ -13,6 +13,22 @@ pub mod backend;
 pub use config::{CacheConfig, MountBackend, MountConfig, MountHandle, ParseMountBackendError};
 pub use remote_fs::RemoteFs;
 
+/// Callback type that resolves a connection ID and destination string into
+/// a [`distant_core::Channel`] by communicating with the distant manager.
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+pub type ChannelResolver =
+    Box<dyn Fn(u32, &str) -> std::io::Result<distant_core::Channel> + Send + Sync>;
+
+/// Stores the Tokio runtime handle and channel resolver needed by the
+/// `.appex` FileProvider extension bootstrap flow.
+///
+/// Must be called once from the host process before macOS instantiates the
+/// `DistantFileProvider` class via `initWithDomain:`.
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
+    backend::macos_file_provider::init(rt, resolve_channel);
+}
+
 /// Returns `true` if this process is running as a macOS `.appex` FileProvider extension.
 ///
 /// Checks `NSBundle.mainBundle.bundlePath` for a `.appex` suffix, which is
@@ -127,9 +143,10 @@ fn mount_file_provider(
 ) -> std::io::Result<MountHandle> {
     use std::sync::Arc;
 
+    let extra = config.extra.clone();
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
 
-    backend::macos_file_provider::register_domain(fs)?;
+    backend::macos_file_provider::register_domain(fs, &extra)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
