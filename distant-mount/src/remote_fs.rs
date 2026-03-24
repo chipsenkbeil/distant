@@ -5,11 +5,11 @@
 //! and all caches, providing a unified API that mount backends call into.
 
 use std::io;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
-use log::debug;
+use log::{debug, warn};
 
-use distant_core::protocol::{ReadFileOptions, RemotePath, WriteFileOptions};
+use distant_core::protocol::{ChangeKind, ReadFileOptions, RemotePath, WriteFileOptions};
 use distant_core::{Channel, ChannelExt};
 
 use crate::cache::{self, AttrCache, CachedAttr, DirCache, DirCacheEntry, FileAttr, ReadCache};
@@ -37,12 +37,13 @@ pub struct RemoteFs {
     rt: tokio::runtime::Handle,
     channel: Channel,
     inodes: RwLock<InodeTable>,
-    attr_cache: Mutex<AttrCache>,
-    dir_cache: Mutex<DirCache>,
-    read_cache: Mutex<ReadCache>,
+    attr_cache: Arc<Mutex<AttrCache>>,
+    dir_cache: Arc<Mutex<DirCache>>,
+    read_cache: Arc<Mutex<ReadCache>>,
     write_buffers: Mutex<WriteBuffers>,
     #[allow(dead_code)]
     config: MountConfig,
+    watch_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RemoteFs {
@@ -72,15 +73,35 @@ impl RemoteFs {
 
         let cache = &config.cache;
 
+        let attr_cache = Arc::new(Mutex::new(AttrCache::new(
+            cache.attr_capacity,
+            cache.attr_ttl,
+        )));
+        let dir_cache = Arc::new(Mutex::new(DirCache::new(cache.dir_capacity, cache.dir_ttl)));
+        let read_cache = Arc::new(Mutex::new(ReadCache::new(
+            cache.read_capacity,
+            cache.read_ttl,
+        )));
+
+        let watch_handle = spawn_watch_task(
+            &rt,
+            channel.clone(),
+            root_path.clone(),
+            Arc::clone(&attr_cache),
+            Arc::clone(&dir_cache),
+            Arc::clone(&read_cache),
+        );
+
         Ok(Self {
             rt,
             channel,
             inodes: RwLock::new(InodeTable::new(root_path, cache.attr_capacity)),
-            attr_cache: Mutex::new(AttrCache::new(cache.attr_capacity, cache.attr_ttl)),
-            dir_cache: Mutex::new(DirCache::new(cache.dir_capacity, cache.dir_ttl)),
-            read_cache: Mutex::new(ReadCache::new(cache.read_capacity, cache.read_ttl)),
+            attr_cache,
+            dir_cache,
+            read_cache,
             write_buffers: Mutex::new(WriteBuffers::new()),
             config,
+            watch_handle,
         })
     }
 
@@ -752,6 +773,105 @@ impl RemoteFs {
     fn fetch_metadata(&self, path: &RemotePath) -> io::Result<distant_core::protocol::Metadata> {
         let mut ch = self.channel.clone();
         self.rt.block_on(ch.metadata(path.clone(), false, true))
+    }
+}
+
+impl Drop for RemoteFs {
+    fn drop(&mut self) {
+        if let Some(handle) = self.watch_handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Spawns a best-effort watch task that invalidates caches when remote
+/// filesystem changes are detected.
+///
+/// If the plugin does not support watching (e.g. Docker, SSH), logs a
+/// warning and returns `None`.
+fn spawn_watch_task(
+    rt: &tokio::runtime::Handle,
+    channel: Channel,
+    remote_root: RemotePath,
+    attr_cache: Arc<Mutex<AttrCache>>,
+    dir_cache: Arc<Mutex<DirCache>>,
+    read_cache: Arc<Mutex<ReadCache>>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let mut watch_channel = channel.clone();
+
+    let handle = rt.spawn(async move {
+        match watch_channel
+            .watch(
+                remote_root,
+                true,
+                Vec::<distant_core::protocol::ChangeKind>::new(),
+                Vec::<distant_core::protocol::ChangeKind>::new(),
+            )
+            .await
+        {
+            Ok(mut watcher) => {
+                debug!("watch-based cache invalidation active");
+                while let Some(change) = watcher.next().await {
+                    invalidate_for_change(&attr_cache, &dir_cache, &read_cache, &change);
+                }
+                debug!("watcher stream ended");
+            }
+            Err(e) => {
+                warn!(
+                    "watch not available for this connection, cache invalidation \
+                     will rely on TTL only: {e}"
+                );
+            }
+        }
+    });
+
+    Some(handle)
+}
+
+/// Invalidates the appropriate caches based on a filesystem change event.
+fn invalidate_for_change(
+    attr_cache: &Arc<Mutex<AttrCache>>,
+    dir_cache: &Arc<Mutex<DirCache>>,
+    read_cache: &Arc<Mutex<ReadCache>>,
+    change: &distant_core::protocol::Change,
+) {
+    let path = &change.path;
+
+    debug!("cache invalidation for {:?} on {}", change.kind, path);
+
+    match change.kind {
+        ChangeKind::Create | ChangeKind::Delete | ChangeKind::Rename => {
+            if let Ok(mut cache) = attr_cache.lock() {
+                cache.invalidate(path);
+            }
+            // Invalidate parent directory listing.
+            let parent = parent_path(path);
+            if let Ok(mut cache) = dir_cache.lock() {
+                cache.invalidate(&parent);
+                cache.invalidate(path);
+            }
+        }
+        ChangeKind::Modify | ChangeKind::CloseWrite => {
+            if let Ok(mut cache) = attr_cache.lock() {
+                cache.invalidate(path);
+            }
+            // Read cache is keyed by inode, which we don't have here.
+            // Clear the entire read cache as a conservative approach.
+            if let Ok(mut cache) = read_cache.lock() {
+                cache.clear();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Returns the parent path of a remote path.
+fn parent_path(path: &RemotePath) -> RemotePath {
+    let s = path.as_str();
+    match s.rsplit_once('/') {
+        Some(("", _)) => RemotePath::new("/"),
+        Some((parent, _)) => RemotePath::new(parent),
+        None => RemotePath::new("/"),
     }
 }
 

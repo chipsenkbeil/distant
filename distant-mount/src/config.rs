@@ -7,7 +7,9 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Duration;
+use std::{error, fmt};
 
 use distant_core::protocol::RemotePath;
 
@@ -100,6 +102,154 @@ impl Default for CacheConfig {
             read_capacity: 100,
         }
     }
+}
+
+/// Selects which mount backend to use.
+///
+/// Each variant is only available when its corresponding feature and
+/// platform requirements are met. Use [`MountBackend::available_backends`]
+/// to discover which backends are compiled in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MountBackend {
+    #[cfg(all(
+        feature = "fuse",
+        any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+    ))]
+    Fuse,
+
+    #[cfg(feature = "nfs")]
+    Nfs,
+
+    #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+    WindowsCloudFiles,
+
+    #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+    MacosFileProvider,
+}
+
+impl MountBackend {
+    /// Returns the list of backends available in this build.
+    pub fn available_backends() -> &'static [&'static str] {
+        &[
+            #[cfg(all(
+                feature = "fuse",
+                any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+            ))]
+            "fuse",
+            #[cfg(feature = "nfs")]
+            "nfs",
+            #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+            "windows-cloud-files",
+            #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+            "macos-file-provider",
+        ]
+    }
+}
+
+impl Default for MountBackend {
+    fn default() -> Self {
+        #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+        {
+            if is_running_in_app_bundle() {
+                return Self::MacosFileProvider;
+            }
+        }
+
+        #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+        {
+            return Self::WindowsCloudFiles;
+        }
+
+        #[cfg(feature = "nfs")]
+        {
+            return Self::Nfs;
+        }
+
+        #[cfg(all(
+            feature = "fuse",
+            any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+        ))]
+        {
+            return Self::Fuse;
+        }
+
+        #[allow(unreachable_code)]
+        {
+            // This branch is only reached when no mount backends are compiled.
+            // The enum is empty in that case, so constructing a value is impossible.
+            // The CLI won't expose mount commands without at least one backend feature.
+            panic!("no mount backend available — enable at least one mount feature")
+        }
+    }
+}
+
+impl fmt::Display for MountBackend {
+    #[allow(unused_variables)]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(all(
+                feature = "fuse",
+                any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+            ))]
+            Self::Fuse => f.write_str("fuse"),
+            #[cfg(feature = "nfs")]
+            Self::Nfs => f.write_str("nfs"),
+            #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+            Self::WindowsCloudFiles => f.write_str("windows-cloud-files"),
+            #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+            Self::MacosFileProvider => f.write_str("macos-file-provider"),
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Error returned when parsing an invalid [`MountBackend`] string.
+#[derive(Clone, Debug)]
+pub struct ParseMountBackendError(String);
+
+impl fmt::Display for ParseMountBackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "unknown mount backend {:?}, available: {:?}",
+            self.0,
+            MountBackend::available_backends()
+        )
+    }
+}
+
+impl error::Error for ParseMountBackendError {}
+
+impl FromStr for MountBackend {
+    type Err = ParseMountBackendError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            #[cfg(all(
+                feature = "fuse",
+                any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+            ))]
+            "fuse" => Ok(Self::Fuse),
+            #[cfg(feature = "nfs")]
+            "nfs" => Ok(Self::Nfs),
+            #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+            "windows-cloud-files" => Ok(Self::WindowsCloudFiles),
+            #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+            "macos-file-provider" => Ok(Self::MacosFileProvider),
+            _ => Err(ParseMountBackendError(s.to_string())),
+        }
+    }
+}
+
+/// Detects whether this process is running inside a `.app` bundle.
+///
+/// Uses `NSBundle.mainBundle.bundleIdentifier` — non-nil means bundled.
+/// This is Apple's recommended approach (more reliable than path string matching).
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+fn is_running_in_app_bundle() -> bool {
+    use objc2_foundation::NSBundle;
+    NSBundle::mainBundle().bundleIdentifier().is_some()
 }
 
 /// Handle to an active filesystem mount.

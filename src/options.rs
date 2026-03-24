@@ -220,11 +220,21 @@ impl Options {
                                 .take()
                                 .or(config.client.launch.distant.bind_server);
                     }
-                    #[cfg(feature = "mount")]
+                    #[cfg(any(
+                        feature = "mount-fuse",
+                        feature = "mount-nfs",
+                        feature = "mount-windows-cloud-files",
+                        feature = "mount-macos-file-provider",
+                    ))]
                     ClientSubcommand::Mount { network, .. } => {
                         network.merge(config.client.network);
                     }
-                    #[cfg(feature = "mount")]
+                    #[cfg(any(
+                        feature = "mount-fuse",
+                        feature = "mount-nfs",
+                        feature = "mount-windows-cloud-files",
+                        feature = "mount-macos-file-provider",
+                    ))]
                     ClientSubcommand::Unmount { .. } => {}
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
@@ -549,7 +559,12 @@ pub enum ClientSubcommand {
     },
 
     /// Mount a remote filesystem at a local directory
-    #[cfg(feature = "mount")]
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
     Mount {
         /// Location to store cached data
         #[clap(
@@ -583,12 +598,21 @@ pub enum ClientSubcommand {
         #[clap(long, default_value = "1")]
         dir_ttl: f64,
 
+        /// Mount backend to use
+        #[clap(long, default_value_t)]
+        backend: distant_mount::MountBackend,
+
         /// Local mount point
         mount_point: PathBuf,
     },
 
     /// Unmount a previously mounted remote filesystem
-    #[cfg(feature = "mount")]
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
     Unmount {
         /// Local mount point to unmount
         mount_point: PathBuf,
@@ -866,9 +890,19 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Tunnel(sub) => sub.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Mount { cache, .. } => cache.as_path(),
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Unmount { .. } => constants::user::CACHE_FILE_PATH.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
@@ -890,9 +924,19 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Tunnel(sub) => sub.network_settings(),
             Self::Launch { network, .. } => network,
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Mount { network, .. } => network,
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Unmount { .. } => {
                 static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
                 &DEFAULT
@@ -920,9 +964,19 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.format(),
             Self::Tunnel(sub) => sub.format(),
             Self::Launch { format, .. } => *format,
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Mount { .. } => Format::Shell,
-            #[cfg(feature = "mount")]
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
             Self::Unmount { .. } => Format::Shell,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
