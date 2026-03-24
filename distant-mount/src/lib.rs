@@ -10,10 +10,26 @@ mod write_buffer;
 
 pub mod backend;
 
-pub use config::{CacheConfig, MountConfig, MountHandle};
+pub use config::{CacheConfig, MountBackend, MountConfig, MountHandle, ParseMountBackendError};
 pub use remote_fs::RemoteFs;
 
-/// Mount a remote filesystem at the given mount point.
+/// Returns `true` if this process is running as a macOS `.appex` FileProvider extension.
+///
+/// Checks `NSBundle.mainBundle.bundlePath` for a `.appex` suffix, which is
+/// Apple's standard approach for distinguishing `.app` from `.appex` bundles.
+///
+/// Always returns `false` on non-macOS platforms or when the `macos-file-provider`
+/// feature is not enabled.
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+pub fn is_file_provider_extension() -> bool {
+    use objc2_foundation::NSBundle;
+    NSBundle::mainBundle()
+        .bundlePath()
+        .to_string()
+        .ends_with(".appex")
+}
+
+/// Mount a remote filesystem at the given mount point using the specified backend.
 ///
 /// Returns a [`MountHandle`] that can be used to unmount or wait for the mount
 /// to end.
@@ -21,13 +37,37 @@ pub use remote_fs::RemoteFs;
 /// # Errors
 ///
 /// Returns an error if the [`RemoteFs`] fails to initialize (e.g., the initial
-/// `system_info` call fails) or the FUSE mount fails (e.g., missing permissions
-/// or the mount point does not exist).
+/// `system_info` call fails) or the backend-specific mount operation fails.
+#[allow(unused_variables)]
+pub fn mount(
+    rt: tokio::runtime::Handle,
+    channel: distant_core::Channel,
+    config: MountConfig,
+    backend: MountBackend,
+) -> std::io::Result<MountHandle> {
+    match backend {
+        #[cfg(all(
+            feature = "fuse",
+            any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+        ))]
+        MountBackend::Fuse => mount_fuse(rt, channel, config),
+        #[cfg(feature = "nfs")]
+        MountBackend::Nfs => mount_nfs(rt, channel, config),
+        #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+        MountBackend::WindowsCloudFiles => mount_cloud_files(rt, channel, config),
+        #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+        MountBackend::MacosFileProvider => mount_file_provider(rt, channel, config),
+        // When no backends are compiled the enum is uninhabited.
+        #[allow(unreachable_patterns)]
+        _ => unreachable!(),
+    }
+}
+
 #[cfg(all(
     feature = "fuse",
     any(target_os = "linux", target_os = "freebsd", target_os = "macos")
 ))]
-pub fn mount(
+fn mount_fuse(
     rt: tokio::runtime::Handle,
     channel: distant_core::Channel,
     config: MountConfig,
@@ -50,35 +90,17 @@ pub fn mount(
     Ok(MountHandle::new(shutdown_tx, join_handle))
 }
 
-/// Mount a remote filesystem at the given mount point using a localhost NFS server.
-///
-/// Returns a [`MountHandle`] that can be used to unmount or wait for the mount
-/// to end. A localhost NFSv3 server is started on a random port and the OS-native
-/// `mount_nfs` command attaches it to the mount point.
-///
-/// This variant is selected on OpenBSD and NetBSD where FUSE is not available.
-///
-/// # Errors
-///
-/// Returns an error if the [`RemoteFs`] fails to initialize, the NFS server
-/// cannot bind to a local port, or the OS mount command fails.
-#[cfg(all(
-    feature = "nfs",
-    any(target_os = "openbsd", target_os = "netbsd"),
-    not(all(
-        feature = "fuse",
-        any(target_os = "linux", target_os = "freebsd", target_os = "macos")
-    ))
-))]
-pub fn mount(
+#[cfg(feature = "nfs")]
+fn mount_nfs(
     rt: tokio::runtime::Handle,
     channel: distant_core::Channel,
     config: MountConfig,
 ) -> std::io::Result<MountHandle> {
     use std::sync::Arc;
 
-    let mount_point = config.mount_point.clone();
     use nfsserve::tcp::NFSTcp;
+
+    let mount_point = config.mount_point.clone();
 
     let rt_handle = rt.clone();
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
@@ -97,31 +119,8 @@ pub fn mount(
     Ok(MountHandle::new(shutdown_tx, join_handle))
 }
 
-/// Mount a remote filesystem at the given mount point using Windows Cloud Files.
-///
-/// Returns a [`MountHandle`] that can be used to unmount or wait for the mount
-/// to end. The mount point directory must already exist and will be registered
-/// as a Cloud Files sync root with native File Explorer integration.
-///
-/// # Errors
-///
-/// Returns an error if the [`RemoteFs`] fails to initialize (e.g., the initial
-/// `system_info` call fails), the sync root registration fails, or the Cloud
-/// Filter session connection fails.
-/// Mount a remote filesystem using the macOS FileProvider framework.
-///
-/// Returns a [`MountHandle`] that keeps the FileProvider domain active.
-/// The system launches the `.appex` extension process when the domain
-/// is accessed in Finder.
-///
-/// Unlike FUSE, this provides native Finder integration with placeholder
-/// files, but requires a `.app` bundle containing the `.appex` extension.
-///
-/// # Errors
-///
-/// Returns an error if the [`RemoteFs`] fails to initialize.
 #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
-pub fn mount_file_provider(
+fn mount_file_provider(
     rt: tokio::runtime::Handle,
     channel: distant_core::Channel,
     config: MountConfig,
@@ -142,7 +141,7 @@ pub fn mount_file_provider(
 }
 
 #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
-pub fn mount(
+fn mount_cloud_files(
     rt: tokio::runtime::Handle,
     channel: distant_core::Channel,
     config: MountConfig,

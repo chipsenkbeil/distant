@@ -6,16 +6,7 @@
 ))]
 pub(crate) mod fuse;
 
-#[cfg(all(
-    feature = "nfs",
-    any(
-        target_os = "openbsd",
-        target_os = "netbsd",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "freebsd"
-    )
-))]
+#[cfg(feature = "nfs")]
 #[allow(dead_code)]
 pub(crate) mod nfs;
 

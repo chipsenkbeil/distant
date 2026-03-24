@@ -457,7 +457,12 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
             debug!("Shutting down repl");
         }
-        #[cfg(feature = "mount")]
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider",
+        ))]
         ClientSubcommand::Mount {
             cache,
             connection,
@@ -466,6 +471,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             readonly,
             attr_ttl,
             dir_ttl,
+            backend,
             mount_point,
         } => {
             debug!("Connecting to manager");
@@ -494,8 +500,9 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 },
             };
 
-            let handle = distant_mount::mount(tokio::runtime::Handle::current(), channel, config)
-                .context("Failed to mount filesystem")?;
+            let handle =
+                distant_mount::mount(tokio::runtime::Handle::current(), channel, config, backend)
+                    .context("Failed to mount filesystem")?;
 
             println!("Mounted at {}", mount_point.display());
             println!("Press Ctrl+C to unmount");
@@ -511,7 +518,12 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
             println!("Unmounted");
         }
-        #[cfg(feature = "mount")]
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider",
+        ))]
         ClientSubcommand::Unmount { mount_point } => {
             #[cfg(unix)]
             {
@@ -520,13 +532,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     .status()
                     .context("Failed to run umount")?;
                 if !status.success() {
-                    anyhow::bail!("umount failed with status {}", status);
+                    return Err(anyhow::anyhow!("umount failed with status {}", status).into());
                 }
                 println!("Unmounted {}", mount_point.display());
             }
             #[cfg(not(unix))]
             {
-                anyhow::bail!("Unmount not supported on this platform");
+                return Err(anyhow::anyhow!("Unmount not supported on this platform").into());
             }
         }
         ClientSubcommand::Shell {

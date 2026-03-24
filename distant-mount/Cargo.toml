@@ -6,7 +6,7 @@ edition = "2024"
 license.workspace = true
 
 [features]
-default = ["fuse"]
+default = []
 fuse = ["dep:fuser", "dep:libc"]
 nfs = ["dep:nfsserve"]
 windows-cloud-files = ["dep:cloud-filter"]
@@ -18,13 +18,11 @@ async-trait = "0.1"
 log = "0.4.29"
 tokio = { version = "1.50.0", features = ["full"] }
 lru = "0.14"
+nfsserve = { version = "0.10", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 fuser = { version = "0.17", optional = true }
 libc = { version = "0.2", optional = true }
-
-[target.'cfg(any(target_os = "openbsd", target_os = "netbsd", target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
-nfsserve = { version = "0.10", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }
@@ -40,7 +38,7 @@ objc2-file-provider = { version = "0.3", optional = true, features = [
 ] }
 objc2-foundation = { version = "0.3", optional = true, features = [
     "NSObject", "NSString", "NSError", "NSProgress", "NSURL",
-    "NSData", "NSArray", "NSDictionary",
+    "NSData", "NSArray", "NSDictionary", "NSBundle",
 ] }
 block2 = { version = "0.6", optional = true }
 

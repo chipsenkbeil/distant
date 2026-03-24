@@ -48,10 +48,13 @@ strip = true
 panic = "abort"
 
 [features]
-default = ["docker", "host", "ssh", "pty"]
+default = ["docker", "host", "mount-nfs", "ssh", "pty"]
 docker = ["dep:distant-docker"]
 host = ["dep:distant-host", "distant-host/macos-fsevent"]
-mount = ["dep:distant-mount"]
+mount-fuse = ["dep:distant-mount", "distant-mount/fuse"]
+mount-nfs = ["dep:distant-mount", "distant-mount/nfs"]
+mount-windows-cloud-files = ["dep:distant-mount", "distant-mount/windows-cloud-files"]
+mount-macos-file-provider = ["dep:distant-mount", "distant-mount/macos-file-provider"]
 pty = ["distant-host/pty"]
 ssh = ["dep:distant-ssh"]
 
@@ -88,6 +91,7 @@ distant-docker = { workspace = true, optional = true }
 
 # Optional mount backend
 distant-mount = { workspace = true, optional = true }
+
 
 # SSH backend (optional)
 distant-ssh = { workspace = true, optional = true }

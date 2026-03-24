@@ -353,6 +353,36 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
         ])
         .status()?;
 
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("mount")
+        .args([
+            "-o",
+            &format!("port={port},mountport={port},nolock,mtype=hard"),
+            "localhost:/",
+            mount_point_str,
+        ])
+        .status()
+        .map_err(|e| {
+            io::Error::other(format!(
+                "NFS mount failed: {e}. Ensure the 'Client for NFS' Windows \
+                 feature is enabled (Settings > Apps > Optional Features > \
+                 'Client for NFS', or: Enable-WindowsOptionalFeature \
+                 -FeatureName ServicesForNFS-ClientOnly -Online)"
+            ))
+        })?;
+
+    #[cfg(not(any(
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "windows",
+    )))]
+    return Err(io::Error::other(
+        "NFS mount is not supported on this platform",
+    ));
+
     if !status.success() {
         return Err(io::Error::other(format!(
             "mount command failed with status {status}"
