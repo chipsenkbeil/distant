@@ -19,6 +19,11 @@ pub use remote_fs::RemoteFs;
 pub type ChannelResolver =
     Box<dyn Fn(u32, &str) -> std::io::Result<distant_core::Channel> + Send + Sync>;
 
+/// App Group identifier, prefixed with the Team ID as required by the
+/// provisioning profile's `application-groups` wildcard (`39C6AGD73Z.*`).
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+pub const APP_GROUP_ID: &str = "39C6AGD73Z.group.dev.distant";
+
 /// Public macOS FileProvider API.
 ///
 /// Exposes functions for the binary crate to interact with the FileProvider
@@ -48,11 +53,11 @@ pub mod macos {
         crate::backend::macos_file_provider::register_classes();
     }
 
-    /// Returns the path to the App Group shared container for `"group.dev.distant"`.
+    /// Returns the path to the App Group shared container.
     pub fn app_group_container_path() -> Option<PathBuf> {
         use objc2_foundation::{NSFileManager, NSString};
 
-        let group_id = NSString::from_str("group.dev.distant");
+        let group_id = NSString::from_str(crate::APP_GROUP_ID);
         let manager = NSFileManager::defaultManager();
         let url = manager.containerURLForSecurityApplicationGroupIdentifier(&group_id)?;
         let path_ns = url.path()?;
