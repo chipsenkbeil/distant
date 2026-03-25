@@ -6,12 +6,8 @@ BINARY="${1:-target/release/distant}"
 IDENTITY="${CODESIGN_IDENTITY:--}"  # ad-hoc default, override for distribution
 
 # Entitlements for the main app and the appex extension.
-# For ad-hoc (dev) builds, default to dev entitlements so the
-# FileProvider extension can load via testing-mode.
-# For distribution, set ENTITLEMENTS / APPEX_ENTITLEMENTS to the
-# production entitlements files.
-ENTITLEMENTS="${ENTITLEMENTS:-resources/macos/distant-dev.entitlements}"
-APPEX_ENTITLEMENTS="${APPEX_ENTITLEMENTS:-resources/macos/distant-appex-dev.entitlements}"
+ENTITLEMENTS="${ENTITLEMENTS:-resources/macos/distant.entitlements}"
+APPEX_ENTITLEMENTS="${APPEX_ENTITLEMENTS:-resources/macos/distant-appex.entitlements}"
 APP_PROFILE="${APP_PROFILE:-}"
 APPEX_PROFILE="${APPEX_PROFILE:-}"
 
@@ -22,9 +18,8 @@ mkdir -p "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex/Contents/MacOS"
 
 cp "$BINARY" "$BUNDLE/Contents/MacOS/distant"
 
-# Hardlink — appex uses same binary without duplicating disk space.
-# (Symlinks are rejected by codesign for the main executable.)
-ln "$BUNDLE/Contents/MacOS/distant" \
+# Copy — codesign may invalidate hardlinks; a plain copy is safest.
+cp "$BUNDLE/Contents/MacOS/distant" \
     "$BUNDLE/Contents/PlugIns/DistantFileProvider.appex/Contents/MacOS/distant"
 
 cp resources/macos/Info.plist "$BUNDLE/Contents/"
