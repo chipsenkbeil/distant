@@ -61,7 +61,12 @@ impl Cli {
         // NOTE: We can unwrap here as we assign the log file earlier
         let path = self.options.logging.log_file.as_ref().unwrap();
 
-        common::logger::FileLogger::init(modules, level, path);
+        common::logger::Logger::builder()
+            .modules(modules)
+            .level(level)
+            .file(path)
+            .init()
+            .expect("Failed to initialize logger");
     }
 
     #[cfg(windows)]
