@@ -19,30 +19,74 @@ pub use remote_fs::RemoteFs;
 pub type ChannelResolver =
     Box<dyn Fn(u32, &str) -> std::io::Result<distant_core::Channel> + Send + Sync>;
 
-/// Stores the Tokio runtime handle and channel resolver needed by the
-/// `.appex` FileProvider extension bootstrap flow.
+/// Public macOS FileProvider API.
 ///
-/// Must be called once from the host process before macOS instantiates the
-/// `DistantFileProvider` class via `initWithDomain:`.
+/// Exposes functions for the binary crate to interact with the FileProvider
+/// domain lifecycle: initialising the `.appex`, registering ObjC classes,
+/// resolving container paths, and cleaning up domains.
 #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
-pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
-    backend::macos_file_provider::init(rt, resolve_channel);
-}
+pub mod macos {
+    use std::io;
+    use std::path::PathBuf;
 
-/// Returns `true` if this process is running as a macOS `.appex` FileProvider extension.
-///
-/// Checks `NSBundle.mainBundle.bundlePath` for a `.appex` suffix, which is
-/// Apple's standard approach for distinguishing `.app` from `.appex` bundles.
-///
-/// Always returns `false` on non-macOS platforms or when the `macos-file-provider`
-/// feature is not enabled.
-#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
-pub fn is_file_provider_extension() -> bool {
-    use objc2_foundation::NSBundle;
-    NSBundle::mainBundle()
-        .bundlePath()
-        .to_string()
-        .ends_with(".appex")
+    pub use super::ChannelResolver;
+
+    /// Stores the Tokio runtime handle and channel resolver needed by the
+    /// `.appex` FileProvider extension bootstrap flow.
+    ///
+    /// Subsequent calls are silently ignored (the first call wins).
+    pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
+        crate::backend::macos_file_provider::init(rt, resolve_channel);
+    }
+
+    /// Registers FileProvider ObjC classes with the Objective-C runtime.
+    ///
+    /// Must be called before the XPC framework looks up
+    /// `NSExtensionPrincipalClass`, as classes defined via `define_class!`
+    /// are registered at runtime rather than at load time.
+    pub fn register_file_provider_classes() {
+        crate::backend::macos_file_provider::register_classes();
+    }
+
+    /// Returns the path to the App Group shared container for `"group.dev.distant"`.
+    pub fn app_group_container_path() -> Option<PathBuf> {
+        use objc2_foundation::{NSFileManager, NSString};
+
+        let group_id = NSString::from_str("group.dev.distant");
+        let manager = NSFileManager::defaultManager();
+        let url = manager.containerURLForSecurityApplicationGroupIdentifier(&group_id)?;
+        let path_ns = url.path()?;
+        Some(PathBuf::from(path_ns.to_string()))
+    }
+
+    /// Returns `true` if this process is running as a macOS `.appex` FileProvider extension.
+    pub fn is_file_provider_extension() -> bool {
+        use objc2_foundation::NSBundle;
+        NSBundle::mainBundle()
+            .bundlePath()
+            .to_string()
+            .ends_with(".appex")
+    }
+
+    /// Removes all distant FileProvider domains and cleans up their metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if domain enumeration fails.
+    pub fn remove_all_file_provider_domains() -> io::Result<()> {
+        crate::backend::macos_file_provider::remove_all_domains()
+    }
+
+    /// Removes the FileProvider domain whose stored destination matches `dest`.
+    ///
+    /// Used during unmount-by-destination: e.g. `distant unmount ssh://root@host`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no matching domain is found.
+    pub fn remove_file_provider_domain_for_destination(dest: &str) -> io::Result<()> {
+        crate::backend::macos_file_provider::remove_domain_for_destination(dest)
+    }
 }
 
 /// Mount a remote filesystem at the given mount point using the specified backend.
@@ -90,7 +134,10 @@ fn mount_fuse(
 ) -> std::io::Result<MountHandle> {
     use std::sync::Arc;
 
-    let mount_point = config.mount_point.clone();
+    let mount_point = config
+        .mount_point
+        .clone()
+        .ok_or_else(|| std::io::Error::other("FUSE backend requires a mount point"))?;
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
 
     let session = backend::fuse::mount(fs, &mount_point)?;
@@ -116,7 +163,10 @@ fn mount_nfs(
 
     use nfsserve::tcp::NFSTcp;
 
-    let mount_point = config.mount_point.clone();
+    let mount_point = config
+        .mount_point
+        .clone()
+        .ok_or_else(|| std::io::Error::other("NFS backend requires a mount point"))?;
 
     let rt_handle = rt.clone();
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
@@ -146,8 +196,13 @@ fn mount_file_provider(
     let extra = config.extra.clone();
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
 
-    backend::macos_file_provider::register_domain(fs, &extra)?;
+    let _domain_id = backend::macos_file_provider::register_domain(fs, &extra)?;
 
+    // FileProvider domains are persistent — macOS manages the .appex
+    // lifecycle independently. Cleanup (domain removal) is handled by
+    // `distant unmount`, not by dropping the MountHandle.
+    // The task here is intentionally a no-op so that the domain survives
+    // after `distant mount` exits.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
         let _ = shutdown_rx.await;
@@ -165,7 +220,9 @@ fn mount_cloud_files(
 ) -> std::io::Result<MountHandle> {
     use std::sync::Arc;
 
-    let mount_point = config.mount_point.clone();
+    let mount_point = config.mount_point.clone().ok_or_else(|| {
+        std::io::Error::other("Windows Cloud Files backend requires a mount point")
+    })?;
     let fs = Arc::new(RemoteFs::new(rt, channel, config)?);
 
     let session = backend::windows_cloud_files::mount(fs, &mount_point)?;

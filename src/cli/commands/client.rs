@@ -524,11 +524,25 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 extra,
             };
 
+            #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+            if matches!(backend, distant_mount::MountBackend::MacosFileProvider)
+                && mount_point.is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "macOS FileProvider does not accept a mount path \
+                     — files appear in Finder automatically"
+                )
+                .into());
+            }
+
             let handle =
                 distant_mount::mount(tokio::runtime::Handle::current(), channel, config, backend)
                     .context("Failed to mount filesystem")?;
 
-            println!("Mounted at {}", mount_point.display());
+            match mount_point {
+                Some(ref p) => println!("Mounted at {}", p.display()),
+                None => println!("Mounted (visible in Finder sidebar)"),
+            }
 
             // For backends that need a long-running process (NFS, FUSE,
             // Cloud Files), wait for Ctrl+C to keep the server alive.
@@ -552,21 +566,63 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             feature = "mount-windows-cloud-files",
             feature = "mount-macos-file-provider",
         ))]
-        ClientSubcommand::Unmount { mount_point } => {
-            #[cfg(unix)]
-            {
-                let status = std::process::Command::new("umount")
-                    .arg(&mount_point)
-                    .status()
-                    .context("Failed to run umount")?;
-                if !status.success() {
-                    return Err(anyhow::anyhow!("umount failed with status {}", status).into());
+        ClientSubcommand::Unmount { all, mount_point } => {
+            if all {
+                #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+                {
+                    distant_mount::macos::remove_all_file_provider_domains()
+                        .context("Failed to remove FileProvider domains")?;
+                    println!("Removed all distant FileProvider domains");
                 }
-                println!("Unmounted {}", mount_point.display());
+                #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
+                {
+                    return Err(anyhow::anyhow!("--all requires macOS FileProvider support").into());
+                }
             }
-            #[cfg(not(unix))]
-            {
-                return Err(anyhow::anyhow!("Unmount not supported on this platform").into());
+
+            if let Some(ref arg) = mount_point {
+                if arg.contains("://") {
+                    // Treat as a destination URL (e.g. ssh://root@host).
+                    #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+                    {
+                        distant_mount::macos::remove_file_provider_domain_for_destination(arg)
+                            .context("Failed to remove FileProvider domain for destination")?;
+                        println!("Unmounted {arg}");
+                    }
+                    #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
+                    {
+                        return Err(anyhow::anyhow!(
+                            "destination-based unmount requires macOS FileProvider support"
+                        )
+                        .into());
+                    }
+                } else {
+                    let path = std::path::PathBuf::from(arg);
+
+                    #[cfg(unix)]
+                    {
+                        let status = std::process::Command::new("umount")
+                            .arg(&path)
+                            .status()
+                            .context("Failed to run umount")?;
+                        if !status.success() {
+                            return Err(
+                                anyhow::anyhow!("umount failed with status {}", status).into()
+                            );
+                        }
+                        println!("Unmounted {}", path.display());
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        return Err(
+                            anyhow::anyhow!("Unmount not supported on this platform").into()
+                        );
+                    }
+                }
+            } else if !all {
+                return Err(
+                    anyhow::anyhow!("mount_point is required unless --all is specified").into(),
+                );
             }
         }
         ClientSubcommand::Shell {

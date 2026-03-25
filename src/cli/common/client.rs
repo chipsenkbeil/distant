@@ -381,7 +381,7 @@ fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
     let exe = std::env::current_exe().context("Failed to determine distant executable path")?;
 
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(["manager", "listen", "--daemon"]);
+    cmd.args(["manager", "listen", "--daemon", "--user"]);
 
     // Forward custom socket/pipe settings so the new manager listens on the same address
     #[cfg(unix)]

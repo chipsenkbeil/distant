@@ -241,10 +241,11 @@ fn suggestions_for_error(msg: &str) -> Vec<(&'static str, &'static str)> {
 
 #[cfg(unix)]
 fn main() -> MainResult {
-    // If running as a macOS FileProvider .appex extension, bypass the CLI
-    // parser entirely and enter the extension run loop.
+    // If running as a macOS FileProvider .appex extension, register the ObjC
+    // classes immediately (before XPC looks them up) and enter the run loop.
     #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
     if macos_file_provider::is_file_provider_extension() {
+        distant_mount::macos::register_file_provider_classes();
         macos_file_provider::run_extension();
     }
 

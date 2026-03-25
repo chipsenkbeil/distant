@@ -618,8 +618,8 @@ pub enum ClientSubcommand {
         )]
         backend: distant_mount::MountBackend,
 
-        /// Local mount point
-        mount_point: PathBuf,
+        /// Local mount point (optional for FileProvider backend)
+        mount_point: Option<PathBuf>,
     },
 
     /// Unmount a previously mounted remote filesystem
@@ -630,8 +630,12 @@ pub enum ClientSubcommand {
         feature = "mount-macos-file-provider",
     ))]
     Unmount {
-        /// Local mount point to unmount
-        mount_point: PathBuf,
+        /// Remove all stale distant FileProvider domains
+        #[clap(long)]
+        all: bool,
+
+        /// Mount point path or destination URL (e.g. ssh://root@host) to unmount
+        mount_point: Option<String>,
     },
 
     /// Specialized treatment of running a remote shell process
