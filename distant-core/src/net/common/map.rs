@@ -24,6 +24,22 @@ impl Map {
         self.0
     }
 
+    /// Serializes this map as a JSON object string.
+    ///
+    /// All keys and values are strings, producing `{"key":"value",...}`.
+    pub fn to_json_string(&self) -> String {
+        // Safety: HashMap<String, String> is always valid JSON-serializable
+        serde_json::to_string(&self.0).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Parses a JSON object string into a `Map`.
+    ///
+    /// Expects `{"key":"value",...}` where all values are strings.
+    pub fn parse_json(s: &str) -> Result<Self, serde_json::Error> {
+        let map: HashMap<String, String> = serde_json::from_str(s)?;
+        Ok(Self(map))
+    }
+
     /// Merges this map with another map. When there is a conflict
     /// where both maps have the same key, the other map's key is
     /// used UNLESS the `keep` flag is set to true, where this
@@ -378,5 +394,28 @@ mod tests {
             "{:?}",
             map
         );
+    }
+
+    #[test]
+    fn json_round_trip() {
+        let original = map!("connection_id" -> "42", "destination" -> "ssh://root@host");
+        let json = original.to_json_string();
+        let parsed = Map::parse_json(&json).unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn json_empty_map() {
+        let empty = map!();
+        let json = empty.to_json_string();
+        assert_eq!(json, "{}");
+        let parsed = Map::parse_json(&json).unwrap();
+        assert_eq!(parsed, map!());
+    }
+
+    #[test]
+    fn parse_json_invalid_input() {
+        assert!(Map::parse_json("not json").is_err());
+        assert!(Map::parse_json(r#"{"key": 123}"#).is_err());
     }
 }
