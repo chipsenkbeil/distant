@@ -511,6 +511,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             let mut extra = distant_core::net::common::Map::new();
             extra.insert("connection_id".to_string(), connection_id.to_string());
             extra.insert("destination".to_string(), info.destination);
+            extra.insert("log_level".to_string(), log::max_level().to_string());
 
             let config = distant_mount::MountConfig {
                 mount_point: mount_point.clone(),

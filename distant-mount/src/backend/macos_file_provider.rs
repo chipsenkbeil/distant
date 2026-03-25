@@ -26,7 +26,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use log::debug;
+use log::{debug, error, info, trace};
 
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{Bool, NSObjectProtocol, ProtocolObject};
@@ -94,7 +94,7 @@ pub(crate) fn init(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver)
 /// Returns the `domains/` directory inside the App Group shared container,
 /// creating it if it does not exist.
 ///
-/// Layout: `~/Library/Group Containers/group.dev.distant/domains/`
+/// Layout: `~/Library/Group Containers/39C6AGD73Z.group.dev.distant/domains/`
 fn domains_dir() -> Option<PathBuf> {
     let container = crate::macos::app_group_container_path()?;
     let dir = container.join("domains");
@@ -108,14 +108,26 @@ fn domains_dir() -> Option<PathBuf> {
 /// The metadata was persisted by [`register_domain`] as a serialised [`Map`]
 /// in `domains/<domain_id>`.
 fn bootstrap(domain_id: &str) -> io::Result<()> {
+    info!("file_provider: bootstrap starting for domain {domain_id:?}");
+
     let dir = domains_dir().ok_or_else(|| io::Error::other("cannot resolve domains directory"))?;
     let path = dir.join(domain_id);
+    info!("file_provider: reading metadata from {}", path.display());
 
     let value_str = std::fs::read_to_string(&path)
         .map_err(|e| io::Error::other(format!("no metadata file for domain {domain_id:?}: {e}")))?;
-    let map: Map = value_str
-        .parse()
+
+    let map: Map = Map::parse_json(&value_str)
         .map_err(|e| io::Error::other(format!("failed to parse domain metadata: {e}")))?;
+    info!("file_provider: parsed domain metadata ({} keys)", map.len());
+
+    // If the CLI passed a log_level, adjust the global level dynamically.
+    if let Some(level_str) = map.get("log_level")
+        && let Ok(level) = level_str.parse::<log::LevelFilter>()
+    {
+        info!("file_provider: setting log level to {level}");
+        log::set_max_level(level);
+    }
 
     let connection_id: u32 = map
         .get("connection_id")
@@ -127,6 +139,8 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
         .get("destination")
         .ok_or_else(|| io::Error::other("domain metadata missing destination"))?
         .clone();
+
+    info!("file_provider: resolving channel for connection {connection_id}, dest={destination}");
 
     let resolver = CHANNEL_RESOLVER
         .get()
@@ -149,6 +163,7 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
     let fs = RemoteFs::new(rt, channel, config)?;
     set_remote_fs(Arc::new(fs));
 
+    info!("file_provider: bootstrap complete — RemoteFs initialized");
     Ok(())
 }
 
@@ -246,13 +261,13 @@ define_class!(
             _page: &NSFileProviderPage,
         ) {
             let container_str = self.ivars().container_id.to_string();
-            debug!(
+            trace!(
                 "file_provider: enumerating items for container {:?}",
                 container_str,
             );
 
             let Some(fs) = get_remote_fs() else {
-                // No RemoteFs available — signal empty enumeration.
+                debug!("file_provider: enumerate_items — RemoteFs not available, returning empty");
                 unsafe {
                     observer.finishEnumeratingUpToPage(None);
                 }
@@ -287,6 +302,10 @@ define_class!(
                             })
                             .collect();
 
+                    trace!(
+                        "file_provider: enumerate_items for ino={ino} returning {} items",
+                        items.len()
+                    );
                     let array = NSArray::from_retained_slice(&items);
                     unsafe {
                         observer.didEnumerateItems(&array);
@@ -294,7 +313,7 @@ define_class!(
                     }
                 }
                 Err(e) => {
-                    debug!("file_provider: readdir failed: {e}");
+                    error!("file_provider: readdir failed for ino={ino}: {e}");
                     let ns_error = make_ns_error(&format!("readdir failed: {e}"));
                     unsafe {
                         observer.finishEnumeratingWithError(&ns_error);
@@ -341,7 +360,7 @@ define_class!(
             this: Allocated<Self>,
             domain: &NSFileProviderDomain,
         ) -> Retained<Self> {
-            debug!("file_provider: initWithDomain {:?}", unsafe {
+            info!("file_provider: initWithDomain {:?}", unsafe {
                 domain.displayName()
             },);
             let domain_id = unsafe { domain.identifier() }.to_string();
@@ -354,8 +373,9 @@ define_class!(
             // Bootstrap the RemoteFs from persisted domain metadata.
             // Errors are logged but not fatal — the enumerator handles
             // get_remote_fs() returning None by signalling empty results.
-            if let Err(e) = bootstrap(&domain_id) {
-                debug!("file_provider: bootstrap failed for {domain_id:?}: {e}");
+            match bootstrap(&domain_id) {
+                Ok(()) => info!("file_provider: bootstrap succeeded for {domain_id:?}"),
+                Err(e) => error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}"),
             }
 
             this
@@ -486,6 +506,8 @@ fn handle_item_for_identifier(
     id_str: &str,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderItem, *mut NSError)>,
 ) {
+    trace!("file_provider: handle_item_for_identifier id={id_str:?}");
+
     let Some(fs) = get_remote_fs() else {
         call_completion_item_error(completion_handler, "RemoteFs not initialized");
         return;
@@ -521,6 +543,7 @@ fn handle_item_for_identifier(
     };
 
     let is_dir = attr.kind == FileType::Dir;
+    trace!("file_provider: item ino={ino} filename={filename:?} is_dir={is_dir}");
     let item = DistantFileProviderItem::new(id_str, &parent_str, filename, is_dir, attr.size);
     let proto: Retained<ProtocolObject<dyn NSFileProviderItemProtocol>> =
         ProtocolObject::from_retained(item);
@@ -535,6 +558,8 @@ fn handle_fetch_contents(
         dyn Fn(*mut NSURL, *mut NSFileProviderItem, *mut NSError),
     >,
 ) {
+    trace!("file_provider: handle_fetch_contents id={id_str:?}");
+
     let Some(fs) = get_remote_fs() else {
         call_completion_fetch_error(completion_handler, "RemoteFs not initialized");
         return;
@@ -543,7 +568,13 @@ fn handle_fetch_contents(
     let ino: u64 = id_str.parse().unwrap_or(0);
 
     let data = match fs.read(ino, 0, u32::MAX) {
-        Ok(data) => data,
+        Ok(data) => {
+            trace!(
+                "file_provider: fetch_contents ino={ino} read {} bytes",
+                data.len()
+            );
+            data
+        }
         Err(e) => {
             call_completion_fetch_error(completion_handler, &format!("read file: {e}"));
             return;
@@ -606,6 +637,10 @@ fn handle_create_item(
 
     match result {
         Ok(attr) => {
+            trace!(
+                "file_provider: create_item succeeded — ino={} name={name:?}",
+                attr.ino
+            );
             let item = DistantFileProviderItem::new(
                 &attr.ino.to_string(),
                 &parent_ino.to_string(),
@@ -635,6 +670,12 @@ fn handle_modify_item(
         dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
     >,
 ) {
+    trace!(
+        "file_provider: handle_modify_item id={:?} has_content={}",
+        item_id.to_string(),
+        new_contents.is_some()
+    );
+
     let Some(fs) = get_remote_fs() else {
         call_completion_create_error(completion_handler, "RemoteFs not initialized");
         return;
@@ -666,6 +707,7 @@ fn handle_modify_item(
     let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
     let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
 
+    trace!("file_provider: modify_item succeeded for ino={ino}");
     let new_item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
     let proto = ProtocolObject::from_retained(new_item);
     completion_handler.call((
@@ -681,6 +723,11 @@ fn handle_delete_item(
     identifier: &NSFileProviderItemIdentifier,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSError)>,
 ) {
+    trace!(
+        "file_provider: handle_delete_item id={:?}",
+        identifier.to_string()
+    );
+
     let Some(fs) = get_remote_fs() else {
         let error = make_ns_error("RemoteFs not initialized");
         completion_handler.call((Retained::into_raw(error),));
@@ -708,6 +755,10 @@ fn handle_delete_item(
         }
     }
 
+    trace!(
+        "file_provider: delete_item succeeded for {:?}",
+        identifier.to_string()
+    );
     completion_handler.call((std::ptr::null_mut(),));
 }
 
@@ -715,17 +766,21 @@ fn handle_delete_item(
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Creates an `NSError` with the given message in the `com.distant.file-provider`
-/// error domain.
+/// Creates an `NSError` with the given message using `NSCocoaErrorDomain`.
+///
+/// Uses `NSCocoaErrorDomain` with code 256 (`NSFileReadUnknownError`) so that
+/// macOS / Finder recognises the error domain and handles it correctly,
+/// rather than hanging on an unrecognised custom domain.
 fn make_ns_error(message: &str) -> Retained<NSError> {
-    let domain = NSString::from_str("com.distant.file-provider");
+    // SAFETY: `NSCocoaErrorDomain` is a well-known Foundation constant.
+    let domain = unsafe { NSCocoaErrorDomain };
     let description = NSString::from_str(message);
     let key: &NSErrorUserInfoKey = unsafe { NSLocalizedDescriptionKey };
     let user_info = NSDictionary::from_retained_objects(
         &[key],
         &[Retained::into_super(Retained::into_super(description))],
     );
-    unsafe { NSError::errorWithDomain_code_userInfo(&domain, -1, Some(&user_info)) }
+    unsafe { NSError::errorWithDomain_code_userInfo(domain, 256, Some(&user_info)) }
 }
 
 /// Creates a completed `NSProgress` for methods that execute synchronously.
@@ -854,7 +909,7 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<Stri
     })?;
     let meta_path = dir.join(&domain_id);
     let tmp_path = dir.join(format!(".{domain_id}.tmp"));
-    std::fs::write(&tmp_path, extra.to_string())?;
+    std::fs::write(&tmp_path, extra.to_json_string())?;
     std::fs::rename(&tmp_path, &meta_path)?;
     debug!(
         "file_provider: stored domain metadata in {}",
@@ -954,35 +1009,23 @@ pub(crate) fn remove_domain_by_id(domain_id: &str) {
     debug!("file_provider: removed domain {domain_id:?}");
 }
 
-/// Removes all FileProvider domains using `removeAllDomainsWithCompletionHandler`,
-/// then cleans up any leftover metadata files in `domains/`.
+/// Removes all FileProvider domains by iterating `get_all_domains()` and
+/// removing each one individually.
+///
+/// This avoids `removeAllDomainsWithCompletionHandler` which crashes due to
+/// an ObjC binding mismatch (`removeAllDomainsForProviderIdentifier:completionHandler:`
+/// receives a NULL completion handler from the objc2-file-provider binding).
 pub(crate) fn remove_all_domains() -> io::Result<()> {
-    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
-
-    let completion = block2::RcBlock::new(move |error: *mut NSError| {
-        if error.is_null() {
-            let _ = tx.send(None);
-        } else {
-            let desc = unsafe { (*error).localizedDescription() }.to_string();
-            let _ = tx.send(Some(desc));
-        }
-    });
-
-    unsafe {
-        NSFileProviderManager::removeAllDomainsWithCompletionHandler(&completion);
-    }
-
-    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-        Ok(None) => debug!("file_provider: removeAllDomains succeeded"),
-        Ok(Some(err)) => {
-            return Err(io::Error::other(format!("removeAllDomains failed: {err}")));
-        }
-        Err(_) => {
-            return Err(io::Error::other("removeAllDomains timed out"));
+    let domains = get_all_domains()?;
+    for domain in &domains {
+        let domain_id = unsafe { domain.identifier() }.to_string();
+        remove_domain_blocking(domain);
+        if let Some(dir) = domains_dir() {
+            let _ = std::fs::remove_file(dir.join(&domain_id));
         }
     }
 
-    // Clean up leftover metadata files.
+    // Clean up any leftover metadata files that don't have a matching domain.
     if let Some(dir) = domains_dir()
         && let Ok(entries) = std::fs::read_dir(&dir)
     {
