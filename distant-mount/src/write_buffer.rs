@@ -194,7 +194,8 @@ mod tests {
         buf.write(0, b"hello");
 
         assert!(buf.is_dirty());
-        assert_eq!(buf.dirty_ranges(), &[0..5]);
+        assert_eq!(buf.dirty_ranges().len(), 1);
+        assert_eq!(buf.dirty_ranges()[0], 0..5);
     }
 
     #[test]
@@ -214,7 +215,8 @@ mod tests {
         buf.write(0, &[1; 10]);
         buf.write(5, &[2; 10]);
 
-        assert_eq!(buf.dirty_ranges(), &[0..15]);
+        assert_eq!(buf.dirty_ranges().len(), 1);
+        assert_eq!(buf.dirty_ranges()[0], 0..15);
     }
 
     #[test]
@@ -223,7 +225,8 @@ mod tests {
         buf.write(0, &[1; 5]);
         buf.write(5, &[2; 5]);
 
-        assert_eq!(buf.dirty_ranges(), &[0..10]);
+        assert_eq!(buf.dirty_ranges().len(), 1);
+        assert_eq!(buf.dirty_ranges()[0], 0..10);
     }
 
     #[test]
@@ -232,7 +235,8 @@ mod tests {
         buf.write(0, &[1; 20]);
         buf.write(5, &[2; 5]);
 
-        assert_eq!(buf.dirty_ranges(), &[0..20]);
+        assert_eq!(buf.dirty_ranges().len(), 1);
+        assert_eq!(buf.dirty_ranges()[0], 0..20);
     }
 
     #[test]
@@ -244,7 +248,8 @@ mod tests {
         // This bridges the gap between the two existing ranges.
         buf.write(3, &[3; 10]);
 
-        assert_eq!(buf.dirty_ranges(), &[0..15]);
+        assert_eq!(buf.dirty_ranges().len(), 1);
+        assert_eq!(buf.dirty_ranges()[0], 0..15);
     }
 
     #[test]

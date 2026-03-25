@@ -28,7 +28,7 @@ use distant_core::protocol::RemotePath;
 /// use distant_mount::{CacheConfig, MountConfig};
 ///
 /// let config = MountConfig {
-///     mount_point: PathBuf::from("/mnt/remote"),
+///     mount_point: Some(PathBuf::from("/mnt/remote")),
 ///     remote_root: None,
 ///     readonly: false,
 ///     cache: CacheConfig::default(),
@@ -38,7 +38,10 @@ use distant_core::protocol::RemotePath;
 #[derive(Clone, Debug)]
 pub struct MountConfig {
     /// Local mount point path.
-    pub mount_point: PathBuf,
+    ///
+    /// Required for FUSE, NFS, and Windows Cloud Files backends. Not used by
+    /// the macOS FileProvider backend (macOS manages the CloudStorage folder).
+    pub mount_point: Option<PathBuf>,
 
     /// Remote directory to expose (defaults to the server's current working
     /// directory when `None`).

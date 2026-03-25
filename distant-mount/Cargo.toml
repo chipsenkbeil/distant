@@ -27,6 +27,7 @@ libc = { version = "0.2", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }
 objc2-file-provider = { version = "0.3", optional = true, features = [
+    "Extension",
     "NSFileProviderReplicatedExtension",
     "NSFileProviderEnumerating",
     "NSFileProviderItem",
@@ -38,7 +39,7 @@ objc2-file-provider = { version = "0.3", optional = true, features = [
 ] }
 objc2-foundation = { version = "0.3", optional = true, features = [
     "NSObject", "NSString", "NSError", "NSProgress", "NSURL",
-    "NSData", "NSArray", "NSDictionary", "NSBundle", "NSUserDefaults",
+    "NSData", "NSArray", "NSDictionary", "NSBundle", "NSUserDefaults", "NSFileManager",
 ] }
 block2 = { version = "0.6", optional = true }
 

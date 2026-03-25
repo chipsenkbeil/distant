@@ -68,34 +68,51 @@ pub(crate) fn set_remote_fs(fs: Arc<RemoteFs>) {
     let _ = REMOTE_FS.set(fs);
 }
 
+/// Registers all FileProvider ObjC classes with the Objective-C runtime.
+///
+/// Must be called as early as possible — before the XPC framework looks up
+/// `NSExtensionPrincipalClass`. Classes defined via `define_class!` are
+/// registered at runtime (not at load time like native ObjC), so the
+/// framework can't find them unless this is called first.
+pub(crate) fn register_classes() {
+    let _: &objc2::runtime::AnyClass = <DistantFileProvider as objc2::ClassType>::class();
+    let _: &objc2::runtime::AnyClass = <DistantFileProviderItem as objc2::ClassType>::class();
+    let _: &objc2::runtime::AnyClass = <DistantFileProviderEnumerator as objc2::ClassType>::class();
+}
+
 /// Stores the Tokio runtime handle and channel resolver for use by the
 /// `.appex` extension bootstrap flow.
 ///
 /// Must be called once from the host process before macOS instantiates the
-/// `DistantFileProvider` class via `initWithDomain:`.
+/// `DistantFileProvider` class via `initWithDomain:`. Subsequent calls are
+/// silently ignored (the first call wins via `OnceLock`).
 pub(crate) fn init(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
     let _ = TOKIO_HANDLE.set(rt);
     let _ = CHANNEL_RESOLVER.set(resolve_channel);
 }
 
-/// Reads domain metadata from `NSUserDefaults` and initialises the global
-/// [`RemoteFs`] for this `.appex` process.
+/// Returns the `domains/` directory inside the App Group shared container,
+/// creating it if it does not exist.
+///
+/// Layout: `~/Library/Group Containers/group.dev.distant/domains/`
+fn domains_dir() -> Option<PathBuf> {
+    let container = crate::macos::app_group_container_path()?;
+    let dir = container.join("domains");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// Reads domain metadata from a file in the shared `domains/` directory and
+/// initialises the global [`RemoteFs`] for this `.appex` process.
 ///
 /// The metadata was persisted by [`register_domain`] as a serialised [`Map`]
-/// under the key `domain_id` in the `"group.dev.distant"` suite.
+/// in `domains/<domain_id>`.
 fn bootstrap(domain_id: &str) -> io::Result<()> {
-    let suite_name = NSString::from_str("group.dev.distant");
-    let defaults = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&suite_name))
-        .ok_or_else(|| {
-            io::Error::other("failed to open NSUserDefaults suite \"group.dev.distant\"")
-        })?;
+    let dir = domains_dir().ok_or_else(|| io::Error::other("cannot resolve domains directory"))?;
+    let path = dir.join(domain_id);
 
-    let key = NSString::from_str(domain_id);
-    let value_obj = defaults.stringForKey(&key).ok_or_else(|| {
-        io::Error::other(format!("no NSUserDefaults entry for domain {domain_id:?}"))
-    })?;
-
-    let value_str = value_obj.to_string();
+    let value_str = std::fs::read_to_string(&path)
+        .map_err(|e| io::Error::other(format!("no metadata file for domain {domain_id:?}: {e}")))?;
     let map: Map = value_str
         .parse()
         .map_err(|e| io::Error::other(format!("failed to parse domain metadata: {e}")))?;
@@ -122,7 +139,7 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
         .clone();
 
     let config = MountConfig {
-        mount_point: PathBuf::new(),
+        mount_point: None,
         remote_root: None,
         readonly: false,
         cache: CacheConfig::default(),
@@ -759,21 +776,59 @@ fn call_completion_create_error(
     ));
 }
 
+/// Queries macOS for all registered FileProvider domains, blocking until
+/// the result is available.
+fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
+    let (tx, rx) =
+        std::sync::mpsc::channel::<Result<Vec<Retained<NSFileProviderDomain>>, String>>();
+
+    let completion = block2::RcBlock::new(
+        move |domains: std::ptr::NonNull<NSArray<NSFileProviderDomain>>, error: *mut NSError| {
+            let array = unsafe { domains.as_ref() };
+            let vec: Vec<_> = array.iter().map(|d| d.retain()).collect();
+            if !vec.is_empty() || error.is_null() {
+                let _ = tx.send(Ok(vec));
+            } else {
+                let desc = unsafe { (*error).localizedDescription() }.to_string();
+                let _ = tx.send(Err(desc));
+            }
+        },
+    );
+
+    unsafe {
+        NSFileProviderManager::getDomainsWithCompletionHandler(&completion);
+    }
+
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(Ok(domains)) => Ok(domains),
+        Ok(Err(e)) => Err(io::Error::other(format!(
+            "getDomainsWithCompletionHandler failed: {e}"
+        ))),
+        Err(_) => Err(io::Error::other(
+            "getDomainsWithCompletionHandler timed out",
+        )),
+    }
+}
+
 /// Registers a FileProvider domain with macOS.
 ///
 /// Sets the global [`RemoteFs`] and calls `NSFileProviderManager.addDomain`
 /// to register a domain. The domain identifier is derived from the
 /// `connection_id` in `extra`, allowing multiple simultaneous mounts.
 ///
-/// Domain metadata (`connection_id`, `destination`) is persisted in
-/// `NSUserDefaults` under the `"group.dev.distant"` suite so the `.appex`
+/// Domain metadata (`connection_id`, `destination`) is persisted as a file
+/// in the App Group shared container (`domains/<domain_id>`) so the `.appex`
 /// extension process can retrieve it later.
+///
+/// Before registering, any stale domains with a matching display name are
+/// removed via the macOS `getDomainsWithCompletionHandler` API, ensuring
+/// orphaned domains (whose metadata files were lost) are cleaned up.
 ///
 /// # Errors
 ///
 /// Returns an error if `connection_id` or `destination` are missing from
 /// `extra`, or if the domain registration fails.
-pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> {
+pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<String> {
     set_remote_fs(fs);
 
     let connection_id = extra
@@ -784,26 +839,42 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
         .ok_or_else(|| io::Error::other("FileProvider requires destination in extra map"))?;
 
     let domain_id = format!("dev.distant.{connection_id}");
-    let display_name = format!("distant ({connection_id}) - {destination}");
+    let display_name = sanitize_display_name(destination);
 
-    debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}",);
+    debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}");
 
-    // Persist domain metadata in App Group NSUserDefaults so the .appex
-    // extension process can look up connection info by domain identifier.
-    let suite_name = NSString::from_str("group.dev.distant");
-    let defaults = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&suite_name))
-        .ok_or_else(|| {
-            io::Error::other(
-                "Failed to open NSUserDefaults suite \"group.dev.distant\" — \
-                 the .appex extension will not be able to read domain metadata",
-            )
-        })?;
-    let key = NSString::from_str(&domain_id);
-    let value = NSString::from_str(&extra.to_string());
-    unsafe {
-        defaults.setObject_forKey(Some(&**value), &key);
+    // Persist domain metadata as a file in the App Group shared container
+    // so the .appex extension process can look up connection info by domain
+    // identifier.
+    let dir = domains_dir().ok_or_else(|| {
+        io::Error::other(
+            "cannot resolve domains directory — \
+             the .appex extension will not be able to read domain metadata",
+        )
+    })?;
+    let meta_path = dir.join(&domain_id);
+    let tmp_path = dir.join(format!(".{domain_id}.tmp"));
+    std::fs::write(&tmp_path, extra.to_string())?;
+    std::fs::rename(&tmp_path, &meta_path)?;
+    debug!(
+        "file_provider: stored domain metadata in {}",
+        meta_path.display()
+    );
+
+    // Remove any stale domain with the same display name. This uses the
+    // macOS getDomainsWithCompletionHandler API to find domains even when
+    // our metadata files have been lost.
+    if let Ok(existing) = get_all_domains() {
+        for d in &existing {
+            let existing_display = unsafe { d.displayName() }.to_string();
+            if existing_display == display_name {
+                debug!(
+                    "file_provider: removing stale domain with display name {existing_display:?}"
+                );
+                remove_domain_blocking(d);
+            }
+        }
     }
-    debug!("file_provider: stored domain metadata in NSUserDefaults");
 
     let identifier = NSString::from_str(&domain_id);
     let display = NSString::from_str(&display_name);
@@ -816,8 +887,8 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
         )
     };
 
-    // Remove any existing domain with the same identifier so re-mounting
-    // the same connection doesn't fail with "already exists".
+    // Also remove any domain with the exact same identifier (re-mount of the
+    // same connection).
     remove_domain_blocking(&domain);
 
     // addDomain is async with a completion handler. We block on it using
@@ -840,7 +911,7 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
     match rx.recv() {
         Ok(None) => {
             debug!("file_provider: domain {domain_id:?} registered successfully");
-            Ok(())
+            Ok(domain_id)
         }
         Ok(Some(err)) => {
             debug!("file_provider: domain registration failed: {err}");
@@ -851,6 +922,114 @@ pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<()> 
         Err(e) => Err(io::Error::other(format!(
             "FileProvider domain registration: completion handler never called: {e}"
         ))),
+    }
+}
+
+/// Sanitizes a destination string for use as a FileProvider display name.
+///
+/// Replaces `://` with `-` so the display name contains no slashes or colons,
+/// producing clean CloudStorage folder names like `Distant-ssh-root@host`.
+fn sanitize_display_name(destination: &str) -> String {
+    destination.replace("://", "-")
+}
+
+/// Removes a single FileProvider domain by identifier and cleans up its
+/// metadata file.
+pub(crate) fn remove_domain_by_id(domain_id: &str) {
+    let identifier = NSString::from_str(domain_id);
+    let display = NSString::from_str("");
+    let domain = unsafe {
+        NSFileProviderDomain::initWithIdentifier_displayName(
+            NSFileProviderDomain::alloc(),
+            &identifier,
+            &display,
+        )
+    };
+    remove_domain_blocking(&domain);
+
+    if let Some(dir) = domains_dir() {
+        let _ = std::fs::remove_file(dir.join(domain_id));
+    }
+
+    debug!("file_provider: removed domain {domain_id:?}");
+}
+
+/// Removes all FileProvider domains using `removeAllDomainsWithCompletionHandler`,
+/// then cleans up any leftover metadata files in `domains/`.
+pub(crate) fn remove_all_domains() -> io::Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+
+    let completion = block2::RcBlock::new(move |error: *mut NSError| {
+        if error.is_null() {
+            let _ = tx.send(None);
+        } else {
+            let desc = unsafe { (*error).localizedDescription() }.to_string();
+            let _ = tx.send(Some(desc));
+        }
+    });
+
+    unsafe {
+        NSFileProviderManager::removeAllDomainsWithCompletionHandler(&completion);
+    }
+
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(None) => debug!("file_provider: removeAllDomains succeeded"),
+        Ok(Some(err)) => {
+            return Err(io::Error::other(format!("removeAllDomains failed: {err}")));
+        }
+        Err(_) => {
+            return Err(io::Error::other("removeAllDomains timed out"));
+        }
+    }
+
+    // Clean up leftover metadata files.
+    if let Some(dir) = domains_dir()
+        && let Ok(entries) = std::fs::read_dir(&dir)
+    {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("dev.distant.") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Removes the FileProvider domain whose display name matches the sanitized
+/// form of `dest`.
+///
+/// Uses the macOS `getDomainsWithCompletionHandler` API to enumerate all
+/// registered domains, so it can find and remove orphaned domains even when
+/// metadata files have been lost. Also cleans up the metadata file if present.
+pub(crate) fn remove_domain_for_destination(dest: &str) -> io::Result<()> {
+    let target_display = sanitize_display_name(dest);
+    let domains = get_all_domains()?;
+
+    let mut found = false;
+    for domain in &domains {
+        let display = unsafe { domain.displayName() }.to_string();
+        if display == target_display {
+            debug!("file_provider: removing domain matching destination {dest:?}");
+            remove_domain_blocking(domain);
+
+            // Clean up metadata file if it exists.
+            let domain_id = unsafe { domain.identifier() }.to_string();
+            if let Some(dir) = domains_dir() {
+                let _ = std::fs::remove_file(dir.join(&domain_id));
+            }
+
+            found = true;
+        }
+    }
+
+    if found {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "no FileProvider domain found for destination {dest}"
+        )))
     }
 }
 

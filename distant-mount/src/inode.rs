@@ -434,7 +434,7 @@ mod tests {
     fn get_path_and_get_ino_should_be_consistent() {
         let mut table = InodeTable::new(root_path(), 100);
 
-        let paths = vec![
+        let paths = [
             RemotePath::new("/a"),
             RemotePath::new("/b"),
             RemotePath::new("/c/d"),
