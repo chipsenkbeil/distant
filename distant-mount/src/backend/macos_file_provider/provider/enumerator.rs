@@ -2,15 +2,18 @@ mod item;
 
 pub(crate) use item::DistantFileProviderItem;
 
+use std::time::SystemTime;
+
 use log::{debug, error, trace};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::{
-    NSFileProviderEnumerationObserver, NSFileProviderEnumerator, NSFileProviderItemProtocol,
-    NSFileProviderPage, NSFileProviderRootContainerItemIdentifier,
+    NSFileProviderChangeObserver, NSFileProviderEnumerationObserver, NSFileProviderEnumerator,
+    NSFileProviderItemProtocol, NSFileProviderPage, NSFileProviderRootContainerItemIdentifier,
+    NSFileProviderSyncAnchor,
 };
-use objc2_foundation::{NSArray, NSObject, NSString};
+use objc2_foundation::{NSArray, NSData, NSObject, NSString};
 
 use distant_core::protocol::FileType;
 
@@ -35,6 +38,36 @@ define_class!(
         #[unsafe(method(invalidate))]
         fn invalidate(&self) {
             debug!("file_provider: enumerator invalidated");
+        }
+
+        #[unsafe(method(currentSyncAnchorWithCompletionHandler:))]
+        fn current_sync_anchor(
+            &self,
+            completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderSyncAnchor)>,
+        ) {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let anchor = NSData::with_bytes(&now.to_le_bytes());
+            let raw = Retained::into_raw(anchor);
+            completion_handler.call((raw,));
+        }
+
+        #[unsafe(method(enumerateChangesForObserver:fromSyncAnchor:))]
+        fn enumerate_changes(
+            &self,
+            observer: &ProtocolObject<dyn NSFileProviderChangeObserver>,
+            _sync_anchor: &NSFileProviderSyncAnchor,
+        ) {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let anchor = NSData::with_bytes(&now.to_le_bytes());
+            unsafe {
+                observer.finishEnumeratingChangesUpToSyncAnchor_moreComing(&anchor, false);
+            }
         }
 
         #[unsafe(method(enumerateItemsForObserver:startingAtPage:))]
@@ -74,15 +107,26 @@ define_class!(
                         // Collect metadata with async calls first, then build
                         // ObjC items. This avoids holding Retained<...> (!Send)
                         // across .await points.
-                        let mut metadata: Vec<(String, String, bool, u64)> = Vec::new();
+                        let mut metadata: Vec<(String, String, bool, u64, u64)> = Vec::new();
                         for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
                             let is_dir = entry.file_type == FileType::Dir;
-                            let size = fs.getattr(entry.ino).await.map(|a| a.size).unwrap_or(0);
+                            let attr = fs.getattr(entry.ino).await;
+                            let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
+                            let mtime_secs = attr
+                                .as_ref()
+                                .map(|a| {
+                                    a.mtime
+                                        .duration_since(SystemTime::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or(0)
+                                })
+                                .unwrap_or(0);
                             metadata.push((
                                 entry.ino.to_string(),
                                 entry.name.clone(),
                                 is_dir,
                                 size,
+                                mtime_secs,
                             ));
                         }
 
@@ -90,13 +134,14 @@ define_class!(
                         let items: Vec<Retained<ProtocolObject<dyn NSFileProviderItemProtocol>>> =
                             metadata
                                 .iter()
-                                .map(|(ino_str, name, is_dir, size)| {
+                                .map(|(ino_str, name, is_dir, size, mtime_secs)| {
                                     let item = DistantFileProviderItem::new(
                                         ino_str,
                                         &parent_id_str,
                                         name,
                                         *is_dir,
                                         *size,
+                                        *mtime_secs,
                                     );
                                     ProtocolObject::from_retained(item)
                                 })
