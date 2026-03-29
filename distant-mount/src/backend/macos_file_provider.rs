@@ -841,18 +841,16 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 
 /// Registers a FileProvider domain with macOS.
 ///
-/// Stores the provided [`Runtime`] in the process-global slot and calls
+/// Stores the provided [`Runtime`] in the per-domain map and calls
 /// `NSFileProviderManager.addDomain` to register a domain. The domain
-/// identifier is derived from the `connection_id` in `extra`, allowing
-/// multiple simultaneous mounts.
+/// identifier is derived from `connection_id` and `remote_root` in `extra`,
+/// allowing multiple simultaneous mounts to different paths.
 ///
-/// Domain metadata (`connection_id`, `destination`) is persisted as a file
-/// in the App Group shared container (`domains/<domain_id>`) so the `.appex`
-/// extension process can retrieve it later.
+/// Domain metadata is persisted as a file in the App Group shared container
+/// (`domains/<domain_id>`) so the `.appex` extension process can bootstrap.
 ///
-/// Before registering, any stale domains with a matching display name are
-/// removed via the macOS `getDomainsWithCompletionHandler` API, ensuring
-/// orphaned domains (whose metadata files were lost) are cleaned up.
+/// If a domain with the same identifier already exists (re-mount of the
+/// same connection+root), it is removed before re-adding.
 ///
 /// # Errors
 ///
@@ -890,21 +888,6 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
         "file_provider: stored domain metadata in {}",
         meta_path.display()
     );
-
-    // Remove any stale domain with the same display name. This uses the
-    // macOS getDomainsWithCompletionHandler API to find domains even when
-    // our metadata files have been lost.
-    if let Ok(existing) = get_all_domains() {
-        for d in &existing {
-            let existing_display = unsafe { d.displayName() }.to_string();
-            if existing_display == display_name {
-                debug!(
-                    "file_provider: removing stale domain with display name {existing_display:?}"
-                );
-                remove_domain_blocking(d);
-            }
-        }
-    }
 
     let identifier = NSString::from_str(&domain_id);
     let display = NSString::from_str(&display_name);
