@@ -22,6 +22,7 @@ use crate::backend::macos_file_provider;
 
 /// Instance variables for [`DistantFileProviderEnumerator`].
 pub struct EnumeratorIvars {
+    domain_id: String,
     container_id: Retained<NSString>,
 }
 
@@ -103,8 +104,10 @@ define_class!(
                 return;
             }
 
-            let Some(rt) = macos_file_provider::get_runtime() else {
-                if let Some(err_msg) = macos_file_provider::get_bootstrap_error() {
+            let Some(rt) = macos_file_provider::get_runtime(&self.ivars().domain_id) else {
+                if let Some(err_msg) =
+                    macos_file_provider::get_bootstrap_error(&self.ivars().domain_id)
+                {
                     error!("file_provider: enumerate_items — bootstrap failed: {err_msg}",);
                     let ns_error = macos_file_provider::make_fp_error(
                         NSFileProviderErrorCode::ServerUnreachable,
@@ -213,9 +216,10 @@ define_class!(
 );
 
 impl DistantFileProviderEnumerator {
-    /// Creates a new enumerator for the given container item identifier.
-    pub(super) fn new(container_id: &NSString) -> Retained<Self> {
+    /// Creates a new enumerator for the given domain and container item identifier.
+    pub(super) fn new(domain_id: &str, container_id: &NSString) -> Retained<Self> {
         let enumerator = Self::alloc().set_ivars(EnumeratorIvars {
+            domain_id: domain_id.to_owned(),
             container_id: container_id.retain(),
         });
         // SAFETY: NSObject's `init` is always safe to call after `alloc`.

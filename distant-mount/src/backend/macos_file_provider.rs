@@ -23,9 +23,10 @@
 mod provider;
 pub(crate) mod utils;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use log::{debug, info, trace};
 
@@ -82,25 +83,47 @@ static CHANNEL_RESOLVER: OnceLock<ChannelResolver> = OnceLock::new();
 // Global Runtime access
 // ---------------------------------------------------------------------------
 
-static RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
+/// Per-domain Runtimes, keyed by domain identifier.
+///
+/// Supports multiple simultaneous mounts in the same `.appex` process.
+/// The host app path (`register_domain`) and the appex path (`bootstrap`)
+/// both insert into this map.
+static RUNTIMES: RwLock<Option<HashMap<String, Arc<Runtime>>>> = RwLock::new(None);
 
-/// Stores a bootstrap error message so the enumerator can signal the error
-/// to Finder instead of returning empty results.
-static BOOTSTRAP_ERROR: OnceLock<String> = OnceLock::new();
+/// Per-domain bootstrap error messages.
+static BOOTSTRAP_ERRORS: RwLock<Option<HashMap<String, String>>> = RwLock::new(None);
 
-/// Returns a reference to the global [`Runtime`], if it has been set.
-pub(crate) fn get_runtime() -> Option<&'static Arc<Runtime>> {
-    RUNTIME.get()
+/// Returns the [`Runtime`] for the given domain, if it has been set.
+pub(crate) fn get_runtime(domain_id: &str) -> Option<Arc<Runtime>> {
+    RUNTIMES.read().ok()?.as_ref()?.get(domain_id).cloned()
 }
 
-/// Returns the bootstrap error message, if bootstrap failed.
-pub(crate) fn get_bootstrap_error() -> Option<&'static str> {
-    BOOTSTRAP_ERROR.get().map(|s| s.as_str())
+/// Returns the bootstrap error message for a domain, if bootstrap failed.
+pub(crate) fn get_bootstrap_error(domain_id: &str) -> Option<String> {
+    BOOTSTRAP_ERRORS
+        .read()
+        .ok()?
+        .as_ref()?
+        .get(domain_id)
+        .cloned()
 }
 
-/// Stores a bootstrap error message for the enumerator to report.
-pub(crate) fn store_bootstrap_error(message: String) {
-    let _ = BOOTSTRAP_ERROR.set(message);
+/// Stores a bootstrap error message for the given domain.
+pub(crate) fn store_bootstrap_error(domain_id: &str, message: String) {
+    if let Ok(mut guard) = BOOTSTRAP_ERRORS.write() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(domain_id.to_owned(), message);
+    }
+}
+
+/// Stores a [`Runtime`] for the given domain.
+fn set_runtime(domain_id: &str, rt: Arc<Runtime>) {
+    if let Ok(mut guard) = RUNTIMES.write() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(domain_id.to_owned(), rt);
+    }
 }
 
 /// Registers all FileProvider ObjC classes with the Objective-C runtime.
@@ -202,7 +225,7 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
     // in the background. All handler spawn() calls will wait for init.
     let rt = Arc::new(Runtime::new(handle, async move { (channel, config) }));
 
-    let _ = RUNTIME.set(rt);
+    set_runtime(domain_id, rt);
 
     info!("file_provider: bootstrap complete — Runtime initialized (init pending)");
     Ok(())
@@ -214,10 +237,11 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
 
 /// Handles the `itemForIdentifier:request:completionHandler:` logic.
 pub(crate) fn handle_item_for_identifier(
+    domain_id: &str,
     id_str: &str,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderItem, *mut NSError)>,
 ) {
-    trace!("file_provider: handle_item_for_identifier id={id_str:?}");
+    trace!("file_provider: handle_item_for_identifier domain={domain_id:?} id={id_str:?}");
 
     // Working set and trash containers are not backed by real items.
     let working_set_id = unsafe { NSFileProviderWorkingSetContainerItemIdentifier }.to_string();
@@ -231,7 +255,7 @@ pub(crate) fn handle_item_for_identifier(
         return;
     }
 
-    let Some(rt) = get_runtime() else {
+    let Some(rt) = get_runtime(domain_id) else {
         call_completion_item_error(completion_handler, "Runtime not initialized");
         return;
     };
@@ -318,6 +342,7 @@ pub(crate) fn handle_item_for_identifier(
 
 /// Handles the `fetchContentsForItemWithIdentifier:...` logic.
 pub(crate) fn handle_fetch_contents(
+    domain_id: &str,
     id_str: &str,
     completion_handler: &block2::DynBlock<
         dyn Fn(*mut NSURL, *mut NSFileProviderItem, *mut NSError),
@@ -325,7 +350,7 @@ pub(crate) fn handle_fetch_contents(
 ) {
     trace!("file_provider: handle_fetch_contents id={id_str:?}");
 
-    let Some(rt) = get_runtime() else {
+    let Some(rt) = get_runtime(domain_id) else {
         call_completion_fetch_error(completion_handler, "Runtime not initialized");
         return;
     };
@@ -409,6 +434,7 @@ pub(crate) fn handle_fetch_contents(
 
 /// Handles the `createItemBasedOnTemplate:...` logic.
 pub(crate) fn handle_create_item(
+    domain_id: &str,
     filename: &NSString,
     parent_id: &NSString,
     is_dir: bool,
@@ -417,7 +443,7 @@ pub(crate) fn handle_create_item(
         dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
     >,
 ) {
-    let Some(rt) = get_runtime() else {
+    let Some(rt) = get_runtime(domain_id) else {
         call_completion_create_error(completion_handler, "Runtime not initialized");
         return;
     };
@@ -508,6 +534,7 @@ pub(crate) fn handle_create_item(
 
 /// Handles the `modifyItem:...` logic.
 pub(crate) fn handle_modify_item(
+    domain_id: &str,
     item_id: &NSString,
     new_contents: Option<&NSURL>,
     completion_handler: &block2::DynBlock<
@@ -520,7 +547,7 @@ pub(crate) fn handle_modify_item(
         new_contents.is_some()
     );
 
-    let Some(rt) = get_runtime() else {
+    let Some(rt) = get_runtime(domain_id) else {
         call_completion_create_error(completion_handler, "Runtime not initialized");
         return;
     };
@@ -584,6 +611,7 @@ pub(crate) fn handle_modify_item(
 
 /// Handles the `deleteItemWithIdentifier:...` logic.
 pub(crate) fn handle_delete_item(
+    domain_id: &str,
     identifier: &NSFileProviderItemIdentifier,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSError)>,
 ) {
@@ -592,7 +620,7 @@ pub(crate) fn handle_delete_item(
         identifier.to_string()
     );
 
-    let Some(rt) = get_runtime() else {
+    let Some(rt) = get_runtime(domain_id) else {
         let error = make_ns_error("Runtime not initialized");
         completion_handler.call((Retained::into_raw(error),));
         return;
@@ -811,8 +839,6 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 /// Returns an error if `connection_id` or `destination` are missing from
 /// `extra`, or if the domain registration fails.
 pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<String> {
-    let _ = RUNTIME.set(rt);
-
     let connection_id = extra
         .get("connection_id")
         .ok_or_else(|| io::Error::other("FileProvider requires connection_id in extra map"))?;
@@ -821,6 +847,7 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
         .ok_or_else(|| io::Error::other("FileProvider requires destination in extra map"))?;
 
     let domain_id = format!("dev.distant.{connection_id}");
+    set_runtime(&domain_id, rt);
     let display_name = sanitize_display_name(destination);
 
     debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}");
