@@ -121,7 +121,10 @@
 - [x] **P4.5** Filter `.` and `..` from readdir
   - Done at `enumerator.rs:111`
 
-- [ ] **P4.6** Handle symlinks
+- [x] **P4.6** Handle symlinks
+  - Uses getattr (resolves symlinks) for type determination
+  - Symlinks to directories appear as folders in Finder
+  - Files: `enumerator.rs`
 
 ---
 
@@ -129,7 +132,10 @@
 
 - [ ] **P5.1** `signalEnumerator` on remote changes
 - [ ] **P5.2** Meaningful `enumerateChanges`
-- [ ] **P5.3** Pagination for large directories
+- [x] **P5.3** Pagination for large directories
+  - Pages of 100 items; page token is u64 offset as LE bytes
+  - Initial page detected by non-8-byte length
+  - Files: `enumerator.rs`
 - [ ] **P5.4** Progress tracking for downloads/uploads
 - [ ] **P5.5** Cache warming on mount
 
