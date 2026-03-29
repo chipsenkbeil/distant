@@ -16,7 +16,7 @@ use distant_core::protocol::{FileType, Metadata, RemotePath};
 
 /// FUSE-compatible file attributes derived from remote [`Metadata`].
 #[derive(Clone, Debug)]
-pub(crate) struct FileAttr {
+pub struct FileAttr {
     pub ino: u64,
     pub size: u64,
     pub blocks: u64,
@@ -30,107 +30,109 @@ pub(crate) struct FileAttr {
     pub gid: u32,
 }
 
-/// Converts remote [`Metadata`] into a [`FileAttr`] suitable for FUSE responses.
-///
-/// Timestamps default to `UNIX_EPOCH` when not present in the metadata.
-/// Permissions are derived from unix metadata when available; otherwise
-/// read-only files get `0o444` and writable files get `0o644` (or `0o755`
-/// for directories).
-pub(crate) fn metadata_to_attr(ino: u64, metadata: &Metadata) -> FileAttr {
-    let size = metadata.len;
+impl FileAttr {
+    /// Converts remote [`Metadata`] into a [`FileAttr`] suitable for FUSE responses.
+    ///
+    /// Timestamps default to `UNIX_EPOCH` when not present in the metadata.
+    /// Permissions are derived from unix metadata when available; otherwise
+    /// read-only files get `0o444` and writable files get `0o644` (or `0o755`
+    /// for directories).
+    pub fn from_metadata(ino: u64, metadata: &Metadata) -> Self {
+        let size = metadata.len;
 
-    // 512-byte blocks, rounded up
-    let blocks = size.div_ceil(512);
+        // 512-byte blocks, rounded up
+        let blocks = size.div_ceil(512);
 
-    let atime = metadata
-        .accessed
-        .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+        let atime = metadata
+            .accessed
+            .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
-    let mtime = metadata
-        .modified
-        .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mtime = metadata
+            .modified
+            .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
-    let ctime = metadata
-        .created
-        .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+        let ctime = metadata
+            .created
+            .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
-    let perm = if let Some(ref unix) = metadata.unix {
-        let mut mode: u16 = 0;
-        if unix.owner_read {
-            mode |= 0o400;
-        }
-        if unix.owner_write {
-            mode |= 0o200;
-        }
-        if unix.owner_exec {
-            mode |= 0o100;
-        }
-        if unix.group_read {
-            mode |= 0o040;
-        }
-        if unix.group_write {
-            mode |= 0o020;
-        }
-        if unix.group_exec {
-            mode |= 0o010;
-        }
-        if unix.other_read {
-            mode |= 0o004;
-        }
-        if unix.other_write {
-            mode |= 0o002;
-        }
-        if unix.other_exec {
-            mode |= 0o001;
-        }
-        mode
-    } else if metadata.readonly {
-        if metadata.file_type == FileType::Dir {
-            0o555
+        let perm = if let Some(ref unix) = metadata.unix {
+            let mut mode: u16 = 0;
+            if unix.owner_read {
+                mode |= 0o400;
+            }
+            if unix.owner_write {
+                mode |= 0o200;
+            }
+            if unix.owner_exec {
+                mode |= 0o100;
+            }
+            if unix.group_read {
+                mode |= 0o040;
+            }
+            if unix.group_write {
+                mode |= 0o020;
+            }
+            if unix.group_exec {
+                mode |= 0o010;
+            }
+            if unix.other_read {
+                mode |= 0o004;
+            }
+            if unix.other_write {
+                mode |= 0o002;
+            }
+            if unix.other_exec {
+                mode |= 0o001;
+            }
+            mode
+        } else if metadata.readonly {
+            if metadata.file_type == FileType::Dir {
+                0o555
+            } else {
+                0o444
+            }
+        } else if metadata.file_type == FileType::Dir {
+            0o755
         } else {
-            0o444
+            0o644
+        };
+
+        let nlink = if metadata.file_type == FileType::Dir {
+            2
+        } else {
+            1
+        };
+
+        FileAttr {
+            ino,
+            size,
+            blocks,
+            atime,
+            mtime,
+            ctime,
+            kind: metadata.file_type,
+            perm,
+            nlink,
+            uid: 0,
+            gid: 0,
         }
-    } else if metadata.file_type == FileType::Dir {
-        0o755
-    } else {
-        0o644
-    };
-
-    let nlink = if metadata.file_type == FileType::Dir {
-        2
-    } else {
-        1
-    };
-
-    FileAttr {
-        ino,
-        size,
-        blocks,
-        atime,
-        mtime,
-        ctime,
-        kind: metadata.file_type,
-        perm,
-        nlink,
-        uid: 0,
-        gid: 0,
     }
 }
 
 /// Cached metadata entry pairing the raw remote [`Metadata`] with a
 /// pre-computed [`FileAttr`].
 #[derive(Clone, Debug)]
-pub(crate) struct CachedAttr {
+pub struct CachedAttr {
     pub metadata: Metadata,
     pub attr: FileAttr,
 }
 
 /// A single entry within a cached directory listing.
 #[derive(Clone, Debug)]
-pub(crate) struct DirCacheEntry {
+pub struct DirCacheEntry {
     pub name: String,
     pub ino: u64,
     pub file_type: FileType,
@@ -146,7 +148,7 @@ struct TimedEntry<V> {
 ///
 /// Entries expire after a configurable TTL and are evicted in LRU order
 /// when the cache exceeds its capacity.
-pub(crate) struct AttrCache {
+pub struct AttrCache {
     inner: LruCache<RemotePath, TimedEntry<CachedAttr>>,
     ttl: Duration,
 }
@@ -207,7 +209,7 @@ impl AttrCache {
 ///
 /// Entries expire after a configurable TTL and are evicted in LRU order
 /// when the cache exceeds its capacity.
-pub(crate) struct DirCache {
+pub struct DirCache {
     inner: LruCache<RemotePath, TimedEntry<Vec<DirCacheEntry>>>,
     ttl: Duration,
 }
@@ -269,7 +271,7 @@ impl DirCache {
 /// Entries expire after a configurable TTL and are evicted in LRU order
 /// when the cache exceeds its capacity. Intended for caching file reads
 /// to avoid repeated round-trips for recently accessed content.
-pub(crate) struct ReadCache {
+pub struct ReadCache {
     inner: LruCache<u64, TimedEntry<Vec<u8>>>,
     ttl: Duration,
 }
@@ -354,7 +356,7 @@ mod tests {
             let mut cache = AttrCache::new(16, Duration::from_secs(60));
             let path = RemotePath::new("/test/file.txt");
             let meta = sample_metadata();
-            let attr = metadata_to_attr(42, &meta);
+            let attr = FileAttr::from_metadata(42, &meta);
             let cached = CachedAttr {
                 metadata: meta,
                 attr,
@@ -382,7 +384,7 @@ mod tests {
             let mut cache = AttrCache::new(16, Duration::from_millis(50));
             let path = RemotePath::new("/test/file.txt");
             let meta = sample_metadata();
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
             let cached = CachedAttr {
                 metadata: meta,
                 attr,
@@ -401,7 +403,7 @@ mod tests {
             let mut cache = AttrCache::new(16, Duration::from_secs(60));
             let path = RemotePath::new("/test/file.txt");
             let meta = sample_metadata();
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
             let cached = CachedAttr {
                 metadata: meta,
                 attr,
@@ -421,7 +423,7 @@ mod tests {
             for i in 0..5 {
                 let path = RemotePath::new(format!("/file{i}"));
                 let meta = sample_metadata();
-                let attr = metadata_to_attr(i, &meta);
+                let attr = FileAttr::from_metadata(i, &meta);
                 let cached = CachedAttr {
                     metadata: meta,
                     attr,
@@ -566,7 +568,7 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             // ceil(1000 / 512) = 2
             assert_eq!(attr.blocks, 2);
@@ -581,7 +583,7 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             assert_eq!(attr.atime, SystemTime::UNIX_EPOCH);
             assert_eq!(attr.mtime, SystemTime::UNIX_EPOCH);
@@ -605,7 +607,7 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             assert_eq!(attr.perm, 0o644);
         }
@@ -618,7 +620,7 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             assert_eq!(attr.perm, 0o444);
         }
@@ -631,7 +633,7 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             assert_eq!(attr.perm, 0o555);
         }
@@ -643,14 +645,14 @@ mod tests {
                 ..sample_metadata()
             };
 
-            let attr = metadata_to_attr(1, &meta);
+            let attr = FileAttr::from_metadata(1, &meta);
 
             assert_eq!(attr.nlink, 2);
         }
 
         #[test]
         fn should_set_nlink_to_1_for_files() {
-            let attr = metadata_to_attr(1, &sample_metadata());
+            let attr = FileAttr::from_metadata(1, &sample_metadata());
 
             assert_eq!(attr.nlink, 1);
         }

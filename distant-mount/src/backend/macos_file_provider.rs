@@ -20,7 +20,8 @@
 //! is provided via a process-global [`OnceLock`]. The container app calls
 //! [`set_remote_fs`] before the extension is activated.
 
-#![allow(dead_code)]
+mod provider;
+mod utils;
 
 use std::io;
 use std::path::PathBuf;
@@ -34,12 +35,15 @@ use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::*;
 use objc2_foundation::*;
 
-use crate::ChannelResolver;
-use crate::RemoteFs;
-use crate::config::{CacheConfig, MountConfig};
+use crate::core::{CacheConfig, MountConfig, RemoteFs};
 
+use distant_core::Channel;
 use distant_core::net::common::Map;
 use distant_core::protocol::FileType;
+
+/// Callback type that resolves a connection ID and destination string into
+/// a [`distant_core::Channel`] by communicating with the distant manager.
+pub type ChannelResolver = Box<dyn Fn(u32, &str) -> io::Result<Channel> + Send + Sync>;
 
 /// Tokio runtime handle for the `.appex` extension process, set once by
 /// [`init`] before macOS instantiates the FileProvider extension class.
@@ -160,342 +164,12 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
         extra: Map::new(),
     };
 
-    let fs = RemoteFs::new(rt, channel, config)?;
+    let fs = RemoteFs::init(channel, config)?;
     set_remote_fs(Arc::new(fs));
 
     info!("file_provider: bootstrap complete — RemoteFs initialized");
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// DistantFileProviderItem
-// ---------------------------------------------------------------------------
-
-/// Instance variables for [`DistantFileProviderItem`].
-pub(crate) struct ItemIvars {
-    identifier: Retained<NSString>,
-    parent_identifier: Retained<NSString>,
-    filename: Retained<NSString>,
-    is_directory: bool,
-    size: u64,
-}
-
-define_class!(
-    // SAFETY: NSObject has no subclassing requirements, and this type does not
-    // implement Drop.
-    #[unsafe(super(NSObject))]
-    #[ivars = ItemIvars]
-    #[name = "DistantFileProviderItem"]
-    pub(crate) struct DistantFileProviderItem;
-
-    unsafe impl NSObjectProtocol for DistantFileProviderItem {}
-
-    unsafe impl NSFileProviderItemProtocol for DistantFileProviderItem {
-        #[unsafe(method_id(itemIdentifier))]
-        fn item_identifier(&self) -> Retained<NSFileProviderItemIdentifier> {
-            self.ivars().identifier.clone()
-        }
-
-        #[unsafe(method_id(parentItemIdentifier))]
-        fn parent_item_identifier(&self) -> Retained<NSFileProviderItemIdentifier> {
-            self.ivars().parent_identifier.clone()
-        }
-
-        #[unsafe(method_id(filename))]
-        fn filename(&self) -> Retained<NSString> {
-            self.ivars().filename.clone()
-        }
-    }
-);
-
-impl DistantFileProviderItem {
-    /// Creates a new item with the given metadata.
-    fn new(
-        identifier: &str,
-        parent_identifier: &str,
-        filename: &str,
-        is_directory: bool,
-        size: u64,
-    ) -> Retained<Self> {
-        let item = Self::alloc().set_ivars(ItemIvars {
-            identifier: NSString::from_str(identifier),
-            parent_identifier: NSString::from_str(parent_identifier),
-            filename: NSString::from_str(filename),
-            is_directory,
-            size,
-        });
-        // SAFETY: NSObject's `init` is always safe to call after `alloc`.
-        unsafe { msg_send![super(item), init] }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DistantFileProviderEnumerator
-// ---------------------------------------------------------------------------
-
-/// Instance variables for [`DistantFileProviderEnumerator`].
-pub(crate) struct EnumeratorIvars {
-    container_id: Retained<NSString>,
-}
-
-define_class!(
-    // SAFETY: NSObject has no subclassing requirements, and this type does not
-    // implement Drop.
-    #[unsafe(super(NSObject))]
-    #[ivars = EnumeratorIvars]
-    #[name = "DistantFileProviderEnumerator"]
-    pub(crate) struct DistantFileProviderEnumerator;
-
-    unsafe impl NSObjectProtocol for DistantFileProviderEnumerator {}
-
-    unsafe impl NSFileProviderEnumerator for DistantFileProviderEnumerator {
-        #[unsafe(method(invalidate))]
-        fn invalidate(&self) {
-            debug!("file_provider: enumerator invalidated");
-        }
-
-        #[unsafe(method(enumerateItemsForObserver:startingAtPage:))]
-        fn enumerate_items(
-            &self,
-            observer: &ProtocolObject<dyn NSFileProviderEnumerationObserver>,
-            _page: &NSFileProviderPage,
-        ) {
-            let container_str = self.ivars().container_id.to_string();
-            trace!(
-                "file_provider: enumerating items for container {:?}",
-                container_str,
-            );
-
-            let Some(fs) = get_remote_fs() else {
-                debug!("file_provider: enumerate_items — RemoteFs not available, returning empty");
-                unsafe {
-                    observer.finishEnumeratingUpToPage(None);
-                }
-                return;
-            };
-
-            let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
-            let ino = if container_str == root_id.to_string() {
-                1u64
-            } else {
-                container_str.parse::<u64>().unwrap_or(1)
-            };
-
-            match fs.readdir(ino) {
-                Ok(entries) => {
-                    let parent_id_str = ino.to_string();
-                    let items: Vec<Retained<ProtocolObject<dyn NSFileProviderItemProtocol>>> =
-                        entries
-                            .iter()
-                            .filter(|e| e.name != "." && e.name != "..")
-                            .map(|entry| {
-                                let is_dir = entry.file_type == FileType::Dir;
-                                let size = fs.getattr(entry.ino).map(|a| a.size).unwrap_or(0);
-                                let item = DistantFileProviderItem::new(
-                                    &entry.ino.to_string(),
-                                    &parent_id_str,
-                                    &entry.name,
-                                    is_dir,
-                                    size,
-                                );
-                                ProtocolObject::from_retained(item)
-                            })
-                            .collect();
-
-                    trace!(
-                        "file_provider: enumerate_items for ino={ino} returning {} items",
-                        items.len()
-                    );
-                    let array = NSArray::from_retained_slice(&items);
-                    unsafe {
-                        observer.didEnumerateItems(&array);
-                        observer.finishEnumeratingUpToPage(None);
-                    }
-                }
-                Err(e) => {
-                    error!("file_provider: readdir failed for ino={ino}: {e}");
-                    let ns_error = make_ns_error(&format!("readdir failed: {e}"));
-                    unsafe {
-                        observer.finishEnumeratingWithError(&ns_error);
-                    }
-                }
-            }
-        }
-    }
-);
-
-impl DistantFileProviderEnumerator {
-    /// Creates a new enumerator for the given container item identifier.
-    fn new(container_id: &NSString) -> Retained<Self> {
-        let enumerator = Self::alloc().set_ivars(EnumeratorIvars {
-            container_id: container_id.retain(),
-        });
-        // SAFETY: NSObject's `init` is always safe to call after `alloc`.
-        unsafe { msg_send![super(enumerator), init] }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DistantFileProvider (main extension class)
-// ---------------------------------------------------------------------------
-
-/// Instance variables for [`DistantFileProvider`].
-pub(crate) struct ExtensionIvars {
-    domain: Mutex<Option<Retained<NSFileProviderDomain>>>,
-}
-
-define_class!(
-    // SAFETY: NSObject has no subclassing requirements, and this type does not
-    // implement Drop.
-    #[unsafe(super(NSObject))]
-    #[ivars = ExtensionIvars]
-    #[name = "DistantFileProvider"]
-    pub(crate) struct DistantFileProvider;
-
-    unsafe impl NSObjectProtocol for DistantFileProvider {}
-
-    unsafe impl NSFileProviderReplicatedExtension for DistantFileProvider {
-        #[unsafe(method_id(initWithDomain:))]
-        fn init_with_domain(
-            this: Allocated<Self>,
-            domain: &NSFileProviderDomain,
-        ) -> Retained<Self> {
-            info!("file_provider: initWithDomain {:?}", unsafe {
-                domain.displayName()
-            },);
-            let domain_id = unsafe { domain.identifier() }.to_string();
-            let this = this.set_ivars(ExtensionIvars {
-                domain: Mutex::new(Some(domain.retain())),
-            });
-            // SAFETY: NSObject's `init` is always safe to call.
-            let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-
-            // Bootstrap the RemoteFs from persisted domain metadata.
-            // Errors are logged but not fatal — the enumerator handles
-            // get_remote_fs() returning None by signalling empty results.
-            match bootstrap(&domain_id) {
-                Ok(()) => info!("file_provider: bootstrap succeeded for {domain_id:?}"),
-                Err(e) => error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}"),
-            }
-
-            this
-        }
-
-        #[unsafe(method(invalidate))]
-        fn invalidate(&self) {
-            debug!("file_provider: invalidate");
-            if let Ok(mut guard) = self.ivars().domain.lock() {
-                *guard = None;
-            }
-        }
-
-        #[unsafe(method_id(itemForIdentifier:request:completionHandler:))]
-        fn item_for_identifier(
-            &self,
-            identifier: &NSFileProviderItemIdentifier,
-            _request: &NSFileProviderRequest,
-            completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderItem, *mut NSError)>,
-        ) -> Retained<NSProgress> {
-            let id_str = identifier.to_string();
-            debug!("file_provider: itemForIdentifier {:?}", id_str);
-            handle_item_for_identifier(&id_str, completion_handler);
-            new_progress()
-        }
-
-        #[unsafe(method_id(fetchContentsForItemWithIdentifier:version:request:completionHandler:))]
-        fn fetch_contents(
-            &self,
-            item_identifier: &NSFileProviderItemIdentifier,
-            _requested_version: Option<&NSFileProviderItemVersion>,
-            _request: &NSFileProviderRequest,
-            completion_handler: &block2::DynBlock<
-                dyn Fn(*mut NSURL, *mut NSFileProviderItem, *mut NSError),
-            >,
-        ) -> Retained<NSProgress> {
-            let id_str = item_identifier.to_string();
-            debug!("file_provider: fetchContents for {:?}", id_str);
-            handle_fetch_contents(&id_str, completion_handler);
-            new_progress()
-        }
-
-        #[unsafe(method_id(createItemBasedOnTemplate:fields:contents:options:request:completionHandler:))]
-        fn create_item(
-            &self,
-            item_template: &NSFileProviderItem,
-            _fields: NSFileProviderItemFields,
-            url: Option<&NSURL>,
-            _options: NSFileProviderCreateItemOptions,
-            _request: &NSFileProviderRequest,
-            completion_handler: &block2::DynBlock<
-                dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
-            >,
-        ) -> Retained<NSProgress> {
-            let filename = unsafe { item_template.filename() };
-            let parent_id = unsafe { item_template.parentItemIdentifier() };
-            debug!(
-                "file_provider: createItem {:?} in {:?}",
-                filename.to_string(),
-                parent_id.to_string(),
-            );
-            handle_create_item(&filename, &parent_id, url.is_some(), completion_handler);
-            new_progress()
-        }
-
-        #[unsafe(method_id(modifyItem:baseVersion:changedFields:contents:options:request:completionHandler:))]
-        fn modify_item(
-            &self,
-            item: &NSFileProviderItem,
-            _version: &NSFileProviderItemVersion,
-            _changed_fields: NSFileProviderItemFields,
-            new_contents: Option<&NSURL>,
-            _options: NSFileProviderModifyItemOptions,
-            _request: &NSFileProviderRequest,
-            completion_handler: &block2::DynBlock<
-                dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
-            >,
-        ) -> Retained<NSProgress> {
-            let item_id = unsafe { item.itemIdentifier() };
-            debug!("file_provider: modifyItem {:?}", item_id.to_string());
-            handle_modify_item(&item_id, new_contents, completion_handler);
-            new_progress()
-        }
-
-        #[unsafe(method_id(deleteItemWithIdentifier:baseVersion:options:request:completionHandler:))]
-        fn delete_item(
-            &self,
-            identifier: &NSFileProviderItemIdentifier,
-            _version: &NSFileProviderItemVersion,
-            _options: NSFileProviderDeleteItemOptions,
-            _request: &NSFileProviderRequest,
-            completion_handler: &block2::DynBlock<dyn Fn(*mut NSError)>,
-        ) -> Retained<NSProgress> {
-            debug!("file_provider: deleteItem {:?}", identifier.to_string(),);
-            handle_delete_item(identifier, completion_handler);
-            new_progress()
-        }
-    }
-
-    unsafe impl NSFileProviderEnumerating for DistantFileProvider {
-        // The `error:` out-parameter is handled manually: the ObjC runtime
-        // expects `enumeratorForContainerItemIdentifier:request:error:` where
-        // the last argument is `NSError **`. We take it as a raw pointer and
-        // write the error on failure (returning `None`/nil).
-        #[unsafe(method_id(enumeratorForContainerItemIdentifier:request:error:))]
-        fn enumerator_for_container(
-            &self,
-            container_item_identifier: &NSFileProviderItemIdentifier,
-            _request: &NSFileProviderRequest,
-            _error: *mut *mut NSError,
-        ) -> Option<Retained<ProtocolObject<dyn NSFileProviderEnumerator>>> {
-            debug!(
-                "file_provider: enumeratorForContainer {:?}",
-                container_item_identifier.to_string(),
-            );
-            let enumerator = DistantFileProviderEnumerator::new(container_item_identifier);
-            Some(ProtocolObject::from_retained(enumerator))
-        }
-    }
-);
 
 // ---------------------------------------------------------------------------
 // Extracted handler functions (avoids early returns inside define_class!)
@@ -1099,4 +773,41 @@ fn remove_domain_blocking(domain: &NSFileProviderDomain) {
         Ok(Some(err)) => debug!("file_provider: remove domain (best-effort): {err}"),
         Err(_) => {}
     }
+}
+
+/// Stores the Tokio runtime handle and channel resolver needed by the
+/// `.appex` FileProvider extension bootstrap flow.
+///
+/// Subsequent calls are silently ignored (the first call wins).
+pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
+    crate::backend::macos_file_provider::init(rt, resolve_channel);
+}
+
+/// Registers FileProvider ObjC classes with the Objective-C runtime.
+///
+/// Must be called before the XPC framework looks up
+/// `NSExtensionPrincipalClass`, as classes defined via `define_class!`
+/// are registered at runtime rather than at load time.
+pub fn register_file_provider_classes() {
+    crate::backend::macos_file_provider::register_classes();
+}
+
+/// Removes all distant FileProvider domains and cleans up their metadata.
+///
+/// # Errors
+///
+/// Returns an error if domain enumeration fails.
+pub fn remove_all_file_provider_domains() -> io::Result<()> {
+    crate::backend::macos_file_provider::remove_all_domains()
+}
+
+/// Removes the FileProvider domain whose stored destination matches `dest`.
+///
+/// Used during unmount-by-destination: e.g. `distant unmount ssh://root@host`.
+///
+/// # Errors
+///
+/// Returns an error if no matching domain is found.
+pub fn remove_file_provider_domain_for_destination(dest: &str) -> io::Result<()> {
+    crate::backend::macos_file_provider::remove_domain_for_destination(dest)
 }

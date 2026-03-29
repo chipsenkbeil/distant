@@ -17,8 +17,7 @@ use nfsserve::nfs::{
 use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 use nfsserve::vfs::{DirEntry as NfsDirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
-use crate::RemoteFs;
-use crate::cache::FileAttr;
+use crate::core::{FileAttr, RemoteFs};
 use distant_core::protocol::FileType;
 
 /// NFS filesystem handler that delegates all operations to [`RemoteFs`].
@@ -88,7 +87,7 @@ impl NFSFileSystem for NfsHandler {
     async fn lookup(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
         let name = filename_to_str(filename)?;
         debug!("nfs lookup dirid={} name={:?}", dirid, name);
-        match self.fs.lookup(dirid, name) {
+        match self.fs.lookup(dirid, name).await {
             Ok(attr) => Ok(attr.ino),
             Err(_) => Err(nfsstat3::NFS3ERR_NOENT),
         }
@@ -96,7 +95,7 @@ impl NFSFileSystem for NfsHandler {
 
     async fn getattr(&self, id: fileid3) -> Result<fattr3, nfsstat3> {
         debug!("nfs getattr id={}", id);
-        match self.fs.getattr(id) {
+        match self.fs.getattr(id).await {
             Ok(attr) => Ok(to_nfs_attr(&attr)),
             Err(_) => Err(nfsstat3::NFS3ERR_NOENT),
         }
@@ -106,7 +105,7 @@ impl NFSFileSystem for NfsHandler {
         debug!("nfs setattr id={}", id);
 
         // No remote setattr implementation yet; return current attributes.
-        match self.fs.getattr(id) {
+        match self.fs.getattr(id).await {
             Ok(attr) => Ok(to_nfs_attr(&attr)),
             Err(_) => Err(nfsstat3::NFS3ERR_NOENT),
         }
@@ -119,7 +118,7 @@ impl NFSFileSystem for NfsHandler {
         count: u32,
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
         debug!("nfs read id={} offset={} count={}", id, offset, count);
-        match self.fs.read(id, offset, count) {
+        match self.fs.read(id, offset, count).await {
             Ok(data) => {
                 let eof = (data.len() as u32) < count;
                 Ok((data, eof))
@@ -133,9 +132,14 @@ impl NFSFileSystem for NfsHandler {
         let _ = self
             .fs
             .write(id, offset, data)
+            .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)?;
-        self.fs.flush(id).map_err(|_| nfsstat3::NFS3ERR_IO)?;
-        let attr = self.fs.getattr(id).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        self.fs.flush(id).await.map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        let attr = self
+            .fs
+            .getattr(id)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         Ok(to_nfs_attr(&attr))
     }
 
@@ -147,7 +151,7 @@ impl NFSFileSystem for NfsHandler {
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let name = filename_to_str(filename)?;
         debug!("nfs create dirid={} name={:?}", dirid, name);
-        match self.fs.create(dirid, name, 0o644) {
+        match self.fs.create(dirid, name, 0o644).await {
             Ok(attr) => Ok((attr.ino, to_nfs_attr(&attr))),
             Err(_) => Err(nfsstat3::NFS3ERR_IO),
         }
@@ -160,7 +164,7 @@ impl NFSFileSystem for NfsHandler {
     ) -> Result<fileid3, nfsstat3> {
         let name = filename_to_str(filename)?;
         debug!("nfs create_exclusive dirid={} name={:?}", dirid, name);
-        match self.fs.create(dirid, name, 0o644) {
+        match self.fs.create(dirid, name, 0o644).await {
             Ok(attr) => Ok(attr.ino),
             Err(_) => Err(nfsstat3::NFS3ERR_IO),
         }
@@ -171,6 +175,7 @@ impl NFSFileSystem for NfsHandler {
         debug!("nfs remove dirid={} name={:?}", dirid, name);
         self.fs
             .unlink(dirid, name)
+            .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)
     }
 
@@ -189,6 +194,7 @@ impl NFSFileSystem for NfsHandler {
         );
         self.fs
             .rename(from_dirid, from_name, to_dirid, to_name)
+            .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)
     }
 
@@ -199,7 +205,7 @@ impl NFSFileSystem for NfsHandler {
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let name = filename_to_str(dirname)?;
         debug!("nfs mkdir dirid={} name={:?}", dirid, name);
-        match self.fs.mkdir(dirid, name, 0o755) {
+        match self.fs.mkdir(dirid, name, 0o755).await {
             Ok(attr) => Ok((attr.ino, to_nfs_attr(&attr))),
             Err(_) => Err(nfsstat3::NFS3ERR_IO),
         }
@@ -215,24 +221,33 @@ impl NFSFileSystem for NfsHandler {
             "nfs readdir dirid={} start_after={} max_entries={}",
             dirid, start_after, max_entries
         );
-        let entries = self.fs.readdir(dirid).map_err(|_| nfsstat3::NFS3ERR_IO)?;
+        let entries = self
+            .fs
+            .readdir(dirid)
+            .await
+            .map_err(|_| nfsstat3::NFS3ERR_IO)?;
 
-        let nfs_entries: Vec<NfsDirEntry> = entries
+        // Build up our entries
+        // TODO: If we can parallelize the async calls, we should
+        let mut nfs_entries: Vec<NfsDirEntry> = Vec::new();
+        for e in entries
             .iter()
             .filter(|e| e.name != "." && e.name != "..")
             .skip_while(|e| start_after > 0 && e.ino <= start_after)
             .take(max_entries)
-            .map(|e| NfsDirEntry {
+        {
+            nfs_entries.push(NfsDirEntry {
                 fileid: e.ino,
                 name: e.name.as_bytes().to_vec().into(),
                 attr: self
                     .fs
                     .getattr(e.ino)
+                    .await
                     .ok()
                     .map(|a| to_nfs_attr(&a))
                     .unwrap_or_default(),
-            })
-            .collect();
+            });
+        }
 
         let eof = nfs_entries.len() < max_entries || entries.len() <= nfs_entries.len();
 
