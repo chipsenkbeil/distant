@@ -219,6 +219,18 @@ pub(crate) fn handle_item_for_identifier(
 ) {
     trace!("file_provider: handle_item_for_identifier id={id_str:?}");
 
+    // Working set and trash containers are not backed by real items.
+    let working_set_id = unsafe { NSFileProviderWorkingSetContainerItemIdentifier }.to_string();
+    let trash_id = unsafe { NSFileProviderTrashContainerItemIdentifier }.to_string();
+    if id_str == working_set_id || id_str == trash_id {
+        let error = make_fp_error(
+            NSFileProviderErrorCode::NoSuchItem,
+            &format!("container {id_str:?} has no backing item"),
+        );
+        completion_handler.call((std::ptr::null_mut(), Retained::into_raw(error)));
+        return;
+    }
+
     let Some(rt) = get_runtime() else {
         call_completion_item_error(completion_handler, "Runtime not initialized");
         return;
@@ -230,7 +242,17 @@ pub(crate) fn handle_item_for_identifier(
     let ino: u64 = if is_root {
         1
     } else {
-        id_str.parse().unwrap_or(1)
+        match id_str.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                let error = make_fp_error(
+                    NSFileProviderErrorCode::NoSuchItem,
+                    &format!("unknown identifier {id_str:?}"),
+                );
+                completion_handler.call((std::ptr::null_mut(), Retained::into_raw(error)));
+                return;
+            }
+        }
     };
 
     let block = UnsafeSendable(completion_handler.copy());
