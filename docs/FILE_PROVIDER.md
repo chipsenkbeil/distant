@@ -174,10 +174,17 @@ Common causes:
 
 **Mount not visible in Finder sidebar**
 
-FileProvider domains appear under "Locations" in Finder's sidebar. If hidden:
-1. Open Finder preferences (Cmd+,)
-2. Go to Sidebar tab
-3. Ensure cloud storage locations are enabled
+FileProvider domains appear under "Locations" in Finder's sidebar. If missing:
+
+1. **Enable the extension**: System Settings > General > Login Items &
+   Extensions > Added Extensions. Find "Distant" and enable it. The build
+   script runs `pluginkit -e use` automatically, but macOS may still require
+   manual confirmation.
+2. **Check Finder preferences**: Finder > Settings (Cmd+,) > Sidebar tab.
+   Ensure cloud storage locations are enabled under "Locations".
+3. **Restart fileproviderd**: `sudo killall fileproviderd` (it auto-restarts).
+4. Mounts are always accessible at `~/Library/CloudStorage/` even if the
+   sidebar entry doesn't appear.
 
 **Extension crashes**
 

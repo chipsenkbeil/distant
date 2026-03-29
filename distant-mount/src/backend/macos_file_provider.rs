@@ -956,16 +956,16 @@ fn make_domain_id(connection_id: &str, remote_root: Option<&String>) -> String {
     }
 }
 
-/// Sanitizes a destination string for use as a FileProvider display name.
+/// Builds the FileProvider domain display name from destination and remote root.
 ///
-/// Replaces `://` with `-` and prepends "Distant — " so the display name
-/// is identifiable in Finder's sidebar, e.g. `Distant — ssh-root@host`.
-/// If a remote root is set, appends it: `Distant — ssh-root@host:/var/data`.
+/// macOS prepends the extension's `CFBundleDisplayName` ("Distant") automatically,
+/// so the display name is just the connection-specific part. Examples:
+/// - `ssh://root@host`
+/// - `ssh://root@host:/var/data`
 fn sanitize_display_name(destination: &str, remote_root: Option<&String>) -> String {
-    let base = destination.replace("://", "-");
     match remote_root {
-        Some(root) => format!("Distant — {base}:{root}"),
-        None => format!("Distant — {base}"),
+        Some(root) => format!("{destination}:{root}"),
+        None => destination.to_owned(),
     }
 }
 
