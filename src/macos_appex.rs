@@ -75,28 +75,53 @@ async fn resolve_connection(
     connection_id: u32,
     destination: &str,
 ) -> std::io::Result<distant_core::Channel> {
+    log::info!("appex: resolving channel for connection_id={connection_id}, dest={destination:?}");
     let mut client = connect_headless().await?;
+    log::info!("appex: connected to manager daemon");
 
     // Fast path: try the stored connection_id
     let resolved_id: ConnectionId = match client.info(connection_id).await {
-        Ok(info) if info.destination == destination => connection_id,
-        _ => {
-            log::debug!("appex: connection {connection_id} gone, searching by destination");
-            let list = client.list().await?;
-            list.iter()
-                .find(|(_, dest)| dest.as_str() == destination)
-                .map(|(id, _)| *id)
-                .ok_or_else(|| {
-                    std::io::Error::other(format!(
-                        "no connection for {destination}. \
-                         Run `distant connect {destination}` to re-establish."
-                    ))
-                })?
+        Ok(info) if info.destination == destination => {
+            log::info!("appex: connection {connection_id} still valid (fast path)");
+            connection_id
+        }
+        Ok(info) => {
+            log::debug!(
+                "appex: connection {connection_id} destination mismatch (got {:?}), searching",
+                info.destination
+            );
+            find_connection_by_destination(&mut client, destination).await?
+        }
+        Err(e) => {
+            log::debug!(
+                "appex: connection {connection_id} lookup failed ({e}), searching by destination"
+            );
+            find_connection_by_destination(&mut client, destination).await?
         }
     };
 
+    log::info!("appex: opening raw channel for connection {resolved_id}");
     let raw = client.open_raw_channel(resolved_id).await?;
+    log::info!("appex: channel opened successfully");
     Ok(raw.into_client().into_channel())
+}
+
+/// Searches the manager's connection list for a connection matching `destination`.
+async fn find_connection_by_destination(
+    client: &mut distant_core::net::manager::ManagerClient,
+    destination: &str,
+) -> std::io::Result<ConnectionId> {
+    let list = client.list().await?;
+    log::debug!("appex: manager has {} active connections", list.len());
+    list.iter()
+        .find(|(_, dest)| dest.as_str() == destination)
+        .map(|(id, _)| *id)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "no connection for {destination}. \
+                 Run `distant connect {destination}` to re-establish."
+            ))
+        })
 }
 
 /// Connects to the distant manager daemon over the App Group shared socket

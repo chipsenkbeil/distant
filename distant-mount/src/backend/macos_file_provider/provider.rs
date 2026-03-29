@@ -54,11 +54,14 @@ define_class!(
             let this: Retained<Self> = unsafe { msg_send![super(this), init] };
 
             // Bootstrap the Runtime from persisted domain metadata.
-            // Errors are logged but not fatal — the enumerator handles
-            // get_runtime() returning None by signalling empty results.
+            // Errors are stored so the enumerator can signal them to Finder
+            // instead of returning empty results.
             match bootstrap(&domain_id) {
                 Ok(()) => info!("file_provider: bootstrap succeeded for {domain_id:?}"),
-                Err(e) => error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}"),
+                Err(e) => {
+                    error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}");
+                    super::store_bootstrap_error(format!("{e}"));
+                }
             }
 
             this
@@ -115,12 +118,28 @@ define_class!(
         ) -> Retained<NSProgress> {
             let filename = unsafe { item_template.filename() };
             let parent_id = unsafe { item_template.parentItemIdentifier() };
+            let content_type = unsafe { item_template.contentType() };
+            let is_dir = content_type
+                .conformsToType(unsafe { objc2_uniform_type_identifiers::UTTypeFolder });
             debug!(
-                "file_provider: createItem {:?} in {:?}",
+                "file_provider: createItem {:?} in {:?} is_dir={is_dir}",
                 filename.to_string(),
                 parent_id.to_string(),
             );
-            handle_create_item(&filename, &parent_id, url.is_some(), completion_handler);
+            // Read file content before spawning (NSURL is not Send).
+            let content_data = url.and_then(|content_url| {
+                content_url
+                    .path()
+                    .map(|path_ns| path_ns.to_string())
+                    .and_then(|local_path| std::fs::read(&local_path).ok())
+            });
+            handle_create_item(
+                &filename,
+                &parent_id,
+                is_dir,
+                content_data,
+                completion_handler,
+            );
             new_progress()
         }
 

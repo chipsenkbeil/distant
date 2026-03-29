@@ -10,8 +10,9 @@ use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::{
     NSFileProviderChangeObserver, NSFileProviderEnumerationObserver, NSFileProviderEnumerator,
-    NSFileProviderItemProtocol, NSFileProviderPage, NSFileProviderRootContainerItemIdentifier,
-    NSFileProviderSyncAnchor,
+    NSFileProviderErrorCode, NSFileProviderItemProtocol, NSFileProviderPage,
+    NSFileProviderRootContainerItemIdentifier, NSFileProviderSyncAnchor,
+    NSFileProviderTrashContainerItemIdentifier, NSFileProviderWorkingSetContainerItemIdentifier,
 };
 use objc2_foundation::{NSArray, NSData, NSObject, NSString};
 
@@ -60,6 +61,11 @@ define_class!(
             observer: &ProtocolObject<dyn NSFileProviderChangeObserver>,
             _sync_anchor: &NSFileProviderSyncAnchor,
         ) {
+            let container_str = self.ivars().container_id.to_string();
+            debug!(
+                "file_provider: enumerateChanges for container {:?}",
+                container_str,
+            );
             let now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -82,19 +88,56 @@ define_class!(
                 container_str,
             );
 
-            let Some(rt) = macos_file_provider::get_runtime() else {
-                debug!("file_provider: enumerate_items — Runtime not available, returning empty");
+            // Working set and trash containers return empty results immediately.
+            let working_set_id =
+                unsafe { NSFileProviderWorkingSetContainerItemIdentifier }.to_string();
+            let trash_id = unsafe { NSFileProviderTrashContainerItemIdentifier }.to_string();
+            if container_str == working_set_id || container_str == trash_id {
+                debug!(
+                    "file_provider: enumerate_items — returning empty for {:?}",
+                    container_str,
+                );
                 unsafe {
                     observer.finishEnumeratingUpToPage(None);
+                }
+                return;
+            }
+
+            let Some(rt) = macos_file_provider::get_runtime() else {
+                if let Some(err_msg) = macos_file_provider::get_bootstrap_error() {
+                    error!("file_provider: enumerate_items — bootstrap failed: {err_msg}",);
+                    let ns_error = macos_file_provider::make_fp_error(
+                        NSFileProviderErrorCode::ServerUnreachable,
+                        &format!("Bootstrap failed: {err_msg}"),
+                    );
+                    unsafe {
+                        observer.finishEnumeratingWithError(&ns_error);
+                    }
+                } else {
+                    debug!(
+                        "file_provider: enumerate_items — Runtime not available, returning empty",
+                    );
+                    unsafe {
+                        observer.finishEnumeratingUpToPage(None);
+                    }
                 }
                 return;
             };
 
             let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
-            let ino = if container_str == root_id.to_string() {
+            let root_id_str = root_id.to_string();
+            let ino = if container_str == root_id_str {
                 1u64
             } else {
                 container_str.parse::<u64>().unwrap_or(1)
+            };
+
+            // Parent identifier: use the root constant string when enumerating
+            // the root directory, otherwise the numeric inode string.
+            let parent_id_str = if ino == 1 {
+                root_id_str
+            } else {
+                ino.to_string()
             };
 
             let observer = macos_file_provider::UnsafeSendable(observer.retain());
@@ -102,8 +145,6 @@ define_class!(
             rt.spawn(move |fs| async move {
                 match fs.readdir(ino).await {
                     Ok(entries) => {
-                        let parent_id_str = ino.to_string();
-
                         // Collect metadata with async calls first, then build
                         // ObjC items. This avoids holding Retained<...> (!Send)
                         // across .await points.

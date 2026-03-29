@@ -84,9 +84,23 @@ static CHANNEL_RESOLVER: OnceLock<ChannelResolver> = OnceLock::new();
 
 static RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
+/// Stores a bootstrap error message so the enumerator can signal the error
+/// to Finder instead of returning empty results.
+static BOOTSTRAP_ERROR: OnceLock<String> = OnceLock::new();
+
 /// Returns a reference to the global [`Runtime`], if it has been set.
 pub(crate) fn get_runtime() -> Option<&'static Arc<Runtime>> {
     RUNTIME.get()
+}
+
+/// Returns the bootstrap error message, if bootstrap failed.
+pub(crate) fn get_bootstrap_error() -> Option<&'static str> {
+    BOOTSTRAP_ERROR.get().map(|s| s.as_str())
+}
+
+/// Stores a bootstrap error message for the enumerator to report.
+pub(crate) fn store_bootstrap_error(message: String) {
+    let _ = BOOTSTRAP_ERROR.set(message);
 }
 
 /// Registers all FileProvider ObjC classes with the Objective-C runtime.
@@ -210,30 +224,45 @@ pub(crate) fn handle_item_for_identifier(
         return;
     };
 
+    // Detect the root container constant and map it to inode 1.
+    let root_id_str = unsafe { NSFileProviderRootContainerItemIdentifier }.to_string();
+    let is_root = id_str == root_id_str;
+    let ino: u64 = if is_root {
+        1
+    } else {
+        id_str.parse().unwrap_or(1)
+    };
+
     let block = UnsafeSendable(completion_handler.copy());
-    let ino: u64 = id_str.parse().unwrap_or(1);
 
     rt.spawn(move |fs| async move {
         match fs.getattr(ino).await {
             Ok(attr) => {
-                let path = fs.get_path(ino).await;
-                let filename = path
-                    .as_ref()
-                    .map(|p| extract_filename(p.as_str()))
-                    .unwrap_or("unknown");
-
-                let parent_str = if ino == 1 {
-                    let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
-                    root_id.to_string()
-                } else if let Some(ref p) = path {
-                    let s = p.as_str();
-                    let parent = s.rsplit_once('/').map(|(pp, _)| pp).unwrap_or("/");
-                    fs.get_ino_for_path(parent)
-                        .await
-                        .map(|i| i.to_string())
-                        .unwrap_or_else(|| "1".to_string())
+                // For the root item, use the framework constants for both
+                // the item identifier and parent identifier.
+                let (item_id_str, parent_str, filename) = if is_root {
+                    (root_id_str.clone(), root_id_str, "/".to_owned())
                 } else {
-                    "1".to_string()
+                    let path = fs.get_path(ino).await;
+                    let fname = path
+                        .as_ref()
+                        .map(|p| extract_filename(p.as_str()).to_owned())
+                        .unwrap_or_else(|| "unknown".to_owned());
+
+                    let parent = if let Some(ref p) = path {
+                        let s = p.as_str();
+                        let parent_path = s.rsplit_once('/').map(|(pp, _)| pp).unwrap_or("/");
+                        let parent_ino = fs.get_ino_for_path(parent_path).await;
+                        match parent_ino {
+                            Some(1) => root_id_str.clone(),
+                            Some(i) => i.to_string(),
+                            None => root_id_str.clone(),
+                        }
+                    } else {
+                        root_id_str.clone()
+                    };
+
+                    (ino.to_string(), parent, fname)
                 };
 
                 let is_dir = attr.kind == FileType::Dir;
@@ -244,9 +273,9 @@ pub(crate) fn handle_item_for_identifier(
                     .unwrap_or(0);
                 trace!("file_provider: item ino={ino} filename={filename:?} is_dir={is_dir}");
                 let item = DistantFileProviderItem::new(
-                    &ino.to_string(),
+                    &item_id_str,
                     &parent_str,
-                    filename,
+                    &filename,
                     is_dir,
                     attr.size,
                     mtime_secs,
@@ -259,9 +288,7 @@ pub(crate) fn handle_item_for_identifier(
             }
             Err(e) => {
                 let error = make_ns_error(&format!("getattr failed: {e}"));
-                block
-                    .0
-                    .call((std::ptr::null_mut(), Retained::into_raw(error)));
+                block.call((std::ptr::null_mut(), Retained::into_raw(error)));
             }
         }
     });
@@ -338,8 +365,16 @@ pub(crate) fn handle_fetch_contents(
             })
             .unwrap_or(0);
 
-        let item =
-            DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size, mtime_secs);
+        let parent_str =
+            resolve_parent_identifier(&fs, ino, path.as_ref().map(|p| p.as_str())).await;
+        let item = DistantFileProviderItem::new(
+            &ino.to_string(),
+            &parent_str,
+            filename,
+            is_dir,
+            size,
+            mtime_secs,
+        );
         let proto = objc2::runtime::ProtocolObject::from_retained(item);
 
         block.call((
@@ -354,7 +389,8 @@ pub(crate) fn handle_fetch_contents(
 pub(crate) fn handle_create_item(
     filename: &NSString,
     parent_id: &NSString,
-    has_content: bool,
+    is_dir: bool,
+    content_data: Option<Vec<u8>>,
     completion_handler: &block2::DynBlock<
         dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
     >,
@@ -365,30 +401,63 @@ pub(crate) fn handle_create_item(
     };
 
     let block = UnsafeSendable(completion_handler.copy());
-    let parent_ino: u64 = parent_id.to_string().parse().unwrap_or(1);
+    let parent_id_string = parent_id.to_string();
+    let root_id_str = unsafe { NSFileProviderRootContainerItemIdentifier }.to_string();
+    let parent_ino: u64 = if parent_id_string == root_id_str {
+        1
+    } else {
+        parent_id_string.parse().unwrap_or(1)
+    };
     let name = filename.to_string();
 
     rt.spawn(move |fs| async move {
-        let result = if has_content {
-            fs.create(parent_ino, &name, 0o644).await
-        } else {
+        let result = if is_dir {
             fs.mkdir(parent_ino, &name, 0o755).await
+        } else {
+            fs.create(parent_ino, &name, 0o644).await
         };
 
         match result {
             Ok(attr) => {
+                // Write file content if provided (e.g., drag-and-drop into Finder).
+                if let Some(data) = content_data {
+                    trace!(
+                        "file_provider: writing {} bytes to new file ino={}",
+                        data.len(),
+                        attr.ino,
+                    );
+                    if let Err(e) = fs.write(attr.ino, 0, &data).await {
+                        let error = make_ns_error(&format!("write content failed: {e}"));
+                        block.call((
+                            std::ptr::null_mut(),
+                            NSFileProviderItemFields::empty(),
+                            Bool::NO,
+                            Retained::into_raw(error),
+                        ));
+                        return;
+                    }
+                    let _ = fs.flush(attr.ino).await;
+                }
+
                 trace!(
                     "file_provider: create_item succeeded — ino={} name={name:?}",
                     attr.ino
                 );
+                // Re-fetch attr after writing content so size/mtime are current.
+                let attr = fs.getattr(attr.ino).await.unwrap_or(attr);
                 let mtime_secs = attr
                     .mtime
                     .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
+                let parent_id_str = if parent_ino == 1 {
+                    unsafe { NSFileProviderRootContainerItemIdentifier }.to_string()
+                } else {
+                    parent_ino.to_string()
+                };
                 let item = DistantFileProviderItem::new(
                     &attr.ino.to_string(),
-                    &parent_ino.to_string(),
+                    &parent_id_str,
                     &name,
                     attr.kind == FileType::Dir,
                     attr.size,
@@ -470,9 +539,17 @@ pub(crate) fn handle_modify_item(
             })
             .unwrap_or(0);
 
+        let parent_str =
+            resolve_parent_identifier(&fs, ino, path.as_ref().map(|p| p.as_str())).await;
         trace!("file_provider: modify_item succeeded for ino={ino}");
-        let new_item =
-            DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size, mtime_secs);
+        let new_item = DistantFileProviderItem::new(
+            &ino.to_string(),
+            &parent_str,
+            filename,
+            is_dir,
+            size,
+            mtime_secs,
+        );
         let proto = objc2::runtime::ProtocolObject::from_retained(new_item);
         block.call((
             Retained::into_raw(proto),
@@ -548,6 +625,22 @@ pub(crate) fn make_ns_error(message: &str) -> Retained<NSError> {
     unsafe { NSError::errorWithDomain_code_userInfo(domain, 256, Some(&user_info)) }
 }
 
+/// Creates an `NSError` using `NSFileProviderErrorDomain` with the specified
+/// error code.
+///
+/// Use this for errors that Finder should display with FileProvider-specific
+/// UI (e.g., "server unreachable" offline indicator).
+pub(crate) fn make_fp_error(code: NSFileProviderErrorCode, message: &str) -> Retained<NSError> {
+    let domain = unsafe { NSFileProviderErrorDomain };
+    let description = NSString::from_str(message);
+    let key: &NSErrorUserInfoKey = unsafe { NSLocalizedDescriptionKey };
+    let user_info = NSDictionary::from_retained_objects(
+        &[key],
+        &[Retained::into_super(Retained::into_super(description))],
+    );
+    unsafe { NSError::errorWithDomain_code_userInfo(domain, code.0, Some(&user_info)) }
+}
+
 /// Creates a completed `NSProgress` for methods that execute synchronously.
 pub(crate) fn new_progress() -> Retained<NSProgress> {
     NSProgress::discreteProgressWithTotalUnitCount(0)
@@ -556,6 +649,52 @@ pub(crate) fn new_progress() -> Retained<NSProgress> {
 /// Extracts the final path component from a path string.
 fn extract_filename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Removes temporary files created by `fetchContents` (`/tmp/distant_fp_*`).
+fn cleanup_temp_files() {
+    let tmp_dir = std::env::temp_dir();
+    if let Ok(entries) = std::fs::read_dir(&tmp_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("distant_fp_") {
+                debug!("file_provider: cleaning up temp file {}", name);
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Resolves the parent item identifier for a given inode.
+///
+/// Returns `NSFileProviderRootContainerItemIdentifier` when the parent is
+/// the root (inode 1), otherwise returns the numeric inode string.
+async fn resolve_parent_identifier(
+    fs: &crate::core::RemoteFs,
+    ino: u64,
+    path: Option<&str>,
+) -> String {
+    let root_id_str = unsafe { NSFileProviderRootContainerItemIdentifier }.to_string();
+
+    if ino == 1 {
+        return root_id_str;
+    }
+
+    if let Some(s) = path {
+        let parent_path = s.rsplit_once('/').map(|(pp, _)| pp).unwrap_or("/");
+        let parent_path = if parent_path.is_empty() {
+            "/"
+        } else {
+            parent_path
+        };
+        match fs.get_ino_for_path(parent_path).await {
+            Some(1) => root_id_str,
+            Some(i) => i.to_string(),
+            None => root_id_str,
+        }
+    } else {
+        root_id_str
+    }
 }
 
 /// Calls the item+error completion handler with an error.
@@ -748,10 +887,10 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
 
 /// Sanitizes a destination string for use as a FileProvider display name.
 ///
-/// Replaces `://` with `-` so the display name contains no slashes or colons,
-/// producing clean CloudStorage folder names like `Distant-ssh-root@host`.
+/// Replaces `://` with `-` and prepends "Distant — " so the display name
+/// is identifiable in Finder's sidebar, e.g. `Distant — ssh-root@host`.
 fn sanitize_display_name(destination: &str) -> String {
-    destination.replace("://", "-")
+    format!("Distant — {}", destination.replace("://", "-"))
 }
 
 /// Removes a single FileProvider domain by identifier and cleans up its
@@ -804,6 +943,7 @@ pub(crate) fn remove_all_domains() -> io::Result<()> {
         }
     }
 
+    cleanup_temp_files();
     Ok(())
 }
 
@@ -835,6 +975,7 @@ pub(crate) fn remove_domain_for_destination(dest: &str) -> io::Result<()> {
     }
 
     if found {
+        cleanup_temp_files();
         Ok(())
     } else {
         Err(io::Error::other(format!(
@@ -907,4 +1048,63 @@ pub fn remove_all_file_provider_domains() -> io::Result<()> {
 /// Returns an error if no matching domain is found.
 pub fn remove_file_provider_domain_for_destination(dest: &str) -> io::Result<()> {
     remove_domain_for_destination(dest)
+}
+
+/// Information about a registered FileProvider domain.
+#[derive(Debug)]
+pub struct DomainInfo {
+    /// Domain identifier (e.g., `dev.distant.42`).
+    pub identifier: String,
+    /// Display name shown in Finder sidebar.
+    pub display_name: String,
+    /// Connection ID from domain metadata, if available.
+    pub connection_id: Option<u32>,
+    /// Destination string from domain metadata, if available.
+    pub destination: Option<String>,
+    /// Whether the domain metadata file exists in the App Group container.
+    pub has_metadata: bool,
+}
+
+/// Lists all registered FileProvider domains with their metadata.
+///
+/// # Errors
+///
+/// Returns an error if domain enumeration fails.
+pub fn list_file_provider_domains() -> io::Result<Vec<DomainInfo>> {
+    let domains = get_all_domains()?;
+    let mut result = Vec::with_capacity(domains.len());
+
+    for domain in &domains {
+        let identifier = unsafe { domain.identifier() }.to_string();
+        let display_name = unsafe { domain.displayName() }.to_string();
+
+        let (connection_id, destination, has_metadata) = if let Some(dir) = domains_dir() {
+            let meta_path = dir.join(&identifier);
+            if meta_path.exists() {
+                let meta = std::fs::read_to_string(&meta_path)
+                    .ok()
+                    .and_then(|s| distant_core::net::common::Map::parse_json(&s).ok());
+                let conn_id = meta
+                    .as_ref()
+                    .and_then(|m| m.get("connection_id"))
+                    .and_then(|s| s.parse().ok());
+                let dest = meta.as_ref().and_then(|m| m.get("destination")).cloned();
+                (conn_id, dest, true)
+            } else {
+                (None, None, false)
+            }
+        } else {
+            (None, None, false)
+        };
+
+        result.push(DomainInfo {
+            identifier,
+            display_name,
+            connection_id,
+            destination,
+            has_metadata,
+        });
+    }
+
+    Ok(result)
 }
