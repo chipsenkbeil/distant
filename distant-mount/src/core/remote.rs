@@ -12,6 +12,7 @@ use distant_core::protocol::{
     Change, ChangeKind, Metadata, ReadFileOptions, RemotePath, WriteFileOptions,
 };
 use distant_core::{Channel, ChannelExt};
+use typed_path::Utf8TypedPath;
 
 use crate::core::MountConfig;
 use buffer::WriteBuffers;
@@ -47,12 +48,12 @@ impl RemoteFs {
     /// explicit remote root is configured.
     pub async fn init(channel: Channel, config: MountConfig) -> io::Result<Self> {
         let root_path = match config.remote_root {
-            Some(ref path) => path.clone(),
+            Some(ref path) => normalize_path(path.clone()),
             None => {
                 let mut ch = channel.clone();
                 let info = ch.system_info().await?;
                 debug!("remote root defaulting to server cwd: {}", info.current_dir);
-                info.current_dir
+                normalize_path(info.current_dir)
             }
         };
 
@@ -215,8 +216,9 @@ impl RemoteFs {
         let mut inodes = self.inodes.write().await;
         let mut entries = Vec::with_capacity(dir_entries.len());
         for entry in dir_entries {
-            let entry_ino = inodes.insert(entry.path.clone());
-            let name = extract_file_name(&entry.path);
+            let normalized = normalize_path(entry.path);
+            let entry_ino = inodes.insert(normalized.clone());
+            let name = extract_file_name(&normalized);
             entries.push(DirCacheEntry {
                 name,
                 ino: entry_ino,
@@ -767,8 +769,6 @@ async fn invalidate_for_change(
 /// Returns the parent path of a remote path.
 fn parent_path(path: &RemotePath) -> RemotePath {
     let s = path.as_str();
-
-    // TODO: This won't work on Windows
     match s.rsplit_once('/') {
         Some(("", _)) => RemotePath::new("/"),
         Some((parent, _)) => RemotePath::new(parent),
@@ -781,12 +781,24 @@ fn parent_path(path: &RemotePath) -> RemotePath {
 /// Falls back to the full path string if no `/` separator is found.
 fn extract_file_name(path: &RemotePath) -> String {
     let s = path.as_str();
-
-    // TODO: This won't work on Windows
     match s.rfind('/') {
         Some(pos) => s[pos + 1..].to_string(),
         None => s.to_string(),
     }
+}
+
+/// Normalizes a remote path to use forward slashes.
+///
+/// Uses `typed_path::Utf8TypedPath::derive()` to detect the path format
+/// (Windows vs Unix) and reconstruct with `/` separators. This ensures
+/// Windows paths like `C:\Users\foo` become `C:/Users/foo`.
+fn normalize_path(path: RemotePath) -> RemotePath {
+    let typed = Utf8TypedPath::derive(path.as_str());
+    let components: Vec<&str> = typed.components().map(|c| c.as_str()).collect();
+    if components.is_empty() {
+        return path;
+    }
+    RemotePath::new(components.join("/"))
 }
 
 /// Extracts a byte range from a data slice, clamping to the actual length.
