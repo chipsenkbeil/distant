@@ -101,6 +101,7 @@
 
 - [ ] **P4.1** Streamed file reads for large files
   - Current: `fs.read(ino, 0, u32::MAX)` loads entire file in RAM
+  - Requires RemoteFs protocol changes for chunked reads — deferred
 
 - [ ] **P4.2** Per-domain Runtime (multi-mount)
   - Current: single `OnceLock<Arc<Runtime>>` — only first domain bootstraps
