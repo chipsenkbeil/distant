@@ -25,6 +25,7 @@ use super::{
 /// Instance variables for [`DistantFileProvider`].
 pub struct ExtensionIvars {
     domain: Mutex<Option<Retained<NSFileProviderDomain>>>,
+    domain_id: String,
 }
 
 define_class!(
@@ -49,6 +50,7 @@ define_class!(
             let domain_id = unsafe { domain.identifier() }.to_string();
             let this = this.set_ivars(ExtensionIvars {
                 domain: Mutex::new(Some(domain.retain())),
+                domain_id: domain_id.clone(),
             });
             // SAFETY: NSObject's `init` is always safe to call.
             let this: Retained<Self> = unsafe { msg_send![super(this), init] };
@@ -60,7 +62,7 @@ define_class!(
                 Ok(()) => info!("file_provider: bootstrap succeeded for {domain_id:?}"),
                 Err(e) => {
                     error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}");
-                    super::store_bootstrap_error(format!("{e}"));
+                    super::store_bootstrap_error(&domain_id, format!("{e}"));
                 }
             }
 
@@ -83,8 +85,9 @@ define_class!(
             completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderItem, *mut NSError)>,
         ) -> Retained<NSProgress> {
             let id_str = identifier.to_string();
+            let domain_id = &self.ivars().domain_id;
             debug!("file_provider: itemForIdentifier {:?}", id_str);
-            handle_item_for_identifier(&id_str, completion_handler);
+            handle_item_for_identifier(domain_id, &id_str, completion_handler);
             new_progress()
         }
 
@@ -99,8 +102,9 @@ define_class!(
             >,
         ) -> Retained<NSProgress> {
             let id_str = item_identifier.to_string();
+            let domain_id = &self.ivars().domain_id;
             debug!("file_provider: fetchContents for {:?}", id_str);
-            handle_fetch_contents(&id_str, completion_handler);
+            handle_fetch_contents(domain_id, &id_str, completion_handler);
             new_progress()
         }
 
@@ -133,7 +137,9 @@ define_class!(
                     .map(|path_ns| path_ns.to_string())
                     .and_then(|local_path| std::fs::read(&local_path).ok())
             });
+            let domain_id = &self.ivars().domain_id;
             handle_create_item(
+                domain_id,
                 &filename,
                 &parent_id,
                 is_dir,
@@ -157,8 +163,9 @@ define_class!(
             >,
         ) -> Retained<NSProgress> {
             let item_id = unsafe { item.itemIdentifier() };
+            let domain_id = &self.ivars().domain_id;
             debug!("file_provider: modifyItem {:?}", item_id.to_string());
-            handle_modify_item(&item_id, new_contents, completion_handler);
+            handle_modify_item(domain_id, &item_id, new_contents, completion_handler);
             new_progress()
         }
 
@@ -171,8 +178,9 @@ define_class!(
             _request: &NSFileProviderRequest,
             completion_handler: &block2::DynBlock<dyn Fn(*mut NSError)>,
         ) -> Retained<NSProgress> {
+            let domain_id = &self.ivars().domain_id;
             debug!("file_provider: deleteItem {:?}", identifier.to_string(),);
-            handle_delete_item(identifier, completion_handler);
+            handle_delete_item(domain_id, identifier, completion_handler);
             new_progress()
         }
     }
@@ -189,11 +197,13 @@ define_class!(
             _request: &NSFileProviderRequest,
             _error: *mut *mut NSError,
         ) -> Option<Retained<ProtocolObject<dyn NSFileProviderEnumerator>>> {
+            let domain_id = &self.ivars().domain_id;
             debug!(
                 "file_provider: enumeratorForContainer {:?}",
                 container_item_identifier.to_string(),
             );
-            let enumerator = DistantFileProviderEnumerator::new(container_item_identifier);
+            let enumerator =
+                DistantFileProviderEnumerator::new(domain_id, container_item_identifier);
             Some(ProtocolObject::from_retained(enumerator))
         }
     }
