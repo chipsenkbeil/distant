@@ -248,6 +248,13 @@ impl Options {
                         feature = "mount-macos-file-provider",
                     ))]
                     ClientSubcommand::Unmount { .. } => {}
+                    #[cfg(any(
+                        feature = "mount-fuse",
+                        feature = "mount-nfs",
+                        feature = "mount-windows-cloud-files",
+                        feature = "mount-macos-file-provider",
+                    ))]
+                    ClientSubcommand::MountStatus { .. } => {}
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
                     }
@@ -641,6 +648,19 @@ pub enum ClientSubcommand {
         mount_point: Option<String>,
     },
 
+    /// Show status of registered FileProvider mount domains
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
+    MountStatus {
+        /// Output format (shell or json)
+        #[clap(short, long, default_value_t, value_enum)]
+        format: Format,
+    },
+
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -927,6 +947,13 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => constants::user::CACHE_FILE_PATH.as_path(),
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::MountStatus { .. } => constants::user::CACHE_FILE_PATH.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
@@ -961,6 +988,16 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => {
+                static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
+                &DEFAULT
+            }
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::MountStatus { .. } => {
                 static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
                 &DEFAULT
             }
@@ -1001,6 +1038,13 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => Format::Shell,
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::MountStatus { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
             #[cfg(feature = "ssh")]

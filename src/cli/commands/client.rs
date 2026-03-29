@@ -627,6 +627,62 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 );
             }
         }
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider",
+        ))]
+        ClientSubcommand::MountStatus { format } => {
+            #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+            {
+                let domains = distant_mount::macos::list_file_provider_domains()
+                    .context("Failed to list FileProvider domains")?;
+
+                match format {
+                    Format::Shell => {
+                        if domains.is_empty() {
+                            println!("No FileProvider domains registered");
+                        } else {
+                            let header = format!(
+                                "{:<40} {:<30} {:<8} {}",
+                                "DOMAIN ID", "DISPLAY NAME", "META", "DESTINATION"
+                            );
+                            println!("{header}");
+                            for d in &domains {
+                                let meta = if d.has_metadata { "yes" } else { "no" };
+                                let dest = d.destination.as_deref().unwrap_or("-");
+                                println!(
+                                    "{:<40} {:<30} {:<8} {dest}",
+                                    d.identifier, d.display_name, meta,
+                                );
+                            }
+                            println!("\n{} domain(s) registered", domains.len());
+                        }
+                    }
+                    Format::Json => {
+                        let entries: Vec<serde_json::Value> = domains
+                            .iter()
+                            .map(|d| {
+                                serde_json::json!({
+                                    "identifier": d.identifier,
+                                    "display_name": d.display_name,
+                                    "connection_id": d.connection_id,
+                                    "destination": d.destination,
+                                    "has_metadata": d.has_metadata,
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&entries).unwrap());
+                    }
+                }
+            }
+            #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
+            {
+                let _ = format;
+                println!("Mount status is currently only supported for macOS FileProvider");
+            }
+        }
         ClientSubcommand::Shell {
             cache,
             cmd,
