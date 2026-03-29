@@ -1,6 +1,6 @@
 mod item;
 
-use item::DistantFileProviderItem;
+pub(crate) use item::DistantFileProviderItem;
 
 use log::{debug, error, trace};
 use objc2::rc::Retained;
@@ -11,6 +11,10 @@ use objc2_file_provider::{
     NSFileProviderPage, NSFileProviderRootContainerItemIdentifier,
 };
 use objc2_foundation::{NSArray, NSObject, NSString};
+
+use distant_core::protocol::FileType;
+
+use crate::backend::macos_file_provider;
 
 /// Instance variables for [`DistantFileProviderEnumerator`].
 pub struct EnumeratorIvars {
@@ -45,8 +49,8 @@ define_class!(
                 container_str,
             );
 
-            let Some(fs) = get_remote_fs() else {
-                debug!("file_provider: enumerate_items — RemoteFs not available, returning empty");
+            let Some(rt) = macos_file_provider::get_runtime() else {
+                debug!("file_provider: enumerate_items — Runtime not available, returning empty");
                 unsafe {
                     observer.finishEnumeratingUpToPage(None);
                 }
@@ -60,45 +64,64 @@ define_class!(
                 container_str.parse::<u64>().unwrap_or(1)
             };
 
-            match fs.readdir(ino) {
-                Ok(entries) => {
-                    let parent_id_str = ino.to_string();
-                    let items: Vec<Retained<ProtocolObject<dyn NSFileProviderItemProtocol>>> =
-                        entries
-                            .iter()
-                            .filter(|e| e.name != "." && e.name != "..")
-                            .map(|entry| {
-                                let is_dir = entry.file_type == FileType::Dir;
-                                let size = fs.getattr(entry.ino).map(|a| a.size).unwrap_or(0);
-                                let item = DistantFileProviderItem::new(
-                                    &entry.ino.to_string(),
-                                    &parent_id_str,
-                                    &entry.name,
-                                    is_dir,
-                                    size,
-                                );
-                                ProtocolObject::from_retained(item)
-                            })
-                            .collect();
+            let observer = macos_file_provider::UnsafeSendable(observer.retain());
 
-                    trace!(
-                        "file_provider: enumerate_items for ino={ino} returning {} items",
-                        items.len()
-                    );
-                    let array = NSArray::from_retained_slice(&items);
-                    unsafe {
-                        observer.didEnumerateItems(&array);
-                        observer.finishEnumeratingUpToPage(None);
+            rt.spawn(move |fs| async move {
+                match fs.readdir(ino).await {
+                    Ok(entries) => {
+                        let parent_id_str = ino.to_string();
+
+                        // Collect metadata with async calls first, then build
+                        // ObjC items. This avoids holding Retained<...> (!Send)
+                        // across .await points.
+                        let mut metadata: Vec<(String, String, bool, u64)> = Vec::new();
+                        for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
+                            let is_dir = entry.file_type == FileType::Dir;
+                            let size = fs.getattr(entry.ino).await.map(|a| a.size).unwrap_or(0);
+                            metadata.push((
+                                entry.ino.to_string(),
+                                entry.name.clone(),
+                                is_dir,
+                                size,
+                            ));
+                        }
+
+                        // Build ObjC items from collected metadata (no .await).
+                        let items: Vec<Retained<ProtocolObject<dyn NSFileProviderItemProtocol>>> =
+                            metadata
+                                .iter()
+                                .map(|(ino_str, name, is_dir, size)| {
+                                    let item = DistantFileProviderItem::new(
+                                        ino_str,
+                                        &parent_id_str,
+                                        name,
+                                        *is_dir,
+                                        *size,
+                                    );
+                                    ProtocolObject::from_retained(item)
+                                })
+                                .collect();
+
+                        trace!(
+                            "file_provider: enumerate_items for ino={ino} returning {} items",
+                            items.len()
+                        );
+                        let array = NSArray::from_retained_slice(&items);
+                        unsafe {
+                            observer.didEnumerateItems(&array);
+                            observer.finishEnumeratingUpToPage(None);
+                        }
+                    }
+                    Err(e) => {
+                        error!("file_provider: readdir failed for ino={ino}: {e}");
+                        let ns_error =
+                            macos_file_provider::make_ns_error(&format!("readdir failed: {e}"));
+                        unsafe {
+                            observer.finishEnumeratingWithError(&ns_error);
+                        }
                     }
                 }
-                Err(e) => {
-                    error!("file_provider: readdir failed for ino={ino}: {e}");
-                    let ns_error = make_ns_error(&format!("readdir failed: {e}"));
-                    unsafe {
-                        observer.finishEnumeratingWithError(&ns_error);
-                    }
-                }
-            }
+            });
         }
     }
 );

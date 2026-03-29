@@ -7,7 +7,7 @@ use derive_more::{Display, Error, From};
 mod cli;
 mod constants;
 #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-mod macos_file_provider;
+mod macos_appex;
 mod options;
 
 #[cfg(windows)]
@@ -244,11 +244,17 @@ fn main() -> MainResult {
     // If running as a macOS FileProvider .appex extension, register the ObjC
     // classes immediately (before XPC looks them up) and enter the run loop.
     #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-    if macos_file_provider::is_file_provider_extension() {
+    if macos_appex::is_appex() {
         distant_mount::macos::register_file_provider_classes();
-        macos_file_provider::run_extension();
+        macos_appex::main();
     }
 
+    // Regular path where we are not a MacOS .appex binary
+    unix_main()
+}
+
+#[cfg(unix)]
+fn unix_main() -> MainResult {
     let cli = match Cli::initialize() {
         Ok(cli) => cli,
         Err(x) => return MainResult::from(x),

@@ -613,7 +613,7 @@ pub enum ClientSubcommand {
             default_value_t,
             hide_possible_values = false,
             value_parser = clap::builder::PossibleValuesParser::new(
-                distant_mount::MountBackend::available_backends()
+                distant_mount::MountBackend::available_backends().iter().map(|b| b.as_str())
             ).map(|s| s.parse::<distant_mount::MountBackend>().unwrap())
         )]
         backend: distant_mount::MountBackend,

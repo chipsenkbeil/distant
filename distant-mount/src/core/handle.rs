@@ -50,6 +50,15 @@ impl MountHandle {
         !self.unmount_on_drop
     }
 
+    /// Returns `true` when the caller should keep the process alive (e.g.
+    /// block on Ctrl+C) for the mount to continue working.
+    ///
+    /// Backends like FUSE and NFS require a foreground process; FileProvider
+    /// is detached and returns `false`.
+    pub fn needs_foreground(&self) -> bool {
+        self.unmount_on_drop
+    }
+
     /// Attempts to unmount the filesystem, waiting until complete.
     pub async fn unmount(mut self) -> io::Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {

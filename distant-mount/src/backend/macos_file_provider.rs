@@ -16,34 +16,59 @@
 //! - [`DistantFileProviderItem`] — implements `NSFileProviderItemProtocol`
 //! - [`DistantFileProviderEnumerator`] — implements `NSFileProviderEnumerator`
 //!
-//! Since the extension runs in its own `.appex` process, [`RemoteFs`] access
+//! Since the extension runs in its own `.appex` process, [`Runtime`] access
 //! is provided via a process-global [`OnceLock`]. The container app calls
-//! [`set_remote_fs`] before the extension is activated.
+//! [`init`] before the extension is activated.
 
 mod provider;
-mod utils;
+pub(crate) mod utils;
 
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
-use log::{debug, error, info, trace};
+use log::{debug, info, trace};
 
-use objc2::rc::{Allocated, Retained};
-use objc2::runtime::{Bool, NSObjectProtocol, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
+use objc2::rc::Retained;
+use objc2::runtime::Bool;
+use objc2::{AnyThread, Message};
 use objc2_file_provider::*;
 use objc2_foundation::*;
 
-use crate::core::{CacheConfig, MountConfig, RemoteFs};
+use crate::core::{CacheConfig, MountConfig, Runtime};
 
 use distant_core::Channel;
 use distant_core::net::common::Map;
 use distant_core::protocol::FileType;
 
+use provider::{DistantFileProvider, DistantFileProviderEnumerator, DistantFileProviderItem};
+
 /// Callback type that resolves a connection ID and destination string into
 /// a [`distant_core::Channel`] by communicating with the distant manager.
 pub type ChannelResolver = Box<dyn Fn(u32, &str) -> io::Result<Channel> + Send + Sync>;
+
+/// Wrapper for Apple-provided ObjC objects documented as thread-safe
+/// but `!Send` due to conservative defaults in block2/objc2.
+///
+/// Implements [`Deref`](std::ops::Deref) so callers can invoke methods on
+/// the inner type without accessing the field directly. Direct field access
+/// (`wrapper.0`) causes async `Send`-checking to see the inner `!Send` type,
+/// while method calls through `Deref` only see this wrapper (which is `Send`).
+pub(crate) struct UnsafeSendable<T>(T);
+
+// SAFETY: The wrapped types (RcBlock completion handlers, Retained protocol
+// objects) are used to call ObjC methods that are documented as thread-safe.
+// The `!Send`/`!Sync` bounds come from the generic ObjC runtime wrappers,
+// not from actual thread-safety concerns with these specific types.
+unsafe impl<T> Send for UnsafeSendable<T> {}
+unsafe impl<T> Sync for UnsafeSendable<T> {}
+
+impl<T> std::ops::Deref for UnsafeSendable<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
 
 /// Tokio runtime handle for the `.appex` extension process, set once by
 /// [`init`] before macOS instantiates the FileProvider extension class.
@@ -54,22 +79,14 @@ static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 static CHANNEL_RESOLVER: OnceLock<ChannelResolver> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
-// Global RemoteFs access
+// Global Runtime access
 // ---------------------------------------------------------------------------
 
-static REMOTE_FS: OnceLock<Arc<RemoteFs>> = OnceLock::new();
+static RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
-/// Returns a reference to the global [`RemoteFs`], if it has been set.
-fn get_remote_fs() -> Option<&'static Arc<RemoteFs>> {
-    REMOTE_FS.get()
-}
-
-/// Sets the global [`RemoteFs`] for the FileProvider extension process.
-///
-/// This must be called before any `NSFileProviderReplicatedExtension` method
-/// is invoked. Subsequent calls are ignored (the first value wins).
-pub(crate) fn set_remote_fs(fs: Arc<RemoteFs>) {
-    let _ = REMOTE_FS.set(fs);
+/// Returns a reference to the global [`Runtime`], if it has been set.
+pub(crate) fn get_runtime() -> Option<&'static Arc<Runtime>> {
+    RUNTIME.get()
 }
 
 /// Registers all FileProvider ObjC classes with the Objective-C runtime.
@@ -100,18 +117,18 @@ pub(crate) fn init(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver)
 ///
 /// Layout: `~/Library/Group Containers/39C6AGD73Z.group.dev.distant/domains/`
 fn domains_dir() -> Option<PathBuf> {
-    let container = crate::macos::app_group_container_path()?;
+    let container = utils::app_group_container_path()?;
     let dir = container.join("domains");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
 
 /// Reads domain metadata from a file in the shared `domains/` directory and
-/// initialises the global [`RemoteFs`] for this `.appex` process.
+/// initialises the global [`Runtime`] for this `.appex` process.
 ///
 /// The metadata was persisted by [`register_domain`] as a serialised [`Map`]
 /// in `domains/<domain_id>`.
-fn bootstrap(domain_id: &str) -> io::Result<()> {
+pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
     info!("file_provider: bootstrap starting for domain {domain_id:?}");
 
     let dir = domains_dir().ok_or_else(|| io::Error::other("cannot resolve domains directory"))?;
@@ -146,15 +163,18 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
 
     info!("file_provider: resolving channel for connection {connection_id}, dest={destination}");
 
-    let resolver = CHANNEL_RESOLVER
-        .get()
-        .ok_or_else(|| io::Error::other("CHANNEL_RESOLVER not initialised — init() not called"))?;
-    let channel = resolver(connection_id, &destination)?;
-
-    let rt = TOKIO_HANDLE
+    let handle = TOKIO_HANDLE
         .get()
         .ok_or_else(|| io::Error::other("TOKIO_HANDLE not initialised — init() not called"))?
         .clone();
+
+    let resolver = CHANNEL_RESOLVER
+        .get()
+        .ok_or_else(|| io::Error::other("CHANNEL_RESOLVER not initialised — init() not called"))?;
+
+    // Resolve the channel synchronously here so we can fail fast with
+    // a clear error if the manager is unreachable.
+    let channel = resolver(connection_id, &destination)?;
 
     let config = MountConfig {
         mount_point: None,
@@ -164,10 +184,13 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
         extra: Map::new(),
     };
 
-    let fs = RemoteFs::init(channel, config)?;
-    set_remote_fs(Arc::new(fs));
+    // Create Runtime with async init — the RemoteFs initialization happens
+    // in the background. All handler spawn() calls will wait for init.
+    let rt = Arc::new(Runtime::new(handle, async move { (channel, config) }));
 
-    info!("file_provider: bootstrap complete — RemoteFs initialized");
+    let _ = RUNTIME.set(rt);
+
+    info!("file_provider: bootstrap complete — Runtime initialized (init pending)");
     Ok(())
 }
 
@@ -176,57 +199,70 @@ fn bootstrap(domain_id: &str) -> io::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Handles the `itemForIdentifier:request:completionHandler:` logic.
-fn handle_item_for_identifier(
+pub(crate) fn handle_item_for_identifier(
     id_str: &str,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSFileProviderItem, *mut NSError)>,
 ) {
     trace!("file_provider: handle_item_for_identifier id={id_str:?}");
 
-    let Some(fs) = get_remote_fs() else {
-        call_completion_item_error(completion_handler, "RemoteFs not initialized");
+    let Some(rt) = get_runtime() else {
+        call_completion_item_error(completion_handler, "Runtime not initialized");
         return;
     };
 
+    let block = UnsafeSendable(completion_handler.copy());
     let ino: u64 = id_str.parse().unwrap_or(1);
-    let attr = match fs.getattr(ino) {
-        Ok(attr) => attr,
-        Err(e) => {
-            call_completion_item_error(completion_handler, &format!("getattr failed: {e}"));
-            return;
+
+    rt.spawn(move |fs| async move {
+        match fs.getattr(ino).await {
+            Ok(attr) => {
+                let path = fs.get_path(ino).await;
+                let filename = path
+                    .as_ref()
+                    .map(|p| extract_filename(p.as_str()))
+                    .unwrap_or("unknown");
+
+                let parent_str = if ino == 1 {
+                    let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
+                    root_id.to_string()
+                } else if let Some(ref p) = path {
+                    let s = p.as_str();
+                    let parent = s.rsplit_once('/').map(|(pp, _)| pp).unwrap_or("/");
+                    fs.get_ino_for_path(parent)
+                        .await
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| "1".to_string())
+                } else {
+                    "1".to_string()
+                };
+
+                let is_dir = attr.kind == FileType::Dir;
+                trace!("file_provider: item ino={ino} filename={filename:?} is_dir={is_dir}");
+                let item = DistantFileProviderItem::new(
+                    &ino.to_string(),
+                    &parent_str,
+                    filename,
+                    is_dir,
+                    attr.size,
+                );
+                let proto: Retained<
+                    objc2::runtime::ProtocolObject<dyn NSFileProviderItemProtocol>,
+                > = objc2::runtime::ProtocolObject::from_retained(item);
+
+                block.call((Retained::into_raw(proto), std::ptr::null_mut()));
+            }
+            Err(e) => {
+                let error = make_ns_error(&format!("getattr failed: {e}"));
+                block
+                    .0
+                    .call((std::ptr::null_mut(), Retained::into_raw(error)));
+            }
         }
-    };
-
-    let path = fs.get_path(ino);
-    let filename = path
-        .as_ref()
-        .map(|p| extract_filename(p.as_str()))
-        .unwrap_or("unknown");
-
-    let parent_str = if ino == 1 {
-        let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
-        root_id.to_string()
-    } else {
-        path.as_ref()
-            .and_then(|p| {
-                let s = p.as_str();
-                let parent = s.rsplit_once('/').map(|(pp, _)| pp).unwrap_or("/");
-                fs.get_ino_for_path(parent)
-            })
-            .map(|i| i.to_string())
-            .unwrap_or_else(|| "1".to_string())
-    };
-
-    let is_dir = attr.kind == FileType::Dir;
-    trace!("file_provider: item ino={ino} filename={filename:?} is_dir={is_dir}");
-    let item = DistantFileProviderItem::new(id_str, &parent_str, filename, is_dir, attr.size);
-    let proto: Retained<ProtocolObject<dyn NSFileProviderItemProtocol>> =
-        ProtocolObject::from_retained(item);
-
-    completion_handler.call((Retained::into_raw(proto), std::ptr::null_mut()));
+    });
 }
 
 /// Handles the `fetchContentsForItemWithIdentifier:...` logic.
-fn handle_fetch_contents(
+pub(crate) fn handle_fetch_contents(
     id_str: &str,
     completion_handler: &block2::DynBlock<
         dyn Fn(*mut NSURL, *mut NSFileProviderItem, *mut NSError),
@@ -234,60 +270,72 @@ fn handle_fetch_contents(
 ) {
     trace!("file_provider: handle_fetch_contents id={id_str:?}");
 
-    let Some(fs) = get_remote_fs() else {
-        call_completion_fetch_error(completion_handler, "RemoteFs not initialized");
+    let Some(rt) = get_runtime() else {
+        call_completion_fetch_error(completion_handler, "Runtime not initialized");
         return;
     };
 
+    let block = UnsafeSendable(completion_handler.copy());
     let ino: u64 = id_str.parse().unwrap_or(0);
 
-    let data = match fs.read(ino, 0, u32::MAX) {
-        Ok(data) => {
-            trace!(
-                "file_provider: fetch_contents ino={ino} read {} bytes",
-                data.len()
-            );
-            data
-        }
-        Err(e) => {
-            call_completion_fetch_error(completion_handler, &format!("read file: {e}"));
+    rt.spawn(move |fs| async move {
+        let data = match fs.read(ino, 0, u32::MAX).await {
+            Ok(data) => {
+                trace!(
+                    "file_provider: fetch_contents ino={ino} read {} bytes",
+                    data.len()
+                );
+                data
+            }
+            Err(e) => {
+                let error = make_ns_error(&format!("read file: {e}"));
+                block.call((
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    Retained::into_raw(error),
+                ));
+                return;
+            }
+        };
+
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join(format!("distant_fp_{ino}"));
+
+        if let Err(e) = std::fs::write(&tmp_path, &data) {
+            let error = make_ns_error(&format!("write temp file: {e}"));
+            block.call((
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                Retained::into_raw(error),
+            ));
             return;
         }
-    };
 
-    let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("distant_fp_{ino}"));
+        let tmp_str = tmp_path.to_str().unwrap_or("");
+        let url = NSURL::fileURLWithPath(&NSString::from_str(tmp_str));
 
-    if let Err(e) = std::fs::write(&tmp_path, &data) {
-        call_completion_fetch_error(completion_handler, &format!("write temp file: {e}"));
-        return;
-    }
+        let attr = fs.getattr(ino).await.ok();
+        let path = fs.get_path(ino).await;
+        let filename = path
+            .as_ref()
+            .map(|p| extract_filename(p.as_str()))
+            .unwrap_or("unknown");
+        let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
+        let size = attr.as_ref().map(|a| a.size).unwrap_or(data.len() as u64);
 
-    // Safety: tmp_path is a valid UTF-8 path on macOS.
-    let tmp_str = tmp_path.to_str().unwrap_or("");
-    let url = NSURL::fileURLWithPath(&NSString::from_str(tmp_str));
+        let item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
+        let proto = objc2::runtime::ProtocolObject::from_retained(item);
 
-    let attr = fs.getattr(ino).ok();
-    let path = fs.get_path(ino);
-    let filename = path
-        .as_ref()
-        .map(|p| extract_filename(p.as_str()))
-        .unwrap_or("unknown");
-    let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
-    let size = attr.as_ref().map(|a| a.size).unwrap_or(data.len() as u64);
-
-    let item = DistantFileProviderItem::new(id_str, "1", filename, is_dir, size);
-    let proto = ProtocolObject::from_retained(item);
-
-    completion_handler.call((
-        Retained::into_raw(url),
-        Retained::into_raw(proto),
-        std::ptr::null_mut(),
-    ));
+        block.call((
+            Retained::into_raw(url),
+            Retained::into_raw(proto),
+            std::ptr::null_mut(),
+        ));
+    });
 }
 
 /// Handles the `createItemBasedOnTemplate:...` logic.
-fn handle_create_item(
+pub(crate) fn handle_create_item(
     filename: &NSString,
     parent_id: &NSString,
     has_content: bool,
@@ -295,49 +343,58 @@ fn handle_create_item(
         dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
     >,
 ) {
-    let Some(fs) = get_remote_fs() else {
-        call_completion_create_error(completion_handler, "RemoteFs not initialized");
+    let Some(rt) = get_runtime() else {
+        call_completion_create_error(completion_handler, "Runtime not initialized");
         return;
     };
 
+    let block = UnsafeSendable(completion_handler.copy());
     let parent_ino: u64 = parent_id.to_string().parse().unwrap_or(1);
     let name = filename.to_string();
 
-    let result = if has_content {
-        fs.create(parent_ino, &name, 0o644)
-    } else {
-        fs.mkdir(parent_ino, &name, 0o755)
-    };
+    rt.spawn(move |fs| async move {
+        let result = if has_content {
+            fs.create(parent_ino, &name, 0o644).await
+        } else {
+            fs.mkdir(parent_ino, &name, 0o755).await
+        };
 
-    match result {
-        Ok(attr) => {
-            trace!(
-                "file_provider: create_item succeeded — ino={} name={name:?}",
-                attr.ino
-            );
-            let item = DistantFileProviderItem::new(
-                &attr.ino.to_string(),
-                &parent_ino.to_string(),
-                &name,
-                attr.kind == FileType::Dir,
-                attr.size,
-            );
-            let proto = ProtocolObject::from_retained(item);
-            completion_handler.call((
-                Retained::into_raw(proto),
-                NSFileProviderItemFields::empty(),
-                Bool::NO,
-                std::ptr::null_mut(),
-            ));
+        match result {
+            Ok(attr) => {
+                trace!(
+                    "file_provider: create_item succeeded — ino={} name={name:?}",
+                    attr.ino
+                );
+                let item = DistantFileProviderItem::new(
+                    &attr.ino.to_string(),
+                    &parent_ino.to_string(),
+                    &name,
+                    attr.kind == FileType::Dir,
+                    attr.size,
+                );
+                let proto = objc2::runtime::ProtocolObject::from_retained(item);
+                block.call((
+                    Retained::into_raw(proto),
+                    NSFileProviderItemFields::empty(),
+                    Bool::NO,
+                    std::ptr::null_mut(),
+                ));
+            }
+            Err(e) => {
+                let error = make_ns_error(&format!("create failed: {e}"));
+                block.call((
+                    std::ptr::null_mut(),
+                    NSFileProviderItemFields::empty(),
+                    Bool::NO,
+                    Retained::into_raw(error),
+                ));
+            }
         }
-        Err(e) => {
-            call_completion_create_error(completion_handler, &format!("create failed: {e}"));
-        }
-    }
+    });
 }
 
 /// Handles the `modifyItem:...` logic.
-fn handle_modify_item(
+pub(crate) fn handle_modify_item(
     item_id: &NSString,
     new_contents: Option<&NSURL>,
     completion_handler: &block2::DynBlock<
@@ -350,50 +407,51 @@ fn handle_modify_item(
         new_contents.is_some()
     );
 
-    let Some(fs) = get_remote_fs() else {
-        call_completion_create_error(completion_handler, "RemoteFs not initialized");
+    let Some(rt) = get_runtime() else {
+        call_completion_create_error(completion_handler, "Runtime not initialized");
         return;
     };
 
+    let block = UnsafeSendable(completion_handler.copy());
     let ino: u64 = item_id.to_string().parse().unwrap_or(0);
 
-    if let Some(content_url) = new_contents
-        && let Some(path_ns) = content_url.path()
-    {
-        let local_path = path_ns.to_string();
-        match std::fs::read(&local_path) {
-            Ok(data) => {
-                let _ = fs.write(ino, 0, &data);
-                let _ = fs.flush(ino);
-            }
-            Err(e) => {
-                debug!("file_provider: failed to read local content: {e}");
-            }
+    // Read local file content before spawning (NSURL is not Send).
+    let local_data = new_contents.and_then(|content_url| {
+        content_url
+            .path()
+            .map(|path_ns| path_ns.to_string())
+            .and_then(|local_path| std::fs::read(&local_path).ok())
+    });
+
+    rt.spawn(move |fs| async move {
+        if let Some(data) = local_data {
+            let _ = fs.write(ino, 0, &data).await;
+            let _ = fs.flush(ino).await;
         }
-    }
 
-    let attr = fs.getattr(ino).ok();
-    let path = fs.get_path(ino);
-    let filename = path
-        .as_ref()
-        .map(|p| extract_filename(p.as_str()))
-        .unwrap_or("unknown");
-    let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
-    let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
+        let attr = fs.getattr(ino).await.ok();
+        let path = fs.get_path(ino).await;
+        let filename = path
+            .as_ref()
+            .map(|p| extract_filename(p.as_str()))
+            .unwrap_or("unknown");
+        let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
+        let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
 
-    trace!("file_provider: modify_item succeeded for ino={ino}");
-    let new_item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
-    let proto = ProtocolObject::from_retained(new_item);
-    completion_handler.call((
-        Retained::into_raw(proto),
-        NSFileProviderItemFields::empty(),
-        Bool::NO,
-        std::ptr::null_mut(),
-    ));
+        trace!("file_provider: modify_item succeeded for ino={ino}");
+        let new_item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
+        let proto = objc2::runtime::ProtocolObject::from_retained(new_item);
+        block.call((
+            Retained::into_raw(proto),
+            NSFileProviderItemFields::empty(),
+            Bool::NO,
+            std::ptr::null_mut(),
+        ));
+    });
 }
 
 /// Handles the `deleteItemWithIdentifier:...` logic.
-fn handle_delete_item(
+pub(crate) fn handle_delete_item(
     identifier: &NSFileProviderItemIdentifier,
     completion_handler: &block2::DynBlock<dyn Fn(*mut NSError)>,
 ) {
@@ -402,38 +460,38 @@ fn handle_delete_item(
         identifier.to_string()
     );
 
-    let Some(fs) = get_remote_fs() else {
-        let error = make_ns_error("RemoteFs not initialized");
+    let Some(rt) = get_runtime() else {
+        let error = make_ns_error("Runtime not initialized");
         completion_handler.call((Retained::into_raw(error),));
         return;
     };
 
+    let block = UnsafeSendable(completion_handler.copy());
     let ino: u64 = identifier.to_string().parse().unwrap_or(0);
 
-    if let Some(path) = fs.get_path(ino) {
-        let path_str = path.as_str();
-        if let Some((parent, name)) = path_str.rsplit_once('/') {
-            let parent_path = if parent.is_empty() { "/" } else { parent };
-            if let Some(parent_ino) = fs.get_ino_for_path(parent_path) {
-                let result = match fs.getattr(ino) {
-                    Ok(attr) if attr.kind == FileType::Dir => fs.rmdir(parent_ino, name),
-                    _ => fs.unlink(parent_ino, name),
-                };
+    rt.spawn(move |fs| async move {
+        if let Some(path) = fs.get_path(ino).await {
+            let path_str = path.as_str();
+            if let Some((parent, name)) = path_str.rsplit_once('/') {
+                let parent_path = if parent.is_empty() { "/" } else { parent };
+                if let Some(parent_ino) = fs.get_ino_for_path(parent_path).await {
+                    let result = match fs.getattr(ino).await {
+                        Ok(attr) if attr.kind == FileType::Dir => fs.rmdir(parent_ino, name).await,
+                        _ => fs.unlink(parent_ino, name).await,
+                    };
 
-                if let Err(e) = result {
-                    let error = make_ns_error(&format!("delete failed: {e}"));
-                    completion_handler.call((Retained::into_raw(error),));
-                    return;
+                    if let Err(e) = result {
+                        let error = make_ns_error(&format!("delete failed: {e}"));
+                        block.call((Retained::into_raw(error),));
+                        return;
+                    }
                 }
             }
         }
-    }
 
-    trace!(
-        "file_provider: delete_item succeeded for {:?}",
-        identifier.to_string()
-    );
-    completion_handler.call((std::ptr::null_mut(),));
+        trace!("file_provider: delete_item succeeded for ino={ino}");
+        block.call((std::ptr::null_mut(),));
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +503,7 @@ fn handle_delete_item(
 /// Uses `NSCocoaErrorDomain` with code 256 (`NSFileReadUnknownError`) so that
 /// macOS / Finder recognises the error domain and handles it correctly,
 /// rather than hanging on an unrecognised custom domain.
-fn make_ns_error(message: &str) -> Retained<NSError> {
+pub(crate) fn make_ns_error(message: &str) -> Retained<NSError> {
     // SAFETY: `NSCocoaErrorDomain` is a well-known Foundation constant.
     let domain = unsafe { NSCocoaErrorDomain };
     let description = NSString::from_str(message);
@@ -458,7 +516,7 @@ fn make_ns_error(message: &str) -> Retained<NSError> {
 }
 
 /// Creates a completed `NSProgress` for methods that execute synchronously.
-fn new_progress() -> Retained<NSProgress> {
+pub(crate) fn new_progress() -> Retained<NSProgress> {
     NSProgress::discreteProgressWithTotalUnitCount(0)
 }
 
@@ -541,9 +599,10 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 
 /// Registers a FileProvider domain with macOS.
 ///
-/// Sets the global [`RemoteFs`] and calls `NSFileProviderManager.addDomain`
-/// to register a domain. The domain identifier is derived from the
-/// `connection_id` in `extra`, allowing multiple simultaneous mounts.
+/// Stores the provided [`Runtime`] in the process-global slot and calls
+/// `NSFileProviderManager.addDomain` to register a domain. The domain
+/// identifier is derived from the `connection_id` in `extra`, allowing
+/// multiple simultaneous mounts.
 ///
 /// Domain metadata (`connection_id`, `destination`) is persisted as a file
 /// in the App Group shared container (`domains/<domain_id>`) so the `.appex`
@@ -557,8 +616,8 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 ///
 /// Returns an error if `connection_id` or `destination` are missing from
 /// `extra`, or if the domain registration fails.
-pub(crate) fn register_domain(fs: Arc<RemoteFs>, extra: &Map) -> io::Result<String> {
-    set_remote_fs(fs);
+pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<String> {
+    let _ = RUNTIME.set(rt);
 
     let connection_id = extra
         .get("connection_id")
@@ -664,6 +723,7 @@ fn sanitize_display_name(destination: &str) -> String {
 
 /// Removes a single FileProvider domain by identifier and cleans up its
 /// metadata file.
+#[allow(dead_code)]
 pub(crate) fn remove_domain_by_id(domain_id: &str) {
     let identifier = NSString::from_str(domain_id);
     let display = NSString::from_str("");
@@ -775,12 +835,16 @@ fn remove_domain_blocking(domain: &NSFileProviderDomain) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Public API wrappers (used by the binary crate)
+// ---------------------------------------------------------------------------
+
 /// Stores the Tokio runtime handle and channel resolver needed by the
 /// `.appex` FileProvider extension bootstrap flow.
 ///
 /// Subsequent calls are silently ignored (the first call wins).
 pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelResolver) {
-    crate::backend::macos_file_provider::init(rt, resolve_channel);
+    init(rt, resolve_channel);
 }
 
 /// Registers FileProvider ObjC classes with the Objective-C runtime.
@@ -789,7 +853,7 @@ pub fn init_file_provider(rt: tokio::runtime::Handle, resolve_channel: ChannelRe
 /// `NSExtensionPrincipalClass`, as classes defined via `define_class!`
 /// are registered at runtime rather than at load time.
 pub fn register_file_provider_classes() {
-    crate::backend::macos_file_provider::register_classes();
+    register_classes();
 }
 
 /// Removes all distant FileProvider domains and cleans up their metadata.
@@ -798,7 +862,7 @@ pub fn register_file_provider_classes() {
 ///
 /// Returns an error if domain enumeration fails.
 pub fn remove_all_file_provider_domains() -> io::Result<()> {
-    crate::backend::macos_file_provider::remove_all_domains()
+    remove_all_domains()
 }
 
 /// Removes the FileProvider domain whose stored destination matches `dest`.
@@ -809,5 +873,5 @@ pub fn remove_all_file_provider_domains() -> io::Result<()> {
 ///
 /// Returns an error if no matching domain is found.
 pub fn remove_file_provider_domain_for_destination(dest: &str) -> io::Result<()> {
-    crate::backend::macos_file_provider::remove_domain_for_destination(dest)
+    remove_domain_for_destination(dest)
 }

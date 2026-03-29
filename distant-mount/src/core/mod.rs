@@ -1,9 +1,13 @@
 mod config;
 mod handle;
-mod remote;
-mod runtime;
+pub(crate) mod remote;
+pub(crate) mod runtime;
 
-pub use config::*;
-pub use handle::*;
-pub use remote::*;
-pub use runtime::*;
+#[allow(unused_imports)]
+pub use config::CacheConfig;
+pub use config::MountConfig;
+pub use handle::MountHandle;
+
+pub(crate) use remote::FileAttr;
+pub(crate) use remote::RemoteFs;
+pub(crate) use runtime::Runtime;

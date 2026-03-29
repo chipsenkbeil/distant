@@ -12,6 +12,7 @@ use std::ops::Range;
 /// Writes are stored in a contiguous `Vec<u8>` buffer. Gaps between the
 /// original file size and a write offset are zero-filled. Overlapping or
 /// adjacent dirty ranges are coalesced to keep the range list compact.
+#[allow(dead_code)]
 pub struct WriteBuffer {
     data: Vec<u8>,
     dirty_ranges: Vec<Range<u64>>,
@@ -59,6 +60,7 @@ impl WriteBuffer {
     }
 
     /// Returns the dirty byte ranges, coalesced and sorted by start offset.
+    #[allow(dead_code)]
     pub fn dirty_ranges(&self) -> &[Range<u64>] {
         &self.dirty_ranges
     }
@@ -71,6 +73,7 @@ impl WriteBuffer {
     }
 
     /// Returns the original file size this buffer was created for.
+    #[allow(dead_code)]
     pub fn original_size(&self) -> u64 {
         self.original_size
     }
