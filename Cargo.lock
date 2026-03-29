@@ -1207,6 +1207,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-uniform-type-identifiers",
  "tokio",
+ "typed-path",
 ]
 
 [[package]]
