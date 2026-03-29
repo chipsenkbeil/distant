@@ -866,9 +866,10 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
         .get("destination")
         .ok_or_else(|| io::Error::other("FileProvider requires destination in extra map"))?;
 
-    let domain_id = format!("dev.distant.{connection_id}");
+    let remote_root = extra.get("remote_root");
+    let domain_id = make_domain_id(connection_id, remote_root);
     set_runtime(&domain_id, rt);
-    let display_name = sanitize_display_name(destination);
+    let display_name = sanitize_display_name(destination, remote_root);
 
     debug!("file_provider: registering domain id={domain_id:?} display={display_name:?}");
 
@@ -954,12 +955,35 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
     }
 }
 
+/// Builds a domain identifier from connection ID and optional remote root.
+///
+/// Without a remote root: `dev.distant.{connection_id}`
+/// With a remote root: `dev.distant.{connection_id}.{hash}` where hash is
+/// a truncated hash of the remote root path.
+fn make_domain_id(connection_id: &str, remote_root: Option<&String>) -> String {
+    match remote_root {
+        Some(root) => {
+            // Simple hash: sum of bytes mod a large prime, hex-encoded.
+            let hash: u64 = root.bytes().fold(0u64, |acc, b| {
+                acc.wrapping_mul(31).wrapping_add(u64::from(b))
+            });
+            format!("dev.distant.{connection_id}.{hash:x}")
+        }
+        None => format!("dev.distant.{connection_id}"),
+    }
+}
+
 /// Sanitizes a destination string for use as a FileProvider display name.
 ///
 /// Replaces `://` with `-` and prepends "Distant — " so the display name
 /// is identifiable in Finder's sidebar, e.g. `Distant — ssh-root@host`.
-fn sanitize_display_name(destination: &str) -> String {
-    format!("Distant — {}", destination.replace("://", "-"))
+/// If a remote root is set, appends it: `Distant — ssh-root@host:/var/data`.
+fn sanitize_display_name(destination: &str, remote_root: Option<&String>) -> String {
+    let base = destination.replace("://", "-");
+    match remote_root {
+        Some(root) => format!("Distant — {base}:{root}"),
+        None => format!("Distant — {base}"),
+    }
 }
 
 /// Removes a single FileProvider domain by identifier and cleans up its
@@ -1016,25 +1040,28 @@ pub(crate) fn remove_all_domains() -> io::Result<()> {
     Ok(())
 }
 
-/// Removes the FileProvider domain whose display name matches the sanitized
-/// form of `dest`.
+/// Removes all FileProvider domains whose stored destination matches `dest`.
 ///
-/// Uses the macOS `getDomainsWithCompletionHandler` API to enumerate all
-/// registered domains, so it can find and remove orphaned domains even when
-/// metadata files have been lost. Also cleans up the metadata file if present.
+/// Matches by reading domain metadata files and comparing the `destination`
+/// field, rather than relying on display name format. This correctly handles
+/// domains with different remote roots on the same destination.
 pub(crate) fn remove_domain_for_destination(dest: &str) -> io::Result<()> {
-    let target_display = sanitize_display_name(dest);
     let domains = get_all_domains()?;
 
     let mut found = false;
     for domain in &domains {
-        let display = unsafe { domain.displayName() }.to_string();
-        if display == target_display {
-            debug!("file_provider: removing domain matching destination {dest:?}");
+        let domain_id = unsafe { domain.identifier() }.to_string();
+
+        // Check if the domain's metadata matches the target destination.
+        let matches = domains_dir()
+            .and_then(|dir| std::fs::read_to_string(dir.join(&domain_id)).ok())
+            .and_then(|s| Map::parse_json(&s).ok())
+            .is_some_and(|meta| meta.get("destination").is_some_and(|d| d == dest));
+
+        if matches {
+            debug!("file_provider: removing domain {domain_id:?} matching destination {dest:?}");
             remove_domain_blocking(domain);
 
-            // Clean up metadata file if it exists.
-            let domain_id = unsafe { domain.identifier() }.to_string();
             if let Some(dir) = domains_dir() {
                 let _ = std::fs::remove_file(dir.join(&domain_id));
             }
