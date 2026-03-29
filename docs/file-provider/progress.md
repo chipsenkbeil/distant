@@ -18,8 +18,11 @@
   - Channel resolver logs connection attempts, fast-path hits, fallback searches, and outcomes
   - Files: `provider.rs`, `enumerator.rs`, `macos_file_provider.rs`, `macos_appex.rs`
 
-- [ ] **P0.3** `distant mount status` subcommand
-  - Files: `src/options.rs`, `src/cli/commands/client.rs`
+- [x] **P0.3** `distant mount-status` subcommand
+  - Lists registered FileProvider domains with metadata
+  - Supports `--format shell` (table) and `--format json`
+  - Exposes `DomainInfo` and `list_file_provider_domains()` from distant-mount
+  - Files: `src/options.rs`, `src/cli/commands/client.rs`, `distant-mount/src/lib.rs`, `macos_file_provider.rs`
 
 ---
 
