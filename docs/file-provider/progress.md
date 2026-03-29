@@ -156,7 +156,9 @@
   - Display name uses `Distant — ` prefix with sanitized destination
   - Each mount clearly identifiable in Finder sidebar
 - [ ] **P6.4** Integration tests
-- [ ] **P6.5** Documentation
+- [x] **P6.5** Documentation
+  - `docs/FILE_PROVIDER.md` — user guide covering setup, commands,
+    architecture, caching, diagnostics, and limitations
 
 ---
 
