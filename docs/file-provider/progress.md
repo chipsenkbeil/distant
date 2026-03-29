@@ -137,7 +137,10 @@
   - Initial page detected by non-8-byte length
   - Files: `enumerator.rs`
 - [ ] **P5.4** Progress tracking for downloads/uploads
-- [ ] **P5.5** Cache warming on mount
+- [x] **P5.5** Cache warming on mount
+  - Pre-enumerates root directory (inode 1) in background after bootstrap
+  - First Finder open is instant; failure is non-fatal
+  - Files: `macos_file_provider.rs`
 
 ---
 
