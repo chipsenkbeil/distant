@@ -213,9 +213,13 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
     // a clear error if the manager is unreachable.
     let channel = resolver(connection_id, &destination)?;
 
+    let remote_root = map
+        .get("remote_root")
+        .map(distant_core::protocol::RemotePath::new);
+
     let config = MountConfig {
         mount_point: None,
-        remote_root: None,
+        remote_root,
         readonly: false,
         cache: CacheConfig::default(),
         extra: Map::new(),
