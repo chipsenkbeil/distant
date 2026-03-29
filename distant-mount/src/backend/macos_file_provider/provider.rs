@@ -1,17 +1,26 @@
 mod enumerator;
 
-use enumerator::DistantFileProviderEnumerator;
+pub(crate) use enumerator::{DistantFileProviderEnumerator, DistantFileProviderItem};
+
+use std::sync::Mutex;
 
 use log::{debug, error, info};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{Bool, NSObjectProtocol, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
+use objc2::{DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::{
-    NSFileProviderDeleteItemOptions, NSFileProviderDomain, NSFileProviderEnumerating,
-    NSFileProviderEnumerator, NSFileProviderItem, NSFileProviderItemIdentifier,
-    NSFileProviderItemVersion, NSFileProviderReplicatedExtension, NSFileProviderRequest,
+    NSFileProviderCreateItemOptions, NSFileProviderDeleteItemOptions, NSFileProviderDomain,
+    NSFileProviderEnumerating, NSFileProviderEnumerator, NSFileProviderItem,
+    NSFileProviderItemFields, NSFileProviderItemIdentifier, NSFileProviderItemProtocol,
+    NSFileProviderItemVersion, NSFileProviderModifyItemOptions, NSFileProviderReplicatedExtension,
+    NSFileProviderRequest,
 };
-use objc2_foundation::{NSError, NSObject, NSProgress};
+use objc2_foundation::{NSError, NSObject, NSProgress, NSURL};
+
+use super::{
+    bootstrap, handle_create_item, handle_delete_item, handle_fetch_contents,
+    handle_item_for_identifier, handle_modify_item, new_progress,
+};
 
 /// Instance variables for [`DistantFileProvider`].
 pub struct ExtensionIvars {
@@ -44,9 +53,9 @@ define_class!(
             // SAFETY: NSObject's `init` is always safe to call.
             let this: Retained<Self> = unsafe { msg_send![super(this), init] };
 
-            // Bootstrap the RemoteFs from persisted domain metadata.
+            // Bootstrap the Runtime from persisted domain metadata.
             // Errors are logged but not fatal — the enumerator handles
-            // get_remote_fs() returning None by signalling empty results.
+            // get_runtime() returning None by signalling empty results.
             match bootstrap(&domain_id) {
                 Ok(()) => info!("file_provider: bootstrap succeeded for {domain_id:?}"),
                 Err(e) => error!("file_provider: bootstrap FAILED for {domain_id:?}: {e}"),

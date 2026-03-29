@@ -538,6 +538,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
             let handle =
                 distant_mount::mount(tokio::runtime::Handle::current(), channel, config, backend)
+                    .await
                     .context("Failed to mount filesystem")?;
 
             match mount_point {

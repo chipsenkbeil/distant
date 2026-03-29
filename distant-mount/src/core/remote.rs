@@ -22,31 +22,8 @@ pub use cache::FileAttr;
 
 /// Translates filesystem operations into distant [`ChannelExt`] calls.
 ///
-/// Provides a threaded implementation with callbacks for backends that do not support Rust's
-/// native async interface.
-pub struct ThreadedRemoteFs {
-    handle: std::thread::JoinHandle<()>,
-}
-
-impl ThreadedRemoteFs {
-    pub fn new(channel: Channel, config: MountConfig) -> Self {
-        // Spawns a new thread that will run a tokio system within it, and creates the underlying
-        // RemoteFs instance within that thread to perform the actual operations
-        let handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("failed to create tokio runtime");
-        });
-
-        Self { handle }
-    }
-}
-
-/// Translates filesystem operations into distant [`ChannelExt`] calls.
-///
 /// Provides a async API for backends to leverage if they support Rust's native async interface.
+#[allow(dead_code)]
 pub struct RemoteFs {
     channel: Channel,
     inodes: RwLock<InodeTable>,
@@ -655,6 +632,7 @@ impl RemoteFs {
     ///
     /// Unlike [`ino_to_path`](Self::ino_to_path), this returns `None` instead
     /// of an error when the inode is unknown or the lock is poisoned.
+    #[allow(dead_code)]
     pub async fn get_path(&self, ino: u64) -> Option<RemotePath> {
         let inodes = self.inodes.read().await;
         inodes.get_path(ino)
@@ -662,6 +640,7 @@ impl RemoteFs {
 
     /// Returns the inode number associated with the given remote path, if
     /// present.
+    #[allow(dead_code)]
     pub async fn get_ino_for_path(&self, path: &str) -> Option<u64> {
         let inodes = self.inodes.read().await;
         inodes.get_ino(&RemotePath::new(path))
@@ -737,7 +716,7 @@ fn spawn_watch_task(
             Ok(mut watcher) => {
                 debug!("watch-based cache invalidation active");
                 while let Some(change) = watcher.next().await {
-                    invalidate_for_change(&attr_cache, &dir_cache, &read_cache, &change);
+                    invalidate_for_change(&attr_cache, &dir_cache, &read_cache, &change).await;
                 }
                 debug!("watcher stream ended");
             }

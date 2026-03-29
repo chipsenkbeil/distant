@@ -125,6 +125,7 @@ impl FileAttr {
 /// Cached metadata entry pairing the raw remote [`Metadata`] with a
 /// pre-computed [`FileAttr`].
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct CachedAttr {
     pub metadata: Metadata,
     pub attr: FileAttr,
@@ -200,6 +201,7 @@ impl AttrCache {
     }
 
     /// Removes all entries from the cache.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.inner.clear();
     }
@@ -261,6 +263,7 @@ impl DirCache {
     }
 
     /// Removes all entries from the cache.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.inner.clear();
     }

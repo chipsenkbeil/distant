@@ -110,6 +110,7 @@ impl InodeTable {
     /// Constructs the full child path by joining the parent's path with `name`
     /// using a `/` separator, then looks up the result in the path index.
     /// Returns the child's inode number if it exists.
+    #[allow(dead_code)]
     pub fn lookup(&self, parent_ino: u64, name: &str) -> Option<u64> {
         let parent_path = self.get_path(parent_ino)?;
         let child_path = join_remote_path(&parent_path, name);
@@ -184,6 +185,7 @@ impl InodeTable {
 ///
 /// Handles the case where the parent path already ends with `/` to avoid
 /// producing double slashes.
+#[allow(dead_code)]
 fn join_remote_path(parent: &RemotePath, name: &str) -> RemotePath {
     let parent_str = parent.as_str();
     if parent_str.ends_with('/') {

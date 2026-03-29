@@ -81,10 +81,11 @@ impl MountBackend {
 }
 
 impl Default for MountBackend {
+    #[allow(clippy::needless_return, unreachable_code)]
     fn default() -> Self {
         #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
         {
-            if is_running_in_app_bundle() {
+            if macos_file_provider::utils::is_running_in_app_bundle() {
                 return Self::MacosFileProvider;
             }
         }

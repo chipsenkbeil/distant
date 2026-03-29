@@ -59,18 +59,11 @@ pub mod user {
     /// * `/run/user/1001/distant/{user}.distant.sock` on Linux
     /// * `/var/run/{user}.distant.sock` on BSD
     /// * `/tmp/{user}.distant.sock` on macOS (standalone)
-    /// * `~/Library/Group Containers/group.dev.distant/distant.sock` on macOS (bundled)
+    /// * `~/Library/Group Containers/39C6AGD73Z.group.dev.distant/distant.sock` on macOS (bundled)
     pub static UNIX_SOCKET_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
         // On macOS with the FileProvider feature, prefer the App Group container
         // if running inside a .app or .appex bundle.
-        #[cfg(all(
-            target_os = "macos",
-            any(
-                feature = "mount-macos-file-provider",
-                feature = "mount-fuse",
-                feature = "mount-nfs",
-            )
-        ))]
+        #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
         if let Some(path) = macos_app_group_socket_path() {
             return path;
         }
@@ -90,17 +83,10 @@ pub mod user {
     /// On macOS, checks if the current binary is running inside a `.app` or
     /// `.appex` bundle and returns a socket path inside the App Group container.
     ///
-    /// Uses path-based detection here because `NSBundle` requires the
-    /// `macos-file-provider` feature's objc2 dependencies. The path check
-    /// is sufficient — it matches `.app/Contents/MacOS/` and `.appex/`.
-    #[cfg(all(
-        target_os = "macos",
-        any(
-            feature = "mount-macos-file-provider",
-            feature = "mount-fuse",
-            feature = "mount-nfs",
-        )
-    ))]
+    /// Uses `NSFileManager` (via `distant_mount::macos::app_group_container_path`)
+    /// to resolve the App Group container, which works correctly regardless of
+    /// sandbox state.
+    #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
     fn macos_app_group_socket_path() -> Option<PathBuf> {
         let exe = std::env::current_exe().ok()?;
         let exe_str = exe.to_str()?;
@@ -108,17 +94,8 @@ pub mod user {
             return None;
         }
 
-        // Resolve App Group container: ~/Library/Group Containers/group.dev.distant/
-        let home = directories::BaseDirs::new()?;
-        let group_container = home
-            .home_dir()
-            .join("Library")
-            .join("Group Containers")
-            .join("group.dev.distant");
-
-        // Create the directory if it doesn't exist.
+        let group_container = distant_mount::macos::app_group_container_path()?;
         let _ = std::fs::create_dir_all(&group_container);
-
         Some(group_container.join(SOCKET_FILE_STR))
     }
 

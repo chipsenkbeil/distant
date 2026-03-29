@@ -1,8 +1,7 @@
 //! FUSE backend for mounting remote filesystems via `fuser`.
 //!
-//! Implements the [`fuser::Filesystem`] trait by delegating all callbacks to
-//! [`RemoteFs`], which bridges synchronous FUSE operations to the async distant
-//! protocol.
+//! Implements the [`fuser::Filesystem`] trait by dispatching each synchronous
+//! FUSE callback into the async [`Runtime`], which bridges to [`RemoteFs`].
 
 use std::ffi::OsStr;
 use std::io;
@@ -10,20 +9,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fuser::{
-    FileAttr as FuserFileAttr, FileType as FuserFileType, Filesystem, INodeNo, KernelConfig,
+    BsdFileFlags, Errno, FileAttr as FuserFileAttr, FileHandle, FileType as FuserFileType,
+    Filesystem, FopenFlags, Generation, INodeNo, KernelConfig, LockOwner, OpenFlags, RenameFlags,
     ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
-    ReplyWrite, Request, TimeOrNow,
+    ReplyWrite, Request, SessionACL, TimeOrNow, WriteFlags,
 };
 
-use crate::core::{FileAttr, RemoteFs};
+use crate::core::{FileAttr, Runtime};
 use distant_core::protocol::FileType;
 
 /// TTL used for FUSE entry and attribute replies.
 const TTL: Duration = Duration::from_secs(1);
 
-/// FUSE filesystem handler that delegates all operations to [`RemoteFs`].
+/// FUSE filesystem handler that dispatches all operations to [`RemoteFs`]
+/// via the async [`Runtime`].
 pub(crate) struct FuseHandler {
-    fs: Arc<RemoteFs>,
+    rt: Arc<Runtime>,
 }
 
 /// Converts a crate-level [`FileAttr`] into a [`fuser::FileAttr`].
@@ -56,15 +57,15 @@ fn to_fuser_file_type(ft: FileType) -> FuserFileType {
     }
 }
 
-/// Maps an [`io::Error`] to a libc errno code for FUSE error replies.
-fn io_error_to_errno(err: &io::Error) -> i32 {
+/// Maps an [`io::Error`] to a fuser [`Errno`] for FUSE error replies.
+fn io_error_to_errno(err: &io::Error) -> Errno {
     match err.kind() {
-        io::ErrorKind::NotFound => libc::ENOENT,
-        io::ErrorKind::PermissionDenied => libc::EACCES,
-        io::ErrorKind::AlreadyExists => libc::EEXIST,
-        io::ErrorKind::InvalidInput => libc::EINVAL,
-        io::ErrorKind::Unsupported => libc::ENOSYS,
-        _ => libc::EIO,
+        io::ErrorKind::NotFound => Errno::ENOENT,
+        io::ErrorKind::PermissionDenied => Errno::EACCES,
+        io::ErrorKind::AlreadyExists => Errno::EEXIST,
+        io::ErrorKind::InvalidInput => Errno::EINVAL,
+        io::ErrorKind::Unsupported => Errno::ENOSYS,
+        _ => Errno::EIO,
     }
 }
 
@@ -74,210 +75,244 @@ impl Filesystem for FuseHandler {
     }
 
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        let name_str = name.to_str().unwrap_or("");
-        match self.fs.lookup(parent, name_str) {
-            Ok(attr) => reply.entry(&TTL, &to_fuser_attr(&attr), 0),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        let name = name.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.lookup(parent.0, &name).await {
+                Ok(attr) => reply.entry(&TTL, &to_fuser_attr(&attr), Generation(0)),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
-    fn getattr(&self, _req: &Request, ino: INodeNo, reply: ReplyAttr) {
-        match self.fs.getattr(ino) {
-            Ok(attr) => reply.attr(&TTL, &to_fuser_attr(&attr)),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+    fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
+        self.rt.spawn(move |fs| async move {
+            match fs.getattr(ino.0).await {
+                Ok(attr) => reply.attr(&TTL, &to_fuser_attr(&attr)),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn read(
         &self,
         _req: &Request,
         ino: INodeNo,
-        _fh: u64,
-        offset: i64,
+        _fh: FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        match self.fs.read(ino, offset as u64, size) {
-            Ok(data) => reply.data(&data),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        self.rt.spawn(move |fs| async move {
+            match fs.read(ino.0, offset, size).await {
+                Ok(data) => reply.data(&data),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn write(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
-        match self.fs.write(ino, offset as u64, data) {
-            Ok(written) => reply.written(written),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        let data = data.to_vec();
+        self.rt.spawn(move |fs| async move {
+            match fs.write(ino.0, offset, &data).await {
+                Ok(written) => reply.written(written),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn readdir(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        match self.fs.readdir(ino) {
-            Ok(entries) => {
-                for (i, entry) in entries.iter().enumerate().skip(offset as usize) {
-                    // reply.add returns true when the buffer is full.
-                    let full = reply.add(
-                        entry.ino,
-                        (i + 1) as i64,
-                        to_fuser_file_type(entry.file_type),
-                        &entry.name,
-                    );
-                    if full {
-                        break;
+        self.rt.spawn(move |fs| async move {
+            match fs.readdir(ino.0).await {
+                Ok(entries) => {
+                    for (i, entry) in entries.iter().enumerate().skip(offset as usize) {
+                        let full = reply.add(
+                            INodeNo(entry.ino),
+                            (i + 1) as u64,
+                            to_fuser_file_type(entry.file_type),
+                            &entry.name,
+                        );
+                        if full {
+                            break;
+                        }
                     }
+                    reply.ok();
                 }
-                reply.ok();
+                Err(e) => reply.error(io_error_to_errno(&e)),
             }
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        });
     }
 
     fn create(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
         mode: u32,
         _umask: u32,
         _flags: i32,
         reply: ReplyCreate,
     ) {
-        let name_str = name.to_str().unwrap_or("");
-        match self.fs.create(parent, name_str, mode) {
-            Ok(attr) => reply.created(&TTL, &to_fuser_attr(&attr), 0, 0, 0),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        let name = name.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.create(parent.0, &name, mode).await {
+                Ok(attr) => reply.created(
+                    &TTL,
+                    &to_fuser_attr(&attr),
+                    Generation(0),
+                    FileHandle(0),
+                    FopenFlags::empty(),
+                ),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn mkdir(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
         mode: u32,
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        let name_str = name.to_str().unwrap_or("");
-        match self.fs.mkdir(parent, name_str, mode) {
-            Ok(attr) => reply.entry(&TTL, &to_fuser_attr(&attr), 0),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        let name = name.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.mkdir(parent.0, &name, mode).await {
+                Ok(attr) => reply.entry(&TTL, &to_fuser_attr(&attr), Generation(0)),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
-    fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let name_str = name.to_str().unwrap_or("");
-        match self.fs.unlink(parent, name_str) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+    fn unlink(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let name = name.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.unlink(parent.0, &name).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
-    fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let name_str = name.to_str().unwrap_or("");
-        match self.fs.rmdir(parent, name_str) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+    fn rmdir(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEmpty) {
+        let name = name.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.rmdir(parent.0, &name).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn rename(
-        &mut self,
-        _req: &Request<'_>,
-        parent: u64,
+        &self,
+        _req: &Request,
+        parent: INodeNo,
         name: &OsStr,
-        newparent: u64,
+        newparent: INodeNo,
         newname: &OsStr,
-        _flags: u32,
+        _flags: RenameFlags,
         reply: ReplyEmpty,
     ) {
-        let name_str = name.to_str().unwrap_or("");
-        let newname_str = newname.to_str().unwrap_or("");
-        match self.fs.rename(parent, name_str, newparent, newname_str) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        let name = name.to_str().unwrap_or("").to_string();
+        let newname = newname.to_str().unwrap_or("").to_string();
+        self.rt.spawn(move |fs| async move {
+            match fs.rename(parent.0, &name, newparent.0, &newname).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn flush(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        _lock_owner: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        _lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
-        match self.fs.flush(ino) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        self.rt.spawn(move |fs| async move {
+            match fs.flush(ino.0).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn fsync(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        match self.fs.fsync(ino) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        self.rt.spawn(move |fs| async move {
+            match fs.fsync(ino.0).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
     fn release(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        _fh: u64,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        match self.fs.release(ino) {
-            Ok(()) => reply.ok(),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        self.rt.spawn(move |fs| async move {
+            match fs.release(ino.0).await {
+                Ok(()) => reply.ok(),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 
-    fn forget(&mut self, _req: &Request<'_>, ino: u64, nlookup: u64) {
-        self.fs.forget(ino, nlookup);
+    fn forget(&self, _req: &Request, ino: INodeNo, nlookup: u64) {
+        self.rt.spawn(move |fs| async move {
+            fs.forget(ino.0, nlookup).await;
+        });
     }
 
-    fn open(&mut self, _req: &Request<'_>, _ino: u64, _flags: i32, reply: ReplyOpen) {
-        reply.opened(0, 0);
+    fn open(&self, _req: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        reply.opened(FileHandle(0), FopenFlags::empty());
     }
 
-    fn opendir(&mut self, _req: &Request<'_>, _ino: u64, _flags: i32, reply: ReplyOpen) {
-        reply.opened(0, 0);
+    fn opendir(&self, _req: &Request, _ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        reply.opened(FileHandle(0), FopenFlags::empty());
     }
 
     fn setattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         _mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
@@ -285,40 +320,37 @@ impl Filesystem for FuseHandler {
         _atime: Option<TimeOrNow>,
         _mtime: Option<TimeOrNow>,
         _ctime: Option<std::time::SystemTime>,
-        _fh: Option<u64>,
+        _fh: Option<FileHandle>,
         _crtime: Option<std::time::SystemTime>,
         _chgtime: Option<std::time::SystemTime>,
         _bkuptime: Option<std::time::SystemTime>,
-        _flags: Option<u32>,
+        _flags: Option<BsdFileFlags>,
         reply: ReplyAttr,
     ) {
-        // No remote setattr implementation yet; return current attributes.
-        match self.fs.getattr(ino) {
-            Ok(attr) => reply.attr(&TTL, &to_fuser_attr(&attr)),
-            Err(err) => reply.error(io_error_to_errno(&err)),
-        }
+        self.rt.spawn(move |fs| async move {
+            match fs.getattr(ino.0).await {
+                Ok(attr) => reply.attr(&TTL, &to_fuser_attr(&attr)),
+                Err(e) => reply.error(io_error_to_errno(&e)),
+            }
+        });
     }
 }
 
-/// Mounts the given [`RemoteFs`] at `mount_point` using FUSE.
+/// Mounts the given [`Runtime`] at `mount_point` using FUSE.
 ///
 /// Returns a [`fuser::BackgroundSession`] that keeps the mount alive until
 /// dropped.
-///
-/// # Errors
-///
-/// Returns an error if the FUSE mount fails (e.g., missing permissions or
-/// the mount point does not exist).
 pub(crate) fn mount(
-    fs: Arc<RemoteFs>,
+    rt: Arc<Runtime>,
     mount_point: &std::path::Path,
 ) -> io::Result<fuser::BackgroundSession> {
-    let handler = FuseHandler { fs };
-    let options = vec![
+    let handler = FuseHandler { rt };
+    let mut config = fuser::Config::default();
+    config.mount_options = vec![
         fuser::MountOption::FSName("distant".to_string()),
         fuser::MountOption::AutoUnmount,
-        fuser::MountOption::AllowOther,
     ];
-    fuser::spawn_mount2(handler, mount_point, &options)
+    config.acl = SessionACL::All;
+    fuser::spawn_mount2(handler, mount_point, &config)
         .map_err(|e| io::Error::other(format!("FUSE mount failed: {e}")))
 }

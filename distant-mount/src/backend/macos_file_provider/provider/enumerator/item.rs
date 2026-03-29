@@ -5,6 +5,10 @@ use objc2_file_provider::{NSFileProviderItemIdentifier, NSFileProviderItemProtoc
 use objc2_foundation::{NSObject, NSString};
 
 /// Instance variables for [`DistantFileProviderItem`].
+///
+/// `is_directory` and `size` are stored for future `NSFileProviderItemProtocol`
+/// getters (`documentSize`, `contentType`) but are not yet exposed.
+#[allow(dead_code)]
 pub struct ItemIvars {
     identifier: Retained<NSString>,
     parent_identifier: Retained<NSString>,
@@ -43,7 +47,7 @@ define_class!(
 
 impl DistantFileProviderItem {
     /// Creates a new item with the given metadata.
-    pub(super) fn new(
+    pub(crate) fn new(
         identifier: &str,
         parent_identifier: &str,
         filename: &str,

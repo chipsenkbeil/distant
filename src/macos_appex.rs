@@ -16,10 +16,7 @@ use crate::cli::logger;
 use crate::constants;
 
 /// Returns `true` if this process is running as a `.appex` FileProvider extension.
-///
-/// Delegates to `distant_mount::macos::is_file_provider_extension()` which uses
-/// `NSBundle.mainBundle.bundlePath` to check for a `.appex` suffix.
-pub fn is_file_provider_extension() -> bool {
+pub fn is_appex() -> bool {
     distant_mount::macos::is_file_provider_extension()
 }
 
@@ -32,7 +29,7 @@ pub fn is_file_provider_extension() -> bool {
 /// Calls `_NSExtensionMain` which sets up the PlugInKit XPC listener that
 /// reads `NSExtensionPrincipalClass` from `Info.plist` and calls
 /// `initWithDomain:` when `fileproviderd` connects.
-pub fn run_extension() -> ! {
+pub fn main() -> ! {
     init_appex_logging();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -137,35 +134,37 @@ async fn connect_headless() -> std::io::Result<distant_core::net::manager::Manag
         })
 }
 
-/// Initialises file-based logging for the `.appex` extension process.
+/// Initialises logging for the `.appex` extension process.
 ///
-/// Writes to `logs/distant-appex-{pid}.log` in the App Group shared container
-/// on macOS. Each domain gets its own `.appex` process, so PID is unique.
+/// Tries `logs/distant-appex-{pid}.log` in the App Group shared container
+/// first; falls back to `/tmp/distant-appex-{pid}.log` if the container
+/// is unavailable. Always enables stderr as a secondary output.
+///
+/// Defaults to `Trace` level so that the bootstrap flow logs everything;
+/// `bootstrap()` may later tighten the level via `log::set_max_level()`
+/// if the domain metadata contains a `log_level` key.
 fn init_appex_logging() {
-    let Some(container) = distant_mount::macos::app_group_container_path() else {
-        return;
-    };
-    let log_dir = container.join("logs");
-    let _ = std::fs::create_dir_all(&log_dir);
-
     let pid = std::process::id();
-    let log_path = log_dir.join(format!("distant-appex-{pid}.log"));
-    if std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .is_err()
-    {
-        return;
-    }
+    let log_filename = format!("distant-appex-{pid}.log");
 
-    logger::FileLogger::init(
-        vec![
-            "distant".to_string(),
-            "distant_core".to_string(),
-            "distant_mount".to_string(),
-        ],
-        log::LevelFilter::Debug,
-        &log_path,
-    );
+    let log_path = distant_mount::macos::app_group_container_path()
+        .and_then(|container| {
+            let log_dir = container.join("logs");
+            std::fs::create_dir_all(&log_dir).ok()?;
+            Some(log_dir.join(&log_filename))
+        })
+        .unwrap_or_else(|| std::env::temp_dir().join(&log_filename));
+
+    let modules = vec![
+        "distant".to_string(),
+        "distant_core".to_string(),
+        "distant_mount".to_string(),
+    ];
+
+    let _ = logger::Logger::builder()
+        .modules(modules)
+        .level(log::LevelFilter::Trace)
+        .file(&log_path)
+        .stderr()
+        .init();
 }
