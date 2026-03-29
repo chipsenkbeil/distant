@@ -17,8 +17,9 @@ pub mod macos {
         app_group_container_path, is_file_provider_extension, is_running_in_app_bundle,
     };
     pub use crate::backend::macos_file_provider::{
-        ChannelResolver, init_file_provider, register_file_provider_classes,
-        remove_all_file_provider_domains, remove_file_provider_domain_for_destination,
+        ChannelResolver, DomainInfo, init_file_provider, list_file_provider_domains,
+        register_file_provider_classes, remove_all_file_provider_domains,
+        remove_file_provider_domain_for_destination,
     };
 }
 

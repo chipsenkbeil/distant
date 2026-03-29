@@ -41,7 +41,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-APPEX_LOG_DIR="$HOME/Library/Containers/dev.distant.file-provider/Data/tmp"
+APPEX_LOG_DIR="$HOME/Library/Group Containers/39C6AGD73Z.group.dev.distant/logs"
+APPEX_LOG_DIR_LEGACY="$HOME/Library/Containers/dev.distant.file-provider/Data/tmp"
 CRASH_DIR="$HOME/Library/Logs/DiagnosticReports"
 
 case "$MODE" in
@@ -51,16 +52,21 @@ case "$MODE" in
         echo ""
 
         echo "=== Latest appex log file ==="
-        if [[ -d "$APPEX_LOG_DIR" ]]; then
-            LATEST=$(find "$APPEX_LOG_DIR" -name '*.log' -type f 2>/dev/null | sort -r | head -1)
-            if [[ -n "$LATEST" ]]; then
-                echo "($LATEST)"
-                cat "$LATEST"
-            else
-                echo "(no log files found in $APPEX_LOG_DIR)"
+        LATEST=""
+        for dir in "$APPEX_LOG_DIR" "$APPEX_LOG_DIR_LEGACY"; do
+            if [[ -d "$dir" ]]; then
+                CANDIDATE=$(find "$dir" -name '*.log' -type f 2>/dev/null | sort -r | head -1)
+                if [[ -n "$CANDIDATE" ]]; then
+                    LATEST="$CANDIDATE"
+                    break
+                fi
             fi
+        done
+        if [[ -n "$LATEST" ]]; then
+            echo "($LATEST)"
+            cat "$LATEST"
         else
-            echo "(directory not found: $APPEX_LOG_DIR)"
+            echo "(no log files found in $APPEX_LOG_DIR or $APPEX_LOG_DIR_LEGACY)"
         fi
         ;;
 
