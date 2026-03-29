@@ -237,6 +237,11 @@ pub(crate) fn handle_item_for_identifier(
                 };
 
                 let is_dir = attr.kind == FileType::Dir;
+                let mtime_secs = attr
+                    .mtime
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 trace!("file_provider: item ino={ino} filename={filename:?} is_dir={is_dir}");
                 let item = DistantFileProviderItem::new(
                     &ino.to_string(),
@@ -244,6 +249,7 @@ pub(crate) fn handle_item_for_identifier(
                     filename,
                     is_dir,
                     attr.size,
+                    mtime_secs,
                 );
                 let proto: Retained<
                     objc2::runtime::ProtocolObject<dyn NSFileProviderItemProtocol>,
@@ -322,8 +328,18 @@ pub(crate) fn handle_fetch_contents(
             .unwrap_or("unknown");
         let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
         let size = attr.as_ref().map(|a| a.size).unwrap_or(data.len() as u64);
+        let mtime_secs = attr
+            .as_ref()
+            .map(|a| {
+                a.mtime
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
 
-        let item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
+        let item =
+            DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size, mtime_secs);
         let proto = objc2::runtime::ProtocolObject::from_retained(item);
 
         block.call((
@@ -365,12 +381,18 @@ pub(crate) fn handle_create_item(
                     "file_provider: create_item succeeded — ino={} name={name:?}",
                     attr.ino
                 );
+                let mtime_secs = attr
+                    .mtime
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let item = DistantFileProviderItem::new(
                     &attr.ino.to_string(),
                     &parent_ino.to_string(),
                     &name,
                     attr.kind == FileType::Dir,
                     attr.size,
+                    mtime_secs,
                 );
                 let proto = objc2::runtime::ProtocolObject::from_retained(item);
                 block.call((
@@ -438,8 +460,19 @@ pub(crate) fn handle_modify_item(
         let is_dir = attr.as_ref().is_some_and(|a| a.kind == FileType::Dir);
         let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
 
+        let mtime_secs = attr
+            .as_ref()
+            .map(|a| {
+                a.mtime
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
         trace!("file_provider: modify_item succeeded for ino={ino}");
-        let new_item = DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size);
+        let new_item =
+            DistantFileProviderItem::new(&ino.to_string(), "1", filename, is_dir, size, mtime_secs);
         let proto = objc2::runtime::ProtocolObject::from_retained(new_item);
         block.call((
             Retained::into_raw(proto),
