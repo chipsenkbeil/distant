@@ -81,7 +81,7 @@ define_class!(
         fn enumerate_items(
             &self,
             observer: &ProtocolObject<dyn NSFileProviderEnumerationObserver>,
-            _page: &NSFileProviderPage,
+            page: &NSFileProviderPage,
         ) {
             let container_str = self.ivars().container_id.to_string();
             trace!(
@@ -143,16 +143,30 @@ define_class!(
                 ino.to_string()
             };
 
+            // Parse page offset from the page token. The initial page from
+            // the system is a well-known NSData constant (not a u64), so we
+            // treat any non-8-byte token as "start from 0".
+            let page_offset = parse_page_offset(page);
+
             let observer = macos_file_provider::UnsafeSendable(observer.retain());
 
             rt.spawn(move |fs| async move {
                 match fs.readdir(ino).await {
                     Ok(entries) => {
+                        let filtered: Vec<_> = entries
+                            .iter()
+                            .filter(|e| e.name != "." && e.name != "..")
+                            .collect();
+                        let total = filtered.len();
+                        let start = (page_offset as usize).min(total);
+                        let end = (start + PAGE_SIZE).min(total);
+                        let page_entries = &filtered[start..end];
+
                         // Collect metadata with async calls first, then build
                         // ObjC items. This avoids holding Retained<...> (!Send)
                         // across .await points.
                         let mut metadata: Vec<(String, String, bool, u64, u64)> = Vec::new();
-                        for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
+                        for entry in page_entries {
                             let is_dir = entry.file_type == FileType::Dir;
                             let attr = fs.getattr(entry.ino).await;
                             let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
@@ -192,13 +206,22 @@ define_class!(
                                 .collect();
 
                         trace!(
-                            "file_provider: enumerate_items for ino={ino} returning {} items",
-                            items.len()
+                            "file_provider: enumerate_items ino={ino} page={start}..{end}/{total}",
                         );
                         let array = NSArray::from_retained_slice(&items);
                         unsafe {
                             observer.didEnumerateItems(&array);
-                            observer.finishEnumeratingUpToPage(None);
+                        }
+
+                        // Signal next page or end of enumeration.
+                        let next_page = if end < total {
+                            let token = NSData::with_bytes(&(end as u64).to_le_bytes());
+                            Some(token)
+                        } else {
+                            None
+                        };
+                        unsafe {
+                            observer.finishEnumeratingUpToPage(next_page.as_deref());
                         }
                     }
                     Err(e) => {
@@ -224,5 +247,26 @@ impl DistantFileProviderEnumerator {
         });
         // SAFETY: NSObject's `init` is always safe to call after `alloc`.
         unsafe { msg_send![super(enumerator), init] }
+    }
+}
+
+/// Number of items to return per enumeration page.
+const PAGE_SIZE: usize = 100;
+
+/// Parses a page token (NSData) as a u64 offset.
+///
+/// The initial page from the system (`NSFileProviderInitialPageSortedByName`
+/// etc.) is a well-known NSData constant that won't be exactly 8 bytes, so
+/// we treat any non-8-byte token as offset 0.
+fn parse_page_offset(page: &NSData) -> u64 {
+    let len = page.length();
+    if len == 8 {
+        let mut buf = [0u8; 8];
+        unsafe {
+            page.getBytes_length(std::ptr::NonNull::new(buf.as_mut_ptr().cast()).unwrap(), 8);
+        }
+        u64::from_le_bytes(buf)
+    } else {
+        0
     }
 }
