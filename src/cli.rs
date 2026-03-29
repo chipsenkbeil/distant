@@ -11,6 +11,7 @@ pub(crate) use commands::common::PredictMode;
 pub(crate) use common::Manager;
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
+#[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
 pub(crate) mod logger {
     pub(crate) use super::common::logger::*;
 }

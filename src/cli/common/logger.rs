@@ -93,6 +93,7 @@ impl LoggerBuilder {
     }
 
     /// Configures the logger to also write to stderr.
+    #[allow(dead_code)]
     pub fn stderr(mut self) -> Self {
         self.stderr = true;
         self
