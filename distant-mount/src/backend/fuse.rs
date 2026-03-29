@@ -6,18 +6,16 @@
 
 use std::ffi::OsStr;
 use std::io;
-use std::os::raw::c_int;
 use std::sync::Arc;
 use std::time::Duration;
 
 use fuser::{
-    FileAttr as FuserFileAttr, FileType as FuserFileType, Filesystem, KernelConfig, ReplyAttr,
-    ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request,
-    TimeOrNow,
+    FileAttr as FuserFileAttr, FileType as FuserFileType, Filesystem, INodeNo, KernelConfig,
+    ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
+    ReplyWrite, Request, TimeOrNow,
 };
 
-use crate::RemoteFs;
-use crate::cache::FileAttr;
+use crate::core::{FileAttr, RemoteFs};
 use distant_core::protocol::FileType;
 
 /// TTL used for FUSE entry and attribute replies.
@@ -31,7 +29,7 @@ pub(crate) struct FuseHandler {
 /// Converts a crate-level [`FileAttr`] into a [`fuser::FileAttr`].
 fn to_fuser_attr(attr: &FileAttr) -> FuserFileAttr {
     FuserFileAttr {
-        ino: attr.ino,
+        ino: INodeNo(attr.ino),
         size: attr.size,
         blocks: attr.blocks,
         atime: attr.atime,
@@ -71,11 +69,11 @@ fn io_error_to_errno(err: &io::Error) -> i32 {
 }
 
 impl Filesystem for FuseHandler {
-    fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
+    fn init(&mut self, _req: &Request, _config: &mut KernelConfig) -> io::Result<()> {
         Ok(())
     }
 
-    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let name_str = name.to_str().unwrap_or("");
         match self.fs.lookup(parent, name_str) {
             Ok(attr) => reply.entry(&TTL, &to_fuser_attr(&attr), 0),
@@ -83,7 +81,7 @@ impl Filesystem for FuseHandler {
         }
     }
 
-    fn getattr(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyAttr) {
+    fn getattr(&self, _req: &Request, ino: INodeNo, reply: ReplyAttr) {
         match self.fs.getattr(ino) {
             Ok(attr) => reply.attr(&TTL, &to_fuser_attr(&attr)),
             Err(err) => reply.error(io_error_to_errno(&err)),
@@ -91,9 +89,9 @@ impl Filesystem for FuseHandler {
     }
 
     fn read(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
+        &self,
+        _req: &Request,
+        ino: INodeNo,
         _fh: u64,
         offset: i64,
         size: u32,

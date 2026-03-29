@@ -6,7 +6,7 @@ edition = "2024"
 license.workspace = true
 
 [features]
-default = []
+default = ["fuse", "nfs", "macos-file-provider"]
 fuse = ["dep:fuser", "dep:libc"]
 nfs = ["dep:nfsserve"]
 windows-cloud-files = ["dep:cloud-filter"]

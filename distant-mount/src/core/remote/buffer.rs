@@ -12,7 +12,7 @@ use std::ops::Range;
 /// Writes are stored in a contiguous `Vec<u8>` buffer. Gaps between the
 /// original file size and a write offset are zero-filled. Overlapping or
 /// adjacent dirty ranges are coalesced to keep the range list compact.
-pub(crate) struct WriteBuffer {
+pub struct WriteBuffer {
     data: Vec<u8>,
     dirty_ranges: Vec<Range<u64>>,
     original_size: u64,
@@ -23,7 +23,7 @@ impl WriteBuffer {
     ///
     /// The buffer starts empty; bytes are only materialized when
     /// [`write`](Self::write) is called.
-    pub(crate) fn new(original_size: u64) -> Self {
+    pub fn new(original_size: u64) -> Self {
         Self {
             data: Vec::new(),
             dirty_ranges: Vec::new(),
@@ -36,7 +36,7 @@ impl WriteBuffer {
     /// If the write extends beyond the current buffer length, the buffer is
     /// grown and any gap between the old end and the new write is zero-filled.
     /// Overlapping or adjacent dirty ranges are merged.
-    pub(crate) fn write(&mut self, offset: u64, data: &[u8]) {
+    pub fn write(&mut self, offset: u64, data: &[u8]) {
         if data.is_empty() {
             return;
         }
@@ -54,30 +54,29 @@ impl WriteBuffer {
     }
 
     /// Returns `true` if any writes have been buffered.
-    pub(crate) fn is_dirty(&self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         !self.dirty_ranges.is_empty()
     }
 
     /// Returns the dirty byte ranges, coalesced and sorted by start offset.
-    pub(crate) fn dirty_ranges(&self) -> &[Range<u64>] {
+    pub fn dirty_ranges(&self) -> &[Range<u64>] {
         &self.dirty_ranges
     }
 
     /// Returns the full buffer contents.
     ///
     /// Regions that were never written to contain zeros.
-    pub(crate) fn data(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Returns the original file size this buffer was created for.
-    #[allow(dead_code)]
-    pub(crate) fn original_size(&self) -> u64 {
+    pub fn original_size(&self) -> u64 {
         self.original_size
     }
 
     /// Clears the buffer and dirty ranges after a successful flush.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.data.clear();
         self.dirty_ranges.clear();
     }
@@ -110,13 +109,13 @@ impl WriteBuffer {
 }
 
 /// Collection of [`WriteBuffer`]s keyed by inode number.
-pub(crate) struct WriteBuffers {
+pub struct WriteBuffers {
     buffers: HashMap<u64, WriteBuffer>,
 }
 
 impl WriteBuffers {
     /// Creates an empty collection.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffers: HashMap::new(),
         }
@@ -124,26 +123,24 @@ impl WriteBuffers {
 
     /// Returns a mutable reference to the buffer for `ino`, creating one if it
     /// does not already exist.
-    pub(crate) fn get_or_create(&mut self, ino: u64, original_size: u64) -> &mut WriteBuffer {
+    pub fn get_or_create(&mut self, ino: u64, original_size: u64) -> &mut WriteBuffer {
         self.buffers
             .entry(ino)
             .or_insert_with(|| WriteBuffer::new(original_size))
     }
 
     /// Returns a shared reference to the buffer for `ino`, if one exists.
-    #[allow(dead_code)]
-    pub(crate) fn get(&self, ino: u64) -> Option<&WriteBuffer> {
+    pub fn get(&self, ino: u64) -> Option<&WriteBuffer> {
         self.buffers.get(&ino)
     }
 
     /// Returns a mutable reference to the buffer for `ino`, if one exists.
-    #[allow(dead_code)]
-    pub(crate) fn get_mut(&mut self, ino: u64) -> Option<&mut WriteBuffer> {
+    pub fn get_mut(&mut self, ino: u64) -> Option<&mut WriteBuffer> {
         self.buffers.get_mut(&ino)
     }
 
     /// Removes and returns the buffer for `ino`, if one exists.
-    pub(crate) fn remove(&mut self, ino: u64) -> Option<WriteBuffer> {
+    pub fn remove(&mut self, ino: u64) -> Option<WriteBuffer> {
         self.buffers.remove(&ino)
     }
 }

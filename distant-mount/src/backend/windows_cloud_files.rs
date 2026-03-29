@@ -31,7 +31,7 @@ use log::debug;
 
 use distant_core::protocol::FileType;
 
-use crate::RemoteFs;
+use crate::core::RemoteFs;
 
 /// Handler implementing the Cloud Filter API's [`SyncFilter`] trait.
 ///

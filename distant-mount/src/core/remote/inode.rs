@@ -20,7 +20,7 @@ const ROOT_INO: u64 = 1;
 /// configured remote root path. New inodes are allocated monotonically. When an
 /// inode's reference count drops to zero it becomes eligible for eviction; once
 /// the table exceeds its capacity, the least-recently-zeroed inodes are removed.
-pub(crate) struct InodeTable {
+pub struct InodeTable {
     next_ino: u64,
     by_ino: HashMap<u64, InodeEntry>,
     by_path: HashMap<RemotePath, u64>,
