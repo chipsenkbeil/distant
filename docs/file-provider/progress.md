@@ -103,8 +103,11 @@
   - Current: `fs.read(ino, 0, u32::MAX)` loads entire file in RAM
   - Requires RemoteFs protocol changes for chunked reads — deferred
 
-- [ ] **P4.2** Per-domain Runtime (multi-mount)
-  - Current: single `OnceLock<Arc<Runtime>>` — only first domain bootstraps
+- [x] **P4.2** Per-domain Runtime (multi-mount)
+  - `RwLock<HashMap<String, Arc<Runtime>>>` keyed by domain identifier
+  - domain_id threaded through all handlers and enumerator
+  - Per-domain bootstrap errors stored separately
+  - Files: `macos_file_provider.rs`, `provider.rs`, `enumerator.rs`
 
 - [x] **P4.3** Graceful bootstrap failure with proper error types
   - `make_fp_error` creates errors with `NSFileProviderErrorDomain`
