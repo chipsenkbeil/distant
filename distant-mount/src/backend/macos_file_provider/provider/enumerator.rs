@@ -167,8 +167,10 @@ define_class!(
                         // across .await points.
                         let mut metadata: Vec<(String, String, bool, u64, u64)> = Vec::new();
                         for entry in page_entries {
-                            let is_dir = entry.file_type == FileType::Dir;
                             let attr = fs.getattr(entry.ino).await;
+                            // Use getattr result for type (resolves symlinks)
+                            // rather than readdir entry type.
+                            let is_dir = attr.as_ref().is_ok_and(|a| a.kind == FileType::Dir);
                             let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
                             let mtime_secs = attr
                                 .as_ref()
