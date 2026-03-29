@@ -225,7 +225,23 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
     // in the background. All handler spawn() calls will wait for init.
     let rt = Arc::new(Runtime::new(handle, async move { (channel, config) }));
 
-    set_runtime(domain_id, rt);
+    set_runtime(domain_id, rt.clone());
+
+    // Warm the cache by pre-enumerating the root directory in the
+    // background. This ensures the first Finder open is instant.
+    rt.spawn(|fs| async move {
+        match fs.readdir(1).await {
+            Ok(entries) => {
+                info!(
+                    "file_provider: cache warm complete — root has {} entries",
+                    entries.len()
+                );
+            }
+            Err(e) => {
+                debug!("file_provider: cache warm failed (non-fatal): {e}");
+            }
+        }
+    });
 
     info!("file_provider: bootstrap complete — Runtime initialized (init pending)");
     Ok(())
