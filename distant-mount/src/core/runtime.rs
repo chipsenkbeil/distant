@@ -15,12 +15,14 @@ use distant_core::Channel;
 /// use [`spawn`](Self::spawn) to dispatch async work against the [`RemoteFs`].
 /// The `RemoteFs` may be provided up-front ([`with_fs`](Self::with_fs)) or
 /// initialised lazily from a future ([`new`](Self::new)).
+#[allow(dead_code)]
 pub(crate) struct Runtime {
     handle: Handle,
     fs: Arc<OnceCell<Arc<RemoteFs>>>,
     ready: watch::Receiver<bool>,
 }
 
+#[allow(dead_code)]
 impl Runtime {
     /// Creates a runtime that lazily initialises `RemoteFs` from the given
     /// future. [`spawn`](Self::spawn) calls will wait until init completes.

@@ -181,10 +181,9 @@ async fn mount_cloud_files(
         .clone()
         .ok_or_else(|| io::Error::other("Windows Cloud Files backend requires a mount point"))?;
     std::fs::create_dir_all(&mount_point)?;
-    let fs = core::RemoteFs::init(channel, config).await?;
-    let rt = Arc::new(core::Runtime::with_fs(handle, fs));
+    let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
 
-    let connection = backend::windows_cloud_files::mount(rt, &mount_point)?;
+    let connection = backend::windows_cloud_files::mount(handle.clone(), fs, &mount_point)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {

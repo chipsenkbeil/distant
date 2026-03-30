@@ -61,7 +61,6 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         foreground: false,
         ref backend,
         ref mount_point,
-        ref network,
         ..
     } = cmd
         && backend.needs_foreground_process()
@@ -81,7 +80,9 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
         // Pass the resolved socket path so sudo doesn't break connectivity.
         #[cfg(unix)]
-        if network.unix_socket.is_none() {
+        if let ClientSubcommand::Mount { ref network, .. } = cmd
+            && network.unix_socket.is_none()
+        {
             let socket = crate::constants::user::UNIX_SOCKET_PATH.as_os_str();
             args.push(OsString::from("--unix-socket"));
             args.push(socket.to_owned());
@@ -695,9 +696,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     let mounts = detect_distant_volume_mounts();
                     for mp in &mounts {
                         let path = std::path::Path::new(mp);
-                        let status = std::process::Command::new("umount")
-                            .arg(path)
-                            .status();
+                        let status = std::process::Command::new("umount").arg(path).status();
                         match status {
                             Ok(s) if s.success() => println!("Unmounted {mp}"),
                             Ok(s) => eprintln!("Warning: umount {mp} failed ({s})"),
@@ -741,6 +740,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     }
                     #[cfg(not(unix))]
                     {
+                        let _ = &path;
                         return Err(
                             anyhow::anyhow!("Unmount not supported on this platform").into()
                         );
@@ -759,6 +759,8 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             feature = "mount-macos-file-provider",
         ))]
         ClientSubcommand::MountStatus { format } => {
+            let _ = &format; // used conditionally per platform
+            #[allow(unused_mut)]
             let mut has_output = false;
 
             // NFS/FUSE mounts: detect via OS mount table
@@ -2454,11 +2456,6 @@ async fn use_or_lookup_connection_id(
     }
 }
 
-/// Detects NFS mounts created by distant by parsing the OS `mount` output.
-///
-/// Distant's NFS mounts come from `localhost` (the embedded NFS server),
-/// so we filter for `localhost:/ on ...` entries.
-#[cfg(unix)]
 /// Detects NFS and FUSE mounts created by distant.
 ///
 /// NFS mounts come from `localhost` (embedded NFS server).

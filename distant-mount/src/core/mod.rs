@@ -10,4 +10,5 @@ pub use handle::MountHandle;
 
 pub(crate) use remote::FileAttr;
 pub(crate) use remote::RemoteFs;
+#[allow(unused_imports)]
 pub(crate) use runtime::Runtime;

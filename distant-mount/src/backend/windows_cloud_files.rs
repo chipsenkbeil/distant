@@ -13,11 +13,11 @@ use std::sync::Arc;
 use cloud_filter::error::CResult;
 use cloud_filter::filter::info;
 use cloud_filter::filter::ticket;
-use cloud_filter::filter::{Request, SyncFilter};
+use cloud_filter::filter::{Filter, Request};
 use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder_file::PlaceholderFile;
 use cloud_filter::root::{
-    Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
+    HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
     SyncRootInfo,
 };
 use cloud_filter::utility::WriteAt;
@@ -25,160 +25,148 @@ use log::debug;
 
 use distant_core::protocol::FileType;
 
-use crate::core::Runtime;
+use crate::core::RemoteFs;
 
-/// Wrapper for Cloud Filter ticket types that are thread-safe but `!Send`
-/// due to conservative defaults in the `cloud-filter` bindings.
+/// Async handler implementing the Cloud Filter API's [`Filter`] trait.
 ///
-/// The Cloud Filter API is documented as callable from arbitrary threads.
-struct UnsafeSendable<T>(T);
-unsafe impl<T> Send for UnsafeSendable<T> {}
-unsafe impl<T> Sync for UnsafeSendable<T> {}
-impl<T> std::ops::Deref for UnsafeSendable<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-/// Handler implementing the Cloud Filter API's [`SyncFilter`] trait.
-///
-/// Delegates all filesystem operations to [`RemoteFs`] via the [`Runtime`]
-/// async-to-sync bridge (same pattern as the FUSE backend).
+/// Uses `Session::connect_async` which bridges async callbacks to the
+/// Cloud Filter's synchronous thread model via a `block_on` closure.
+/// No `Send` bounds are required on the futures.
 pub(crate) struct CloudFilesHandler {
-    rt: Arc<Runtime>,
+    fs: Arc<RemoteFs>,
+    mount_point: std::path::PathBuf,
 }
 
 impl CloudFilesHandler {
-    pub(crate) fn new(rt: Arc<Runtime>) -> Self {
-        Self { rt }
+    pub(crate) fn new(fs: Arc<RemoteFs>, mount_point: std::path::PathBuf) -> Self {
+        Self { fs, mount_point }
+    }
+
+    /// Converts a Cloud Filter absolute path to a relative path within the
+    /// remote filesystem. Returns `None` for the sync root itself (inode 1).
+    fn relative_path(&self, full_path: impl AsRef<Path>) -> Option<String> {
+        full_path
+            .as_ref()
+            .strip_prefix(&self.mount_point)
+            .ok()
+            .and_then(|rel| {
+                let s = rel.to_string_lossy();
+                if s.is_empty() {
+                    None // root directory
+                } else {
+                    Some(s.to_string())
+                }
+            })
     }
 }
 
-impl SyncFilter for CloudFilesHandler {
-    fn fetch_data(
+impl Filter for CloudFilesHandler {
+    async fn fetch_data(
         &self,
         request: Request,
         ticket: ticket::FetchData,
         info: info::FetchData,
     ) -> CResult<()> {
-        debug!("cloud_files: fetch_data for {:?}", request.path());
+        log::info!("cloud_files: fetch_data for {:?}", request.path());
 
-        let path = request.path().to_path_buf();
-        let path_str = path.to_string_lossy().to_string();
         let range = info.required_file_range();
         let offset = range.start;
-        let required_length = range.end - range.start;
+        let length = range.end - range.start;
 
-        let ticket = UnsafeSendable(ticket);
-        self.rt.spawn(move |fs| async move {
-            match fs.lookup(1, &path_str).await {
-                Ok(attr) => match fs
-                    .read(attr.ino, offset as u64, required_length as u32)
-                    .await
-                {
-                    Ok(data) => {
-                        if let Err(e) = ticket.write_at(&data, offset as u64) {
-                            debug!("cloud_files: write_at failed: {e}");
-                        }
-                    }
-                    Err(e) => debug!("cloud_files: read failed: {e}"),
-                },
-                Err(e) => debug!("cloud_files: lookup failed for fetch_data: {e}"),
+        let rel = self.relative_path(request.path());
+        let path_str = match &rel {
+            Some(s) => s.as_str(),
+            None => return Ok(()), // root dir, no file content
+        };
+
+        if let Ok(attr) = self.fs.lookup(1, path_str).await {
+            if let Ok(data) = self.fs.read(attr.ino, offset, length as u32).await {
+                if let Err(e) = ticket.write_at(&data, offset) {
+                    debug!("cloud_files: write_at failed: {e}");
+                }
             }
-        });
+        }
 
         Ok(())
     }
 
-    fn fetch_placeholders(
+    async fn fetch_placeholders(
         &self,
         request: Request,
         ticket: ticket::FetchPlaceholders,
         _info: info::FetchPlaceholders,
     ) -> CResult<()> {
-        debug!("cloud_files: fetch_placeholders for {:?}", request.path());
+        log::info!("cloud_files: fetch_placeholders for {:?}", request.path());
 
-        let path = request.path().to_path_buf();
-        let path_str = path.to_string_lossy().to_string();
-
-        let ticket = UnsafeSendable(ticket);
-        self.rt.spawn(move |fs| async move {
-            let ino = match path_str.as_str() {
-                "" | "." | "\\" => 1u64,
-                _ => match fs.lookup(1, &path_str).await {
-                    Ok(attr) => attr.ino,
-                    Err(e) => {
-                        debug!("cloud_files: lookup failed: {e}");
-                        return;
-                    }
-                },
-            };
-
-            match fs.readdir(ino).await {
-                Ok(entries) => {
-                    // Collect metadata with async calls first, then build
-                    // PlaceholderFile objects (which are !Send) without any
-                    // .await between creation and use.
-                    let mut metadata: Vec<(String, bool, u64)> = Vec::new();
-                    for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
-                        let is_dir = entry.file_type == FileType::Dir;
-                        let attr = fs.getattr(entry.ino).await;
-                        let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
-                        metadata.push((entry.name.clone(), is_dir, size));
-                    }
-
-                    let mut placeholders: Vec<PlaceholderFile> = metadata
-                        .iter()
-                        .map(|(name, is_dir, size)| {
-                            let mut p = PlaceholderFile::new(name).mark_in_sync();
-                            if *is_dir {
-                                p = p.metadata(Metadata::directory()).overwrite();
-                            } else {
-                                p = p.metadata(Metadata::file().size(*size));
-                            }
-                            p
-                        })
-                        .collect();
-
-                    if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
-                        debug!("cloud_files: pass_with_placeholder failed: {e}");
-                    }
+        let ino = match self.relative_path(request.path()) {
+            None => 1u64, // root directory
+            Some(ref path_str) => match self.fs.lookup(1, path_str).await {
+                Ok(attr) => attr.ino,
+                Err(e) => {
+                    debug!("cloud_files: lookup failed: {e}");
+                    return Ok(());
                 }
-                Err(e) => debug!("cloud_files: readdir failed: {e}"),
+            },
+        };
+
+        log::info!("cloud_files: readdir for ino={ino}");
+        match self.fs.readdir(ino).await {
+            Ok(entries) => {
+                log::info!("cloud_files: readdir returned {} entries", entries.len());
+                let mut placeholders: Vec<PlaceholderFile> = Vec::new();
+                for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
+                    let is_dir = entry.file_type == FileType::Dir;
+                    let attr = self.fs.getattr(entry.ino).await;
+                    let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
+                    log::info!("  placeholder: {} is_dir={} size={}", entry.name, is_dir, size);
+
+                    let mut p = PlaceholderFile::new(&entry.name).mark_in_sync();
+                    if is_dir {
+                        p = p.metadata(Metadata::directory()).overwrite();
+                    } else {
+                        p = p.metadata(Metadata::file().size(size));
+                    }
+                    placeholders.push(p);
+                }
+
+                log::info!("cloud_files: passing {} placeholders", placeholders.len());
+                if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
+                    log::error!("cloud_files: pass_with_placeholder failed: {e}");
+                }
             }
-        });
+            Err(e) => debug!("cloud_files: readdir failed: {e}"),
+        }
 
         Ok(())
     }
 
-    fn deleted(&self, request: Request, _info: info::Deleted) {
-        debug!("cloud_files: deleted {:?}", request.path());
+    async fn deleted(&self, request: Request, _info: info::Deleted) {
+        log::info!("cloud_files: deleted {:?}", request.path());
 
-        let path = request.path().to_path_buf();
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = match self.relative_path(request.path()) {
+            Some(s) => s,
+            None => return,
+        };
 
-        self.rt.spawn(move |fs| async move {
-            if let Ok(attr) = fs.lookup(1, &path_str).await {
-                if attr.kind == FileType::Dir {
-                    let _ = fs.rmdir(1, &path_str).await;
-                } else {
-                    let _ = fs.unlink(1, &path_str).await;
-                }
+        if let Ok(attr) = self.fs.lookup(1, &path_str).await {
+            if attr.kind == FileType::Dir {
+                let _ = self.fs.rmdir(1, &path_str).await;
+            } else {
+                let _ = self.fs.unlink(1, &path_str).await;
             }
-        });
+        }
     }
 
-    fn renamed(&self, request: Request, info: info::Renamed) {
-        let src = info.source_path().to_string_lossy().to_string();
-        let dst = request.path().to_string_lossy().to_string();
+    async fn renamed(&self, request: Request, info: info::Renamed) {
+        let src = self
+            .relative_path(&info.source_path())
+            .unwrap_or_default();
+        let dst = self.relative_path(request.path()).unwrap_or_default();
         debug!("cloud_files: renamed {src:?} -> {dst:?}");
 
-        self.rt.spawn(move |fs| async move {
-            if fs.lookup(1, &src).await.is_ok() {
-                let _ = fs.rename(1, &src, 1, &dst).await;
-            }
-        });
+        if !src.is_empty() && !dst.is_empty() && self.fs.lookup(1, &src).await.is_ok() {
+            let _ = self.fs.rename(1, &src, 1, &dst).await;
+        }
     }
 }
 
@@ -193,10 +181,18 @@ fn build_sync_root_id() -> io::Result<SyncRootId> {
 }
 
 /// Registers a sync root and starts the Cloud Filter session.
+///
+/// Uses `connect_async` with Tokio's `block_on` to bridge async callbacks
+/// to the Cloud Filter's synchronous callback threads. The futures run on
+/// the callback thread (no `Send` required), while the Tokio runtime
+/// handles the actual async I/O.
+/// Registers sync root, connects, and returns a guard that keeps the
+/// connection alive. Drop the guard to disconnect.
 pub(crate) fn mount(
-    rt: Arc<Runtime>,
+    handle: tokio::runtime::Handle,
+    fs: Arc<RemoteFs>,
     mount_point: &Path,
-) -> io::Result<Connection<CloudFilesHandler>> {
+) -> io::Result<Box<dyn std::any::Any + Send>> {
     let sync_root_id = build_sync_root_id()?;
 
     if !sync_root_id
@@ -217,11 +213,17 @@ pub(crate) fn mount(
             .map_err(|e| io::Error::other(format!("failed to register sync root: {e}")))?;
     }
 
-    let handler = CloudFilesHandler::new(rt);
+    let handler = CloudFilesHandler::new(fs, mount_point.to_path_buf());
 
-    Session::new()
-        .connect(mount_point, handler)
-        .map_err(|e| io::Error::other(format!("failed to connect sync root: {e}")))
+    let connection = Session::new()
+        .connect_async(mount_point, handler, move |future| {
+            log::info!("cloud_files: block_on callback invoked");
+            handle.block_on(future);
+            log::info!("cloud_files: block_on callback completed");
+        })
+        .map_err(|e| io::Error::other(format!("failed to connect sync root: {e}")))?;
+
+    Ok(Box::new(connection))
 }
 
 /// Unregisters the sync root. Call after dropping the session.
