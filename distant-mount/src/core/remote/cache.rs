@@ -133,6 +133,7 @@ pub struct CachedAttr {
 
 /// A single entry within a cached directory listing.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DirCacheEntry {
     pub name: String,
     pub ino: u64,

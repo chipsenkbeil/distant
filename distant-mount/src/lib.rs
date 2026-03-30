@@ -185,10 +185,6 @@ async fn mount_cloud_files(
 
     let guard = backend::windows_cloud_files::mount(handle.clone(), Arc::clone(&fs), &mount_point)?;
 
-    // Pre-populate root directory placeholders after connecting.
-    // Must happen after CfConnectSyncRoot, not inside callbacks.
-    backend::windows_cloud_files::pre_populate(&fs, &mount_point).await?;
-
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
         // Keep the connection guard alive until shutdown signal.

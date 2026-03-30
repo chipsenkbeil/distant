@@ -36,6 +36,7 @@ pub struct RemoteFs {
     watch_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+#[allow(dead_code)]
 impl RemoteFs {
     /// Creates a new `RemoteFs` connected to the given distant channel.
     ///

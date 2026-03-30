@@ -49,6 +49,13 @@ impl Cli {
         modules.push("distant_docker".to_string());
         #[cfg(feature = "host")]
         modules.push("distant_host".to_string());
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider"
+        ))]
+        modules.push("distant_mount".to_string());
         #[cfg(feature = "ssh")]
         modules.push("russh".to_string());
 
