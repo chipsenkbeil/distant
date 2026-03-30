@@ -121,10 +121,15 @@
   - CfExecute(ACK_RENAME) with status
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
-- [ ] **P4.3** New file creation (write-back)
-  - Directory watcher for new non-placeholder files
-  - Read content, create on remote, convert to placeholder
-  - Files: `distant-mount/src/backend/windows_cloud_files.rs`
+- [x] **P4.3** New file creation (write-back)
+  - ReadDirectoryChangesW watcher on dedicated OS thread
+  - Overlapped I/O with 500ms polling for clean shutdown
+  - Detects FILE_ACTION_ADDED, skips placeholders (REPARSE_POINT check)
+  - Uploads via ChannelExt::write_file, converts via CfConvertToPlaceholder
+  - MountGuard owns watcher lifecycle (stops before disconnect)
+  - Verified: `echo hello > test.txt` on VM → file appears on remote Mac
+  - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
+    `distant-mount/src/lib.rs`, `distant-mount/Cargo.toml`
 
 - [ ] **P4.4** File modification (write-back)
   - Detect modified hydrated files
@@ -141,10 +146,14 @@
   - Multiple daemon processes can mount different paths simultaneously
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
-- [ ] **P5.2** Mount status detection
-  - Enumerate distant sync roots for `mount-status` command
-  - Report: mount point, connection ID, sync state
-  - Files: `distant-mount/src/backend/windows_cloud_files.rs`, `src/cli/commands/client.rs`
+- [-] **P5.2** Mount status detection
+  - Cloud Files sync roots are registered at OS level but have no easy
+    enumeration API (would need registry scanning under
+    `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager`)
+  - mount-status for cloud files deferred — `--foreground` mounts are
+    visible via process list; daemon mounts have a separate issue
+    (daemon processes exit immediately on Windows — pre-existing infra bug)
+  - Files: `src/cli/commands/client.rs`
 
 - [x] **P5.3** Selective unmount
   - `distant unmount C:\path` calls `unmount_path()` → CfUnregisterSyncRoot
