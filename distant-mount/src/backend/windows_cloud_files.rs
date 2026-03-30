@@ -370,16 +370,28 @@ pub(crate) async fn pre_populate(fs: &core::RemoteFs, mount_point: &Path) -> io:
     Ok(())
 }
 
-/// Unregisters the sync root. Call after dropping the connection guard.
+/// Unregisters the sync root for the current mount (from global state).
+///
+/// # Errors
+///
+/// Returns an error if the mount point was never initialized or the sync
+/// root cannot be unregistered.
+pub fn unmount() -> io::Result<()> {
+    let mount_point = MOUNT_POINT.get().ok_or_else(|| {
+        io::Error::other("cloud_files: MOUNT_POINT not initialized, cannot unmount")
+    })?;
+    unmount_path(mount_point)
+}
+
+/// Unregisters the Cloud Files sync root at the given path.
+///
+/// Can be called without a prior `mount()` — useful for the CLI's
+/// `unmount` command to clean up stale sync roots.
 ///
 /// # Errors
 ///
 /// Returns an error if the sync root cannot be unregistered.
-pub(crate) fn unmount() -> io::Result<()> {
-    let mount_point = MOUNT_POINT.get().ok_or_else(|| {
-        io::Error::other("cloud_files: MOUNT_POINT not initialized, cannot unmount")
-    })?;
-
+pub fn unmount_path(mount_point: &Path) -> io::Result<()> {
     let sync_root_id = build_sync_root_id(mount_point);
     log::info!("cloud_files: unregistering sync root {sync_root_id:?}");
 

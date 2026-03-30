@@ -10,6 +10,12 @@ use tokio::runtime::Handle;
 pub use backend::MountBackend;
 pub use core::{CacheConfig, MountConfig, MountHandle};
 
+// Re-export Windows Cloud Files utilities for the binary crate.
+#[cfg(all(target_os = "windows", feature = "windows-cloud-files"))]
+pub mod windows_cloud_files {
+    pub use crate::backend::windows_cloud_files::{unmount, unmount_path};
+}
+
 // Re-export macOS utilities for the binary crate.
 #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
 pub mod macos {

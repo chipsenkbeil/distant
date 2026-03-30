@@ -690,6 +690,16 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     println!("Removed all distant FileProvider domains");
                 }
 
+                // Unregister Cloud Files sync roots on Windows.
+                #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
+                {
+                    if let Err(e) = distant_mount::windows_cloud_files::unmount() {
+                        eprintln!("Warning: failed to unregister Cloud Files sync root: {e}");
+                    } else {
+                        println!("Removed Cloud Files sync root");
+                    }
+                }
+
                 // Also unmount any NFS/FUSE volume mounts.
                 #[cfg(unix)]
                 {
@@ -738,7 +748,20 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         }
                         println!("Unmounted {}", path.display());
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(all(
+                        not(unix),
+                        feature = "mount-windows-cloud-files",
+                        target_os = "windows"
+                    ))]
+                    {
+                        distant_mount::windows_cloud_files::unmount_path(&path)
+                            .context("Failed to unregister Cloud Files sync root")?;
+                        println!("Unmounted {}", path.display());
+                    }
+                    #[cfg(not(any(
+                        unix,
+                        all(feature = "mount-windows-cloud-files", target_os = "windows")
+                    )))]
                     {
                         let _ = &path;
                         return Err(

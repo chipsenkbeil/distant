@@ -146,14 +146,17 @@
   - Report: mount point, connection ID, sync state
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`, `src/cli/commands/client.rs`
 
-- [ ] **P5.3** Selective unmount
-  - `distant unmount C:\path` disconnects + unregisters only that root
-  - Other mounts unaffected
-  - Files: `distant-mount/src/backend/windows_cloud_files.rs`, `src/cli/commands/client.rs`
+- [x] **P5.3** Selective unmount
+  - `distant unmount C:\path` calls `unmount_path()` → CfUnregisterSyncRoot
+  - Verified: "Unmounted C:\Users\senkwich\CloudMount"
+  - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
+    `distant-mount/src/lib.rs`, `src/cli/commands/client.rs`
 
-- [ ] **P5.4** Unmount all
-  - `distant unmount --all` enumerates and removes all distant sync roots
-  - Files: `distant-mount/src/backend/windows_cloud_files.rs`, `src/cli/commands/client.rs`
+- [-] **P5.4** Unmount all
+  - `distant unmount --all` calls `unmount()` (current process statics)
+  - Works when run from the mount process; warns from a different process
+  - Full fix needs sync root enumeration (not yet implemented)
+  - Files: `src/cli/commands/client.rs`
 
 ---
 
