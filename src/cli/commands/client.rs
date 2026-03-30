@@ -158,7 +158,11 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 println!("Mount process started (pid {pid})");
             }
         }
-        return Ok(());
+
+        // Exit immediately. The child.wait() background thread holds a
+        // process handle that blocks until the daemon exits (never, by
+        // design). Using std::process::exit avoids waiting for it.
+        std::process::exit(0);
     }
 
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;

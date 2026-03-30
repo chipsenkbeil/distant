@@ -186,7 +186,6 @@ async fn mount_cloud_files(
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("Windows Cloud Files backend requires a mount point"))?;
-    std::fs::create_dir_all(&mount_point)?;
 
     let watcher_channel = channel.clone();
     let fs = Arc::new(core::RemoteFs::init(channel, config).await?);

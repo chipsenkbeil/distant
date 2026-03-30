@@ -139,16 +139,15 @@ pub(crate) fn mount(
     // lives for the duration of this call.
     let _ = unsafe { CloudFilters::CfUnregisterSyncRoot(pcwstr) };
 
-    // Clean directory contents to remove stale reparse points left by a
-    // prior registration that may have been interrupted.
+    // Remove and recreate the mount directory to fully reset NTFS Cloud
+    // Filter metadata (reparse points, population state). Simply cleaning
+    // directory contents isn't enough — the DISABLE_ON_DEMAND_POPULATION
+    // flag persists in NTFS metadata and prevents FETCH_PLACEHOLDERS from
+    // firing on subsequent mounts.
     if mount_point.exists() {
-        if let Ok(entries) = std::fs::read_dir(mount_point) {
-            for entry in entries.flatten() {
-                let _ = std::fs::remove_dir_all(entry.path())
-                    .or_else(|_| std::fs::remove_file(entry.path()));
-            }
-        }
+        let _ = std::fs::remove_dir_all(mount_point);
     }
+    std::fs::create_dir_all(mount_point)?;
 
     let sync_root_id_bytes = sync_root_id.as_bytes();
     let provider_name = to_wide("distant");
