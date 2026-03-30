@@ -65,6 +65,7 @@ async fn mount_fuse(
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("FUSE backend requires a mount point"))?;
+    std::fs::create_dir_all(&mount_point)?;
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(handle, fs));
 
@@ -89,6 +90,7 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("NFS backend requires a mount point"))?;
+    std::fs::create_dir_all(&mount_point)?;
 
     let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
 
