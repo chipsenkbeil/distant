@@ -4,202 +4,220 @@
 //! Windows 10+ using the Cloud Filter API via the `cloud-filter` crate.
 //!
 //! Files appear as cloud placeholders in File Explorer and are hydrated
-//! on demand when accessed. Local modifications are detected and synced
-//! back to the remote server.
-//!
-//! # API surface note
-//!
-//! This module targets `cloud-filter` 0.0.6. The exact trait signatures and
-//! builder methods may need minor adjustment when first compiled on Windows,
-//! since the crate's API cannot be verified from macOS. All structural
-//! decisions (handler delegation to [`RemoteFs`], sync root lifecycle) are
-//! intentional and stable; only type-level details may shift.
+//! on demand when accessed.
 
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use cloud_filter::filter::{self, SyncFilter};
-use cloud_filter::placeholder::PlaceholderFile;
-use cloud_filter::request::Request;
+use cloud_filter::error::CResult;
+use cloud_filter::filter::info;
+use cloud_filter::filter::ticket;
+use cloud_filter::filter::{Request, SyncFilter};
+use cloud_filter::metadata::Metadata;
+use cloud_filter::placeholder_file::PlaceholderFile;
 use cloud_filter::root::{
-    HydrationPolicy, HydrationType, PopulationType, Registration, SecurityId, Session,
-    SyncRootIdBuilder,
+    Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
+    SyncRootInfo,
 };
-use cloud_filter::ticket::FetchData;
+use cloud_filter::utility::WriteAt;
 use log::debug;
 
 use distant_core::protocol::FileType;
 
-use crate::core::RemoteFs;
+use crate::core::Runtime;
+
+/// Wrapper for Cloud Filter ticket types that are thread-safe but `!Send`
+/// due to conservative defaults in the `cloud-filter` bindings.
+///
+/// The Cloud Filter API is documented as callable from arbitrary threads.
+struct UnsafeSendable<T>(T);
+unsafe impl<T> Send for UnsafeSendable<T> {}
+unsafe impl<T> Sync for UnsafeSendable<T> {}
+impl<T> std::ops::Deref for UnsafeSendable<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
 
 /// Handler implementing the Cloud Filter API's [`SyncFilter`] trait.
 ///
-/// Delegates all file system operations to the shared [`RemoteFs`] translation
-/// layer. Placeholder files are created lazily as directories are enumerated,
-/// and file contents are hydrated on demand when read by the user.
+/// Delegates all filesystem operations to [`RemoteFs`] via the [`Runtime`]
+/// async-to-sync bridge (same pattern as the FUSE backend).
 pub(crate) struct CloudFilesHandler {
-    fs: Arc<RemoteFs>,
+    rt: Arc<Runtime>,
 }
 
 impl CloudFilesHandler {
-    pub(crate) fn new(fs: Arc<RemoteFs>) -> Self {
-        Self { fs }
+    pub(crate) fn new(rt: Arc<Runtime>) -> Self {
+        Self { rt }
     }
 }
 
 impl SyncFilter for CloudFilesHandler {
-    fn fetch_data(&self, request: &Request, ticket: &FetchData, info: &filter::info::FetchData) {
+    fn fetch_data(
+        &self,
+        request: Request,
+        ticket: ticket::FetchData,
+        info: info::FetchData,
+    ) -> CResult<()> {
         debug!("cloud_files: fetch_data for {:?}", request.path());
 
-        let path = request.path();
-        let path_str = path.to_string_lossy();
+        let path = request.path().to_path_buf();
+        let path_str = path.to_string_lossy().to_string();
+        let range = info.required_file_range();
+        let offset = range.start;
+        let required_length = range.end - range.start;
 
-        let required_length = info.required_file_range().length;
-        let offset = info.required_file_range().offset;
-
-        match self.fs.lookup(1, &path_str) {
-            Ok(attr) => match self
-                .fs
-                .read(attr.ino, offset as u64, required_length as u32)
-            {
-                Ok(data) => {
-                    if let Err(e) = ticket.write_at(&data, offset as u64) {
-                        debug!("cloud_files: write_at failed: {e}");
+        let ticket = UnsafeSendable(ticket);
+        self.rt.spawn(move |fs| async move {
+            match fs.lookup(1, &path_str).await {
+                Ok(attr) => match fs
+                    .read(attr.ino, offset as u64, required_length as u32)
+                    .await
+                {
+                    Ok(data) => {
+                        if let Err(e) = ticket.write_at(&data, offset as u64) {
+                            debug!("cloud_files: write_at failed: {e}");
+                        }
                     }
-                }
-                Err(e) => {
-                    debug!("cloud_files: read failed: {e}");
-                }
-            },
-            Err(e) => {
-                debug!("cloud_files: lookup failed for fetch_data: {e}");
+                    Err(e) => debug!("cloud_files: read failed: {e}"),
+                },
+                Err(e) => debug!("cloud_files: lookup failed for fetch_data: {e}"),
             }
-        }
+        });
+
+        Ok(())
     }
 
     fn fetch_placeholders(
         &self,
-        request: &Request,
-        ticket: &cloud_filter::ticket::FetchPlaceholders,
-        _info: &filter::info::FetchPlaceholders,
-    ) {
+        request: Request,
+        ticket: ticket::FetchPlaceholders,
+        _info: info::FetchPlaceholders,
+    ) -> CResult<()> {
         debug!("cloud_files: fetch_placeholders for {:?}", request.path());
 
-        let path = request.path();
-        let path_str = path.to_string_lossy();
+        let path = request.path().to_path_buf();
+        let path_str = path.to_string_lossy().to_string();
 
-        let ino = match path_str.as_ref() {
-            "" | "." | "\\" => 1u64,
-            _ => match self.fs.lookup(1, &path_str) {
-                Ok(attr) => attr.ino,
-                Err(e) => {
-                    debug!("cloud_files: lookup failed: {e}");
-                    return;
-                }
-            },
-        };
+        let ticket = UnsafeSendable(ticket);
+        self.rt.spawn(move |fs| async move {
+            let ino = match path_str.as_str() {
+                "" | "." | "\\" => 1u64,
+                _ => match fs.lookup(1, &path_str).await {
+                    Ok(attr) => attr.ino,
+                    Err(e) => {
+                        debug!("cloud_files: lookup failed: {e}");
+                        return;
+                    }
+                },
+            };
 
-        match self.fs.readdir(ino) {
-            Ok(entries) => {
-                let placeholders: Vec<PlaceholderFile> = entries
-                    .iter()
-                    .filter(|e| e.name != "." && e.name != "..")
-                    .filter_map(|entry| {
+            match fs.readdir(ino).await {
+                Ok(entries) => {
+                    // Collect metadata with async calls first, then build
+                    // PlaceholderFile objects (which are !Send) without any
+                    // .await between creation and use.
+                    let mut metadata: Vec<(String, bool, u64)> = Vec::new();
+                    for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
                         let is_dir = entry.file_type == FileType::Dir;
-                        let _attr = self.fs.getattr(entry.ino).ok()?;
+                        let attr = fs.getattr(entry.ino).await;
+                        let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
+                        metadata.push((entry.name.clone(), is_dir, size));
+                    }
 
-                        let mut placeholder = PlaceholderFile::new(&entry.name).mark_in_sync();
+                    let mut placeholders: Vec<PlaceholderFile> = metadata
+                        .iter()
+                        .map(|(name, is_dir, size)| {
+                            let mut p = PlaceholderFile::new(name).mark_in_sync();
+                            if *is_dir {
+                                p = p.metadata(Metadata::directory()).overwrite();
+                            } else {
+                                p = p.metadata(Metadata::file().size(*size));
+                            }
+                            p
+                        })
+                        .collect();
 
-                        if is_dir {
-                            placeholder = placeholder.overwrite();
-                        }
-
-                        Some(placeholder)
-                    })
-                    .collect();
-
-                if let Err(e) = ticket.pass_with_placeholders(placeholders) {
-                    debug!("cloud_files: pass_with_placeholders failed: {e}");
+                    if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
+                        debug!("cloud_files: pass_with_placeholder failed: {e}");
+                    }
                 }
+                Err(e) => debug!("cloud_files: readdir failed: {e}"),
             }
-            Err(e) => {
-                debug!("cloud_files: readdir failed: {e}");
-            }
-        }
+        });
+
+        Ok(())
     }
 
-    fn deleted(&self, request: &Request, _info: &filter::info::Deleted) {
+    fn deleted(&self, request: Request, _info: info::Deleted) {
         debug!("cloud_files: deleted {:?}", request.path());
 
-        let path = request.path();
-        let path_str = path.to_string_lossy();
+        let path = request.path().to_path_buf();
+        let path_str = path.to_string_lossy().to_string();
 
-        if let Ok(attr) = self.fs.lookup(1, &path_str) {
-            if attr.kind == FileType::Dir {
-                let _ = self.fs.rmdir(1, &path_str);
-            } else {
-                let _ = self.fs.unlink(1, &path_str);
+        self.rt.spawn(move |fs| async move {
+            if let Ok(attr) = fs.lookup(1, &path_str).await {
+                if attr.kind == FileType::Dir {
+                    let _ = fs.rmdir(1, &path_str).await;
+                } else {
+                    let _ = fs.unlink(1, &path_str).await;
+                }
             }
-        }
+        });
     }
 
-    fn renamed(
-        &self,
-        request: &Request,
-        _ticket: &cloud_filter::ticket::Rename,
-        info: &filter::info::Renamed,
-    ) {
-        debug!(
-            "cloud_files: renamed {:?} -> {:?}",
-            request.path(),
-            info.target_path()
-        );
+    fn renamed(&self, request: Request, info: info::Renamed) {
+        let src = info.source_path().to_string_lossy().to_string();
+        let dst = request.path().to_string_lossy().to_string();
+        debug!("cloud_files: renamed {src:?} -> {dst:?}");
 
-        let src = request.path().to_string_lossy();
-        let dst = info.target_path().to_string_lossy();
-
-        if self.fs.lookup(1, &src).is_ok() {
-            let _ = self.fs.rename(1, &src, 1, &dst);
-        }
+        self.rt.spawn(move |fs| async move {
+            if fs.lookup(1, &src).await.is_ok() {
+                let _ = fs.rename(1, &src, 1, &dst).await;
+            }
+        });
     }
 }
 
-/// Registers a sync root and starts the Cloud Filter session.
-///
-/// The `mount_point` directory must already exist. It will be registered as
-/// a Cloud Files sync root with the display name "distant".
-///
-/// # Errors
-///
-/// Returns an error if the current user SID cannot be obtained, the sync root
-/// registration fails, or the session connection fails.
-pub(crate) fn mount(fs: Arc<RemoteFs>, mount_point: &Path) -> io::Result<Session> {
-    let sync_root_id = SyncRootIdBuilder::new("distant")
+/// Builds the sync root ID for distant.
+fn build_sync_root_id() -> io::Result<SyncRootId> {
+    Ok(SyncRootIdBuilder::new("distant")
         .user_security_id(
             SecurityId::current_user()
                 .map_err(|e| io::Error::other(format!("failed to get current user SID: {e}")))?,
         )
-        .build();
+        .build())
+}
+
+/// Registers a sync root and starts the Cloud Filter session.
+pub(crate) fn mount(
+    rt: Arc<Runtime>,
+    mount_point: &Path,
+) -> io::Result<Connection<CloudFilesHandler>> {
+    let sync_root_id = build_sync_root_id()?;
 
     if !sync_root_id
         .is_registered()
         .map_err(|e| io::Error::other(format!("failed to check registration: {e}")))?
     {
-        Registration::from_path(mount_point)
-            .map_err(|e| io::Error::other(format!("failed to create registration: {e}")))?
-            .display_name("distant - Remote Filesystem")
-            .hydration_type(HydrationType::Full)
-            .hydration_policy(HydrationPolicy::Full)
-            .population_type(PopulationType::Full)
-            .icon("%SystemRoot%\\system32\\imageres.dll,197")
-            .version("0.21.0")
-            .recycle_bin_uri("https://github.com/chipsenkbeil/distant")
-            .register(&sync_root_id)
+        let mut info = SyncRootInfo::default();
+        info.set_display_name("distant - Remote Filesystem");
+        info.set_hydration_type(HydrationType::Full);
+        info.set_population_type(PopulationType::Full);
+        info.set_icon("%SystemRoot%\\system32\\imageres.dll,197");
+        info.set_version("0.21.0");
+        let _ = info.set_path(mount_point);
+        let _ = info.set_recycle_bin_uri("https://github.com/chipsenkbeil/distant");
+
+        sync_root_id
+            .register(info)
             .map_err(|e| io::Error::other(format!("failed to register sync root: {e}")))?;
     }
 
-    let handler = CloudFilesHandler::new(fs);
+    let handler = CloudFilesHandler::new(rt);
 
     Session::new()
         .connect(mount_point, handler)
@@ -207,18 +225,8 @@ pub(crate) fn mount(fs: Arc<RemoteFs>, mount_point: &Path) -> io::Result<Session
 }
 
 /// Unregisters the sync root. Call after dropping the session.
-///
-/// # Errors
-///
-/// Returns an error if the current user SID cannot be obtained or the
-/// unregistration call fails.
 pub(crate) fn unmount() -> io::Result<()> {
-    let sync_root_id = SyncRootIdBuilder::new("distant")
-        .user_security_id(
-            SecurityId::current_user()
-                .map_err(|e| io::Error::other(format!("failed to get current user SID: {e}")))?,
-        )
-        .build();
+    let sync_root_id = build_sync_root_id()?;
 
     if sync_root_id
         .is_registered()

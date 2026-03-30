@@ -595,6 +595,7 @@ impl RemoteFs {
     /// # Errors
     ///
     /// Returns an error if the flush fails.
+    #[allow(dead_code)]
     pub async fn fsync(&self, ino: u64) -> io::Result<()> {
         self.flush(ino).await
     }
@@ -607,6 +608,7 @@ impl RemoteFs {
     /// # Errors
     ///
     /// Returns an error if the flush fails.
+    #[allow(dead_code)]
     pub async fn release(&self, ino: u64) -> io::Result<()> {
         debug!("release ino={}", ino);
 
@@ -623,6 +625,7 @@ impl RemoteFs {
     /// Called by the kernel to indicate that `nlookup` references to this
     /// inode have been released. When the reference count reaches zero the
     /// inode becomes eligible for eviction from the inode table.
+    #[allow(dead_code)]
     pub async fn forget(&self, ino: u64, nlookup: u64) {
         debug!("forget ino={} nlookup={}", ino, nlookup);
 

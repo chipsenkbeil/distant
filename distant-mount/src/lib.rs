@@ -46,7 +46,7 @@ pub async fn mount(
         #[cfg(feature = "nfs")]
         MountBackend::Nfs => mount_nfs(channel, config).await,
         #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
-        MountBackend::WindowsCloudFiles => mount_cloud_files(channel, config).await,
+        MountBackend::WindowsCloudFiles => mount_cloud_files(handle, channel, config).await,
         #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
         MountBackend::MacosFileProvider => mount_file_provider(handle, channel, config).await,
     }
@@ -120,15 +120,20 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
 }
 
 /// Best-effort unmount of a filesystem path via OS utilities.
-#[cfg(all(unix, feature = "nfs"))]
+#[cfg(feature = "nfs")]
 fn unmount_path(path: &std::path::Path) {
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("diskutil")
         .args(["unmount", path.to_str().unwrap_or("")])
         .output();
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let result = std::process::Command::new("umount").arg(path).output();
+
+    #[cfg(windows)]
+    let result = std::process::Command::new("cmd")
+        .args(["/c", "net", "use", path.to_str().unwrap_or(""), "/delete"])
+        .output();
 
     match result {
         Ok(output) if output.status.success() => {
@@ -166,19 +171,25 @@ async fn mount_file_provider(
 }
 
 #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
-async fn mount_cloud_files(channel: Channel, config: MountConfig) -> io::Result<MountHandle> {
+async fn mount_cloud_files(
+    handle: Handle,
+    channel: Channel,
+    config: MountConfig,
+) -> io::Result<MountHandle> {
     let mount_point = config
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("Windows Cloud Files backend requires a mount point"))?;
-    let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
+    std::fs::create_dir_all(&mount_point)?;
+    let fs = core::RemoteFs::init(channel, config).await?;
+    let rt = Arc::new(core::Runtime::with_fs(handle, fs));
 
-    let session = backend::windows_cloud_files::mount(fs, &mount_point)?;
+    let connection = backend::windows_cloud_files::mount(rt, &mount_point)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
-        // Keep the Session alive until shutdown signal.
-        let _session = session;
+        // Keep the Connection alive until shutdown signal.
+        let _connection = connection;
         let _ = shutdown_rx.await;
         // Unregister sync root on shutdown.
         let _ = backend::windows_cloud_files::unmount();

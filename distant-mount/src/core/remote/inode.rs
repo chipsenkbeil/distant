@@ -137,6 +137,7 @@ impl InodeTable {
     /// configured capacity.
     ///
     /// The reference count is clamped to zero (it will never underflow).
+    #[allow(dead_code)]
     pub fn dec_ref(&mut self, ino: u64, count: u64) {
         if let Some(entry) = self.by_ino.get_mut(&ino) {
             entry.refcount = entry.refcount.saturating_sub(count);

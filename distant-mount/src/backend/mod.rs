@@ -76,7 +76,7 @@ impl MountBackend {
             #[cfg(feature = "nfs")]
             Self::Nfs => true,
             #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
-            Self::WindowsCloudFiles => false,
+            Self::WindowsCloudFiles => true,
             #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
             Self::MacosFileProvider => false,
         }

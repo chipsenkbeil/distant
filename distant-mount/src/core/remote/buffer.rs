@@ -143,6 +143,7 @@ impl WriteBuffers {
     }
 
     /// Removes and returns the buffer for `ino`, if one exists.
+    #[allow(dead_code)]
     pub fn remove(&mut self, ino: u64) -> Option<WriteBuffer> {
         self.buffers.remove(&ino)
     }
