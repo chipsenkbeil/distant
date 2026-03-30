@@ -61,6 +61,7 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         foreground: false,
         ref backend,
         ref mount_point,
+        ref network,
         ..
     } = cmd
         && backend.needs_foreground_process()
@@ -71,8 +72,17 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .with_context(|| format!("Failed to create mount point {}", mp.display()))?;
         }
         use std::ffi::OsString;
-        let pid =
-            crate::cli::Spawner::spawn_running_background(vec![OsString::from("--foreground")])?;
+        let mut extra = vec![OsString::from("--foreground")];
+        // Pass the resolved socket path to the child so it connects to
+        // the correct manager (critical when running via sudo, where the
+        // App Group container path resolves differently for root).
+        #[cfg(unix)]
+        if network.unix_socket.is_none() {
+            let socket = crate::constants::user::UNIX_SOCKET_PATH.as_os_str();
+            extra.push(OsString::from("--unix-socket"));
+            extra.push(socket.to_owned());
+        }
+        let pid = crate::cli::Spawner::spawn_running_background(extra)?;
         debug!("Daemonized mount process (pid {pid})");
         return Ok(());
     }

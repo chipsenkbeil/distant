@@ -94,10 +94,9 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
 
     let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
 
-    // Start a local server that exposes the filesystem via NFS, which
-    // we will then connect to with our client implementation.
+    // Start the NFS server and begin accepting connections BEFORE
+    // calling mount_nfs, otherwise mount_nfs gets "Connection refused".
     let (listener, port) = backend::nfs::start_server(fs).await?;
-    backend::nfs::os_mount(port, &mount_point)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mp = mount_point.clone();
@@ -106,10 +105,15 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
             result = listener.handle_forever() => result,
             _ = shutdown_rx => Ok(()),
         };
-        // Unmount the NFS volume before exiting so it doesn't become stale.
         unmount_path(&mp);
         result
     });
+
+    // Mount now that the NFS server is accepting connections.
+    if let Err(e) = backend::nfs::os_mount(port, &mount_point) {
+        let _ = shutdown_tx.send(());
+        return Err(e);
+    }
 
     Ok(MountHandle::new(shutdown_tx, join_handle))
 }
