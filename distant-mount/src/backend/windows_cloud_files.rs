@@ -112,22 +112,35 @@ impl Filter for CloudFilesHandler {
         log::info!("cloud_files: readdir for ino={ino}");
         match self.fs.readdir(ino).await {
             Ok(entries) => {
-                log::info!("cloud_files: readdir returned {} entries", entries.len());
-                let mut placeholders: Vec<PlaceholderFile> = Vec::new();
-                for entry in entries.iter().filter(|e| e.name != "." && e.name != "..") {
-                    let is_dir = entry.file_type == FileType::Dir;
-                    let attr = self.fs.getattr(entry.ino).await;
-                    let size = attr.as_ref().map(|a| a.size).unwrap_or(0);
-                    log::info!("  placeholder: {} is_dir={} size={}", entry.name, is_dir, size);
+                let filtered: Vec<_> = entries
+                    .iter()
+                    .filter(|e| e.name != "." && e.name != "..")
+                    .collect();
+                log::info!(
+                    "cloud_files: readdir returned {} entries ({} after filter)",
+                    entries.len(),
+                    filtered.len(),
+                );
 
-                    let mut p = PlaceholderFile::new(&entry.name).mark_in_sync();
-                    if is_dir {
-                        p = p.metadata(Metadata::directory()).overwrite();
-                    } else {
-                        p = p.metadata(Metadata::file().size(size));
-                    }
-                    placeholders.push(p);
-                }
+                // Build placeholders from readdir info only (no per-file
+                // getattr calls). Size is set to 0 — the actual size is
+                // fetched when the file is hydrated via fetch_data.
+                // This avoids timeout from slow per-entry round trips.
+                let mut placeholders: Vec<PlaceholderFile> = filtered
+                    .iter()
+                    .map(|entry| {
+                        let is_dir = entry.file_type == FileType::Dir;
+                        let meta = if is_dir {
+                            Metadata::directory()
+                        } else {
+                            Metadata::file()
+                        };
+                        PlaceholderFile::new(&entry.name)
+                            .metadata(meta)
+                            .overwrite()
+                            .mark_in_sync()
+                    })
+                    .collect();
 
                 log::info!("cloud_files: passing {} placeholders", placeholders.len());
                 if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
@@ -195,9 +208,16 @@ pub(crate) fn mount(
 ) -> io::Result<Box<dyn std::any::Any + Send>> {
     let sync_root_id = build_sync_root_id()?;
 
-    if !sync_root_id
+    // Always unregister first to clear stale state from previous mounts.
+    // Without this, pass_with_placeholder fails with 0x8007017C.
+    if sync_root_id
         .is_registered()
         .map_err(|e| io::Error::other(format!("failed to check registration: {e}")))?
+    {
+        log::info!("cloud_files: unregistering stale sync root");
+        let _ = sync_root_id.unregister();
+    }
+
     {
         let mut info = SyncRootInfo::default();
         info.set_display_name("distant - Remote Filesystem");
