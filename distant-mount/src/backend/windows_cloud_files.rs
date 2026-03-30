@@ -23,6 +23,8 @@ use cloud_filter::root::{
 use cloud_filter::utility::WriteAt;
 use log::debug;
 
+use windows::Win32::Storage::CloudFilters as CF;
+
 use distant_core::protocol::FileType;
 
 use crate::core::RemoteFs;
@@ -93,7 +95,7 @@ impl Filter for CloudFilesHandler {
     async fn fetch_placeholders(
         &self,
         request: Request,
-        ticket: ticket::FetchPlaceholders,
+        _ticket: ticket::FetchPlaceholders,
         _info: info::FetchPlaceholders,
     ) -> CResult<()> {
         log::info!("cloud_files: fetch_placeholders for {:?}", request.path());
@@ -137,14 +139,21 @@ impl Filter for CloudFilesHandler {
                         };
                         PlaceholderFile::new(&entry.name)
                             .metadata(meta)
-                            .overwrite()
                             .mark_in_sync()
                     })
                     .collect();
 
-                log::info!("cloud_files: passing {} placeholders", placeholders.len());
-                if let Err(e) = ticket.pass_with_placeholder(&mut placeholders) {
-                    log::error!("cloud_files: pass_with_placeholder failed: {e}");
+                // Use CfCreatePlaceholders with a directory handle instead of
+                // CfExecute/TRANSFER_PLACEHOLDERS. The Gemini/MS docs indicate
+                // CfCreatePlaceholders is the correct API for population.
+                use cloud_filter::placeholder_file::BatchCreate;
+                let parent_path = match self.relative_path(request.path()) {
+                    None => self.mount_point.clone(),
+                    Some(ref rel) => self.mount_point.join(rel),
+                };
+                log::info!("cloud_files: creating placeholders in {:?}", parent_path);
+                if let Err(e) = placeholders.create(&parent_path) {
+                    log::error!("cloud_files: CfCreatePlaceholders failed: {e}");
                 }
             }
             Err(e) => debug!("cloud_files: readdir failed: {e}"),
@@ -184,6 +193,62 @@ impl Filter for CloudFilesHandler {
 }
 
 /// Builds the sync root ID for distant.
+/// Calls `CfExecute` with `CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS` directly,
+/// using `FLAG_NONE` instead of the cloud-filter crate's unconditional
+/// `DISABLE_ON_DEMAND_POPULATION` flag.
+///
+/// The `FetchPlaceholders` ticket stores `{ connection_key: i64, transfer_key: i64 }`
+/// as its only fields. We extract them via unsafe cast since the fields are
+/// `pub(crate)` in the cloud-filter crate.
+#[allow(dead_code)]
+fn transfer_placeholders(
+    ticket: &ticket::FetchPlaceholders,
+    placeholders: &mut [PlaceholderFile],
+) -> windows::core::Result<()> {
+    // SAFETY: FetchPlaceholders is repr(Rust) with two i64 fields.
+    // This matches the struct layout { connection_key: i64, transfer_key: i64 }.
+    let keys: &[i64; 2] = unsafe { &*(ticket as *const _ as *const [i64; 2]) };
+    let connection_key = keys[0];
+    let transfer_key = keys[1];
+
+    let op_info = CF::CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF::CF_OPERATION_INFO>() as u32,
+        Type: CF::CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+        ConnectionKey: CF::CF_CONNECTION_KEY(connection_key),
+        TransferKey: transfer_key,
+        CorrelationVector: std::ptr::null(),
+        SyncStatus: std::ptr::null(),
+        RequestKey: CF::CF_REQUEST_KEY_DEFAULT as i64,
+    };
+
+    let params = CF::CF_OPERATION_PARAMETERS {
+        ParamSize: (std::mem::size_of::<CF::CF_OPERATION_PARAMETERS_0_7>()
+            + std::mem::offset_of!(CF::CF_OPERATION_PARAMETERS, Anonymous))
+            as u32,
+        Anonymous: CF::CF_OPERATION_PARAMETERS_0 {
+            TransferPlaceholders: CF::CF_OPERATION_PARAMETERS_0_7 {
+                Flags: CF::CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_NONE,
+                CompletionStatus: windows::Win32::Foundation::STATUS_SUCCESS,
+                PlaceholderTotalCount: placeholders.len() as i64,
+                PlaceholderArray: if placeholders.is_empty() {
+                    std::ptr::null_mut()
+                } else {
+                    placeholders.as_ptr() as *mut _
+                },
+                PlaceholderCount: placeholders.len() as u32,
+                EntriesProcessed: 0,
+            },
+        },
+    };
+
+    unsafe {
+        CF::CfExecute(
+            &op_info as *const _,
+            &params as *const _ as *mut _,
+        )
+    }
+}
+
 fn build_sync_root_id() -> io::Result<SyncRootId> {
     Ok(SyncRootIdBuilder::new("distant")
         .user_security_id(
@@ -208,14 +273,26 @@ pub(crate) fn mount(
 ) -> io::Result<Box<dyn std::any::Any + Send>> {
     let sync_root_id = build_sync_root_id()?;
 
-    // Always unregister first to clear stale state from previous mounts.
-    // Without this, pass_with_placeholder fails with 0x8007017C.
+    // Unregister stale sync root and clean directory to avoid 0x8007017C.
+    // The Cloud Filter driver tracks per-directory population state via
+    // NTFS reparse points — stale entries cause TRANSFER_PLACEHOLDERS to
+    // fail with ERROR_CLOUD_FILE_INVALID_REQUEST.
     if sync_root_id
         .is_registered()
         .map_err(|e| io::Error::other(format!("failed to check registration: {e}")))?
     {
         log::info!("cloud_files: unregistering stale sync root");
         let _ = sync_root_id.unregister();
+    }
+
+    // Clean directory contents to remove stale reparse points.
+    if mount_point.exists() {
+        if let Ok(entries) = std::fs::read_dir(mount_point) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_dir_all(entry.path())
+                    .or_else(|_| std::fs::remove_file(entry.path()));
+            }
+        }
     }
 
     {

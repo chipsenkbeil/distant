@@ -9,7 +9,7 @@ license.workspace = true
 default = ["fuse", "nfs", "macos-file-provider"]
 fuse = ["dep:fuser", "dep:libc"]
 nfs = ["dep:nfsserve"]
-windows-cloud-files = ["dep:cloud-filter"]
+windows-cloud-files = ["dep:cloud-filter", "dep:windows"]
 macos-file-provider = ["dep:objc2", "dep:objc2-file-provider", "dep:objc2-foundation", "dep:objc2-uniform-type-identifiers", "dep:block2"]
 
 [dependencies]
@@ -49,6 +49,10 @@ block2 = { version = "0.6", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cloud-filter = { version = "0.0.6", optional = true }
+windows = { version = "0.58", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_CloudFilters",
+] }
 
 [lints]
 workspace = true
