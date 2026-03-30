@@ -17,11 +17,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use distant_core::protocol::FileType;
+use distant_core::{Channel, ChannelExt};
 use tokio::runtime::Handle;
 use typed_path::Utf8TypedPath;
-use windows::Win32::Foundation::NTSTATUS;
+use windows::Win32::Foundation::{self, NTSTATUS};
 use windows::Win32::Storage::CloudFilters;
 use windows::Win32::Storage::FileSystem;
+use windows::Win32::System::{IO, Threading};
 use windows::core::PCWSTR;
 
 use crate::core;
@@ -60,6 +62,13 @@ static MOUNT_POINT: OnceLock<PathBuf> = OnceLock::new();
 /// response to avoid `ERROR_ALREADY_EXISTS` (0x800700B7).
 static POPULATED_DIRS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
+/// Distant channel used by the directory watcher to upload new files.
+///
+/// Set once during [`mount`] from a clone of the channel before it is
+/// consumed by `RemoteFs::init`. The watcher thread calls
+/// `ChannelExt::write_file` through this channel.
+static CHANNEL: OnceLock<Channel> = OnceLock::new();
+
 /// Converts a `&str` to a null-terminated UTF-16 wide string.
 fn to_wide(s: &str) -> Vec<u16> {
     std::ffi::OsStr::new(s)
@@ -82,12 +91,14 @@ fn win_err_to_io(e: windows::core::Error) -> io::Error {
     io::Error::from_raw_os_error(e.code().0 as i32)
 }
 
-/// Registers a sync root, connects with Cloud Filter callbacks, and returns
-/// a guard that keeps the connection alive.
+/// Registers a sync root, connects with Cloud Filter callbacks, spawns a
+/// directory watcher for new-file detection, and returns a guard that keeps
+/// the connection alive.
 ///
-/// The returned `Box<dyn Any + Send>` holds a [`ConnectionGuard`] wrapping
-/// the `CF_CONNECTION_KEY`. When the guard is dropped, the sync root is
-/// disconnected via `CfDisconnectSyncRoot`.
+/// The returned `Box<dyn Any + Send>` holds a [`MountGuard`] wrapping the
+/// `CF_CONNECTION_KEY` and the watcher shutdown handle. When the guard is
+/// dropped, the watcher is stopped and the sync root is disconnected via
+/// `CfDisconnectSyncRoot`.
 ///
 /// # Errors
 ///
@@ -96,17 +107,21 @@ fn win_err_to_io(e: windows::core::Error) -> io::Error {
 pub(crate) fn mount(
     handle: Handle,
     fs: Arc<core::RemoteFs>,
+    channel: Channel,
     mount_point: &Path,
 ) -> io::Result<Box<dyn Any + Send>> {
     TOKIO_HANDLE
-        .set(handle)
+        .set(handle.clone())
         .map_err(|_| io::Error::other("TOKIO_HANDLE already initialized"))?;
     REMOTE_FS
-        .set(fs)
+        .set(Arc::clone(&fs))
         .map_err(|_| io::Error::other("REMOTE_FS already initialized"))?;
     MOUNT_POINT
         .set(mount_point.to_path_buf())
         .map_err(|_| io::Error::other("MOUNT_POINT already initialized"))?;
+    CHANNEL
+        .set(channel)
+        .map_err(|_| io::Error::other("CHANNEL already initialized"))?;
     let _ = POPULATED_DIRS.set(Mutex::new(HashSet::new()));
 
     let sync_root_id = build_sync_root_id(mount_point);
@@ -227,24 +242,43 @@ pub(crate) fn mount(
 
     log::info!("cloud_files: connected to sync root");
 
-    Ok(Box::new(ConnectionGuard { connection_key }))
+    let (watcher_thread, watcher_shutdown) =
+        spawn_watcher(handle, Arc::clone(&fs), mount_point.to_path_buf())?;
+
+    Ok(Box::new(MountGuard {
+        connection_key,
+        watcher_shutdown: Some(watcher_shutdown),
+        watcher_thread: Some(watcher_thread),
+    }))
 }
 
-/// Guard that disconnects the Cloud Filter sync root on drop.
+/// Guard that disconnects the Cloud Filter sync root and stops the
+/// directory watcher on drop.
 ///
-/// Holds the `CF_CONNECTION_KEY` returned by `CfConnectSyncRoot` and
-/// explicitly calls `CfDisconnectSyncRoot` when dropped to ensure
-/// clean teardown with logging.
-struct ConnectionGuard {
+/// Holds the `CF_CONNECTION_KEY` returned by `CfConnectSyncRoot`, the
+/// watcher shutdown sender, and the watcher thread handle. On drop, the
+/// watcher is signaled to stop, joined, and then the sync root is
+/// disconnected via `CfDisconnectSyncRoot`.
+struct MountGuard {
     connection_key: CloudFilters::CF_CONNECTION_KEY,
+    watcher_shutdown: Option<std::sync::mpsc::Sender<()>>,
+    watcher_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 // SAFETY: CF_CONNECTION_KEY wraps an i64 and has no thread affinity.
 // The Cloud Filter API allows disconnect from any thread.
-unsafe impl Send for ConnectionGuard {}
+// mpsc::Sender and JoinHandle are both Send.
+unsafe impl Send for MountGuard {}
 
-impl Drop for ConnectionGuard {
+impl Drop for MountGuard {
     fn drop(&mut self) {
+        if let Some(tx) = self.watcher_shutdown.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.watcher_thread.take() {
+            let _ = handle.join();
+        }
+
         log::info!("cloud_files: disconnecting sync root");
 
         // SAFETY: connection_key was obtained from a successful
@@ -252,6 +286,366 @@ impl Drop for ConnectionGuard {
         // the key is valid, which it is — we own it exclusively.
         unsafe {
             let _ = CloudFilters::CfDisconnectSyncRoot(self.connection_key);
+        }
+    }
+}
+
+/// Spawns a directory watcher thread that detects new non-placeholder files
+/// and syncs them to the remote server.
+///
+/// Returns a `JoinHandle` for the watcher thread and a channel sender to
+/// signal shutdown. The watcher uses `ReadDirectoryChangesW` with overlapped
+/// I/O so that it can periodically check for the shutdown signal.
+///
+/// # Errors
+///
+/// Returns an error if the directory handle or event object cannot be created.
+fn spawn_watcher(
+    handle: Handle,
+    fs: Arc<core::RemoteFs>,
+    mount_point: PathBuf,
+) -> io::Result<(std::thread::JoinHandle<()>, std::sync::mpsc::Sender<()>)> {
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+
+    let thread_handle = std::thread::Builder::new()
+        .name("cloud-files-watcher".into())
+        .spawn(move || {
+            if let Err(e) = run_watcher_loop(&handle, &fs, &mount_point, &shutdown_rx) {
+                log::error!("cloud_files: watcher thread exited with error: {e}");
+            } else {
+                log::info!("cloud_files: watcher thread exited cleanly");
+            }
+        })
+        .map_err(|e| io::Error::other(format!("failed to spawn watcher thread: {e}")))?;
+
+    Ok((thread_handle, shutdown_tx))
+}
+
+/// Main loop for the directory watcher thread.
+///
+/// Opens the mount point directory for overlapped change notification, then
+/// loops issuing `ReadDirectoryChangesW` calls. Each completed batch of
+/// notifications is scanned for `FILE_ACTION_ADDED` entries which are
+/// forwarded to [`handle_new_file`].
+fn run_watcher_loop(
+    handle: &Handle,
+    fs: &Arc<core::RemoteFs>,
+    mount_point: &Path,
+    shutdown_rx: &std::sync::mpsc::Receiver<()>,
+) -> io::Result<()> {
+    let wide_path = path_to_wide(mount_point);
+
+    // SAFETY: wide_path is a valid null-terminated wide string.
+    // FILE_LIST_DIRECTORY is required for ReadDirectoryChangesW.
+    // FILE_FLAG_BACKUP_SEMANTICS is required to open a directory handle.
+    // FILE_FLAG_OVERLAPPED enables asynchronous I/O.
+    let dir_handle = unsafe {
+        FileSystem::CreateFileW(
+            PCWSTR(wide_path.as_ptr()),
+            FileSystem::FILE_LIST_DIRECTORY.0,
+            FileSystem::FILE_SHARE_READ
+                | FileSystem::FILE_SHARE_WRITE
+                | FileSystem::FILE_SHARE_DELETE,
+            None,
+            FileSystem::OPEN_EXISTING,
+            FileSystem::FILE_FLAG_BACKUP_SEMANTICS | FileSystem::FILE_FLAG_OVERLAPPED,
+            None,
+        )
+        .map_err(win_err_to_io)?
+    };
+
+    // SAFETY: CreateEventW with all-null/false parameters creates an
+    // anonymous, auto-reset, initially-unsignaled event object.
+    let event =
+        unsafe { Threading::CreateEventW(None, false, false, None).map_err(win_err_to_io)? };
+
+    let mut buffer = vec![0u8; 8192];
+
+    log::info!("cloud_files: watcher started for {}", mount_point.display());
+
+    loop {
+        if shutdown_rx.try_recv().is_ok() {
+            break;
+        }
+
+        let mut overlapped: IO::OVERLAPPED = unsafe { mem::zeroed() };
+        overlapped.hEvent = event;
+
+        // SAFETY: dir_handle is a valid directory handle opened with
+        // FILE_LIST_DIRECTORY. buffer is a valid mutable byte slice.
+        // overlapped is a stack-allocated struct with a valid event handle.
+        // bWatchSubtree=true watches the entire subtree.
+        let rdcw_ok = unsafe {
+            FileSystem::ReadDirectoryChangesW(
+                dir_handle,
+                buffer.as_mut_ptr() as *mut c_void,
+                buffer.len() as u32,
+                true,
+                FileSystem::FILE_NOTIFY_CHANGE_FILE_NAME,
+                None,
+                Some(&mut overlapped as *mut IO::OVERLAPPED),
+                None,
+            )
+        };
+
+        if let Err(e) = rdcw_ok {
+            log::error!("cloud_files: ReadDirectoryChangesW failed: {e}");
+            break;
+        }
+
+        // Poll for completion with a 500ms timeout so we can check
+        // the shutdown channel between waits.
+        let bytes_transferred = loop {
+            if shutdown_rx.try_recv().is_ok() {
+                // SAFETY: dir_handle is valid and overlapped is the
+                // pending I/O operation to cancel.
+                unsafe {
+                    let _ = IO::CancelIoEx(dir_handle, Some(&overlapped));
+                }
+
+                // SAFETY: Closing valid OS handles obtained above.
+                unsafe {
+                    let _ = Foundation::CloseHandle(event);
+                    let _ = Foundation::CloseHandle(dir_handle);
+                }
+                return Ok(());
+            }
+
+            // SAFETY: event is a valid event handle from CreateEventW.
+            // A 500ms timeout avoids blocking the thread indefinitely.
+            let wait_result = unsafe { Threading::WaitForSingleObject(event, 500) };
+
+            if wait_result == Foundation::WAIT_OBJECT_0 {
+                let mut bytes_returned = 0u32;
+
+                // SAFETY: dir_handle and overlapped correspond to the
+                // pending ReadDirectoryChangesW call. bWait=false since
+                // the event is already signaled.
+                let result = unsafe {
+                    IO::GetOverlappedResult(dir_handle, &overlapped, &mut bytes_returned, false)
+                };
+
+                match result {
+                    Ok(()) => break bytes_returned,
+                    Err(e) => {
+                        log::error!("cloud_files: GetOverlappedResult failed: {e}");
+
+                        // SAFETY: Closing valid OS handles.
+                        unsafe {
+                            let _ = Foundation::CloseHandle(event);
+                            let _ = Foundation::CloseHandle(dir_handle);
+                        }
+                        return Err(win_err_to_io(e));
+                    }
+                }
+            }
+
+            // WAIT_TIMEOUT (0x102) — loop back and check shutdown again.
+        };
+
+        if bytes_transferred == 0 {
+            continue;
+        }
+
+        parse_notify_buffer(&buffer[..bytes_transferred as usize], |relative_path_str| {
+            handle_new_file(handle, fs, mount_point, relative_path_str);
+        });
+    }
+
+    // SAFETY: Closing valid OS handles obtained from CreateEventW
+    // and CreateFileW at the start of this function.
+    unsafe {
+        let _ = Foundation::CloseHandle(event);
+        let _ = Foundation::CloseHandle(dir_handle);
+    }
+
+    Ok(())
+}
+
+/// Parses a `FILE_NOTIFY_INFORMATION` linked list from a raw buffer.
+///
+/// Calls `callback` with the relative path (as a UTF-8 string with
+/// backslashes preserved) for each `FILE_ACTION_ADDED` entry in the buffer.
+fn parse_notify_buffer(buffer: &[u8], mut callback: impl FnMut(&str)) {
+    const FILE_ACTION_ADDED: u32 = 1;
+
+    let mut offset = 0usize;
+    loop {
+        if offset + 12 > buffer.len() {
+            break;
+        }
+
+        // SAFETY: We verified there are at least 12 bytes remaining for
+        // the fixed-size header fields (NextEntryOffset, Action,
+        // FileNameLength). All reads use unaligned accessors since
+        // FILE_NOTIFY_INFORMATION may not be naturally aligned in the
+        // buffer.
+        let next_entry_offset =
+            u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap_or([0; 4]));
+        let action =
+            u32::from_ne_bytes(buffer[offset + 4..offset + 8].try_into().unwrap_or([0; 4]));
+        let file_name_length =
+            u32::from_ne_bytes(buffer[offset + 8..offset + 12].try_into().unwrap_or([0; 4]));
+
+        if action == FILE_ACTION_ADDED {
+            let name_start = offset + 12;
+            let name_end = name_start + file_name_length as usize;
+            if name_end <= buffer.len() && file_name_length >= 2 {
+                let name_bytes = &buffer[name_start..name_end];
+
+                // FILE_NOTIFY_INFORMATION stores file names as UTF-16LE.
+                let wide: Vec<u16> = name_bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                let name = String::from_utf16_lossy(&wide);
+                callback(&name);
+            }
+        }
+
+        if next_entry_offset == 0 {
+            break;
+        }
+        offset += next_entry_offset as usize;
+    }
+}
+
+/// Handles a newly created file in the mount directory.
+///
+/// Reads the local file content, uploads it to the remote server via
+/// `ChannelExt::write_file`, and converts the local file to a Cloud Files
+/// placeholder so that subsequent access goes through the Cloud Filter
+/// callbacks.
+fn handle_new_file(
+    handle: &Handle,
+    fs: &Arc<core::RemoteFs>,
+    mount_point: &Path,
+    relative_path_str: &str,
+) {
+    let full_path = mount_point.join(relative_path_str);
+    let wide_full = path_to_wide(&full_path);
+
+    // SAFETY: GetFileAttributesW reads the attributes of a valid
+    // null-terminated wide path. INVALID_FILE_ATTRIBUTES (u32::MAX)
+    // indicates the call failed (e.g., the file was already removed).
+    let attrs = unsafe { FileSystem::GetFileAttributesW(PCWSTR(wide_full.as_ptr())) };
+    if attrs == u32::MAX {
+        log::debug!("cloud_files: watcher skipping {relative_path_str} — cannot read attributes");
+        return;
+    }
+
+    // Skip files that are already placeholders (reparse points).
+    if (attrs & FileSystem::FILE_ATTRIBUTE_REPARSE_POINT.0) != 0 {
+        return;
+    }
+
+    // Skip directories — the watcher only handles new files.
+    if (attrs & FileSystem::FILE_ATTRIBUTE_DIRECTORY.0) != 0 {
+        return;
+    }
+
+    let data = match std::fs::read(&full_path) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("cloud_files: watcher failed to read local file {relative_path_str}: {e}");
+            return;
+        }
+    };
+
+    let file_size = data.len() as i64;
+
+    // Build the full remote path by resolving the parent directory via
+    // the RemoteFs inode table and then appending the file name.
+    let remote_upload_result = handle.block_on(async {
+        let root_path = fs
+            .get_path(1)
+            .await
+            .ok_or_else(|| io::Error::other("root inode not found"))?;
+
+        // Convert backslashes to forward slashes for remote path.
+        let normalized_rel = relative_path_str.replace('\\', "/");
+        let root_str = root_path.as_str();
+        let remote_path = if root_str.ends_with('/') {
+            format!("{root_str}{normalized_rel}")
+        } else {
+            format!("{root_str}/{normalized_rel}")
+        };
+
+        let channel = CHANNEL
+            .get()
+            .ok_or_else(|| io::Error::other("CHANNEL not initialized"))?;
+        let mut ch = channel.clone();
+        ch.write_file(remote_path, data, Default::default()).await
+    });
+
+    if let Err(e) = remote_upload_result {
+        log::error!("cloud_files: watcher failed to upload {relative_path_str} to remote: {e}");
+        return;
+    }
+
+    log::info!("cloud_files: watcher uploaded {relative_path_str} to remote");
+
+    // Convert the local file to a placeholder so the Cloud Filter API
+    // manages it from now on. The file identity stores the relative path
+    // using forward slashes, consistent with placeholder creation in
+    // on_fetch_placeholders.
+    let identity = relative_path_str.replace('\\', "/");
+    let identity_bytes = identity.as_bytes();
+
+    // SAFETY: wide_full is a valid null-terminated wide string.
+    // FILE_WRITE_ATTRIBUTES is required for CfConvertToPlaceholder.
+    let file_handle = unsafe {
+        FileSystem::CreateFileW(
+            PCWSTR(wide_full.as_ptr()),
+            FileSystem::FILE_WRITE_ATTRIBUTES.0,
+            FileSystem::FILE_SHARE_READ,
+            None,
+            FileSystem::OPEN_EXISTING,
+            FileSystem::FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    };
+
+    let file_handle = match file_handle {
+        Ok(h) => h,
+        Err(e) => {
+            log::error!(
+                "cloud_files: watcher failed to open {relative_path_str} for conversion: {e}"
+            );
+            return;
+        }
+    };
+
+    // SAFETY: file_handle is a valid handle opened just above.
+    // identity_bytes points to valid memory for the duration of this call.
+    // CF_CONVERT_FLAG_MARK_IN_SYNC marks the placeholder as synced.
+    let convert_result = unsafe {
+        CloudFilters::CfConvertToPlaceholder(
+            file_handle,
+            Some(identity_bytes.as_ptr() as *const c_void),
+            identity_bytes.len() as u32,
+            CloudFilters::CF_CONVERT_FLAG_MARK_IN_SYNC,
+            None,
+            None,
+        )
+    };
+
+    // SAFETY: file_handle is a valid handle that we opened above.
+    unsafe {
+        let _ = Foundation::CloseHandle(file_handle);
+    }
+
+    match convert_result {
+        Ok(_usn) => {
+            log::info!(
+                "cloud_files: watcher converted {relative_path_str} to placeholder \
+                 (size={file_size})"
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "cloud_files: watcher failed to convert {relative_path_str} to placeholder: {e}"
+            );
         }
     }
 }
