@@ -731,13 +731,29 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     println!("Removed all distant FileProvider domains");
                 }
 
-                // Unregister Cloud Files sync roots on Windows.
+                // Terminate all Cloud Files mount daemon processes and
+                // unregister their sync roots.
                 #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
                 {
-                    if let Err(e) = distant_mount::windows_cloud_files::unmount() {
-                        eprintln!("Warning: failed to unregister Cloud Files sync root: {e}");
-                    } else {
-                        println!("Removed Cloud Files sync root");
+                    let mounts = detect_cloud_file_mounts();
+                    for (pid, mount_point) in &mounts {
+                        // Kill the daemon process — this triggers MountGuard::drop
+                        // which disconnects the sync root cleanly.
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/PID", &pid.to_string()])
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .status();
+
+                        // Give the process time to clean up, then unregister.
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let path = std::path::PathBuf::from(mount_point);
+                        let _ = distant_mount::windows_cloud_files::unmount_path(&path);
+                        println!("Unmounted {mount_point} (killed pid {pid})");
+                    }
+                    if mounts.is_empty() {
+                        // Try the in-process unmount as fallback.
+                        let _ = distant_mount::windows_cloud_files::unmount();
                     }
                 }
 

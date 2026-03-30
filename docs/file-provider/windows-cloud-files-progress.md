@@ -163,10 +163,11 @@
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
     `distant-mount/src/lib.rs`, `src/cli/commands/client.rs`
 
-- [-] **P5.4** Unmount all
-  - `distant unmount --all` calls `unmount()` (current process statics)
-  - Works when run from the mount process; warns from a different process
-  - Full fix needs sync root enumeration (not yet implemented)
+- [x] **P5.4** Unmount all
+  - `distant unmount --all` enumerates daemon processes via wmic,
+    kills each with taskkill, then unregisters the sync root
+  - Verified: "Unmounted C:\CloudMount (killed pid 2896)"
+  - `mount-status` after shows "No mounts found"
   - Files: `src/cli/commands/client.rs`
 
 ---
