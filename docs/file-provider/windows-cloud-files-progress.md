@@ -151,11 +151,10 @@
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
     `src/cli/commands/client.rs`
 
-- [-] **P5.2** Mount status detection
-  - Cloud Files sync roots are registered at OS level but have no easy
-    enumeration API (would need registry scanning under
-    `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager`)
-  - Deferred — daemon mode now works, mount-status would be nice but not critical
+- [x] **P5.2** Mount status detection
+  - Enumerates running `distant.exe mount --foreground` daemon processes via wmic
+  - Extracts PID and mount point from command line
+  - `distant mount-status` → `Cloud Files Mounts: C:\CloudMount (pid 7064)`
   - Files: `src/cli/commands/client.rs`
 
 - [x] **P5.3** Selective unmount

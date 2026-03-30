@@ -899,6 +899,37 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
             }
 
+            // Windows Cloud Files mounts: detect running daemon processes.
+            #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
+            {
+                let cloud_mounts = detect_cloud_file_mounts();
+                if !cloud_mounts.is_empty() {
+                    match format {
+                        Format::Shell => {
+                            println!("=== Cloud Files Mounts ===");
+                            for (pid, mount_point) in &cloud_mounts {
+                                println!("  {mount_point}  (pid {pid})");
+                            }
+                            println!();
+                        }
+                        Format::Json => {
+                            let entries: Vec<serde_json::Value> = cloud_mounts
+                                .iter()
+                                .map(|(pid, mp)| {
+                                    serde_json::json!({
+                                        "type": "cloud-files",
+                                        "mount_point": mp,
+                                        "pid": pid,
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
+                        }
+                    }
+                    has_output = true;
+                }
+            }
+
             if !has_output {
                 println!("No mounts found");
             }
@@ -2548,6 +2579,57 @@ fn detect_distant_volume_mounts() -> Vec<String> {
             line.split(" on ")
                 .nth(1)
                 .and_then(|rest| rest.split(" (").next().map(|p| p.to_string()))
+        })
+        .collect()
+}
+
+/// Detects running Cloud Files mount daemon processes by inspecting
+/// the command lines of all `distant.exe` processes. Returns a list of
+/// `(pid, mount_point)` pairs.
+#[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
+fn detect_cloud_file_mounts() -> Vec<(u32, String)> {
+    let output = match std::process::Command::new("wmic")
+        .args([
+            "process",
+            "where",
+            "name='distant.exe'",
+            "get",
+            "ProcessId,CommandLine",
+            "/format:csv",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    output
+        .lines()
+        .filter(|line| {
+            line.contains("mount")
+                && line.contains("windows-cloud-files")
+                && line.contains("--foreground")
+        })
+        .filter_map(|line| {
+            // CSV format: Node,CommandLine,ProcessId
+            let fields: Vec<&str> = line.split(',').collect();
+            if fields.len() < 3 {
+                return None;
+            }
+            let pid: u32 = fields.last()?.trim().parse().ok()?;
+            let cmd = fields[1..fields.len() - 1].join(",");
+
+            // Extract mount point: the last non-flag argument in the command
+            let args: Vec<&str> = cmd.split_whitespace().collect();
+            let mount_point = args
+                .iter()
+                .rev()
+                .find(|a| !a.starts_with('-') && !a.contains("distant"))?
+                .to_string();
+
+            Some((pid, mount_point))
         })
         .collect()
 }
