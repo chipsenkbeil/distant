@@ -100,14 +100,43 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
     backend::nfs::os_mount(port, &mount_point)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let mp = mount_point.clone();
     let join_handle = tokio::spawn(async move {
-        tokio::select! {
+        let result = tokio::select! {
             result = listener.handle_forever() => result,
             _ = shutdown_rx => Ok(()),
-        }
+        };
+        // Unmount the NFS volume before exiting so it doesn't become stale.
+        unmount_path(&mp);
+        result
     });
 
     Ok(MountHandle::new(shutdown_tx, join_handle))
+}
+
+/// Best-effort unmount of a filesystem path via OS utilities.
+#[cfg(all(unix, feature = "nfs"))]
+fn unmount_path(path: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("diskutil")
+        .args(["unmount", path.to_str().unwrap_or("")])
+        .output();
+
+    #[cfg(not(target_os = "macos"))]
+    let result = std::process::Command::new("umount").arg(path).output();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            log::debug!("unmounted {}", path.display());
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::warn!("unmount {} failed: {}", path.display(), stderr.trim());
+        }
+        Err(e) => {
+            log::warn!("unmount {} failed: {e}", path.display());
+        }
+    }
 }
 
 #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]

@@ -337,7 +337,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
         .status()?;
 
     #[cfg(target_os = "linux")]
-    let status = std::process::Command::new("mount")
+    let output = std::process::Command::new("mount")
         .args([
             "-t",
             "nfs",
@@ -346,17 +346,21 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
             "localhost:/",
             mount_point_str,
         ])
-        .status()?;
+        .output()?;
+    #[cfg(target_os = "linux")]
+    let status = output.status;
 
     #[cfg(target_os = "macos")]
-    let status = std::process::Command::new("mount_nfs")
+    let output = std::process::Command::new("mount_nfs")
         .args([
             "-o",
             &format!("port={port},mountport={port},nfsvers=3,tcp,nolocks"),
             "localhost:/",
             mount_point_str,
         ])
-        .status()?;
+        .output()?;
+    #[cfg(target_os = "macos")]
+    let status = output.status;
 
     #[cfg(target_os = "freebsd")]
     let status = std::process::Command::new("mount_nfs")
@@ -399,6 +403,17 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
     ));
 
     if !status.success() {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            return Err(io::Error::other(format!(
+                "mount command failed ({status}): {stderr}\n\
+                 Hint: NFS mount typically requires root. \
+                 Try: sudo distant mount --backend nfs ..."
+            )));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         return Err(io::Error::other(format!(
             "mount command failed with status {status}"
         )));
