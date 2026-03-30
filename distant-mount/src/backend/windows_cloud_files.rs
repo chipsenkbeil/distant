@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use distant_core::protocol::FileType;
 use tokio::runtime::Handle;
+use typed_path::Utf8TypedPath;
 use windows::Win32::Foundation::NTSTATUS;
 use windows::Win32::Storage::CloudFilters;
 use windows::Win32::Storage::FileSystem;
@@ -108,7 +109,7 @@ pub(crate) fn mount(
         .map_err(|_| io::Error::other("MOUNT_POINT already initialized"))?;
     let _ = POPULATED_DIRS.set(Mutex::new(HashSet::new()));
 
-    let sync_root_id = build_sync_root_id();
+    let sync_root_id = build_sync_root_id(mount_point);
     log::info!(
         "cloud_files: registering sync root {sync_root_id:?} at {}",
         mount_point.display()
@@ -375,12 +376,12 @@ pub(crate) async fn pre_populate(fs: &core::RemoteFs, mount_point: &Path) -> io:
 ///
 /// Returns an error if the sync root cannot be unregistered.
 pub(crate) fn unmount() -> io::Result<()> {
-    let sync_root_id = build_sync_root_id();
-    log::info!("cloud_files: unregistering sync root {sync_root_id:?}");
-
     let mount_point = MOUNT_POINT.get().ok_or_else(|| {
         io::Error::other("cloud_files: MOUNT_POINT not initialized, cannot unmount")
     })?;
+
+    let sync_root_id = build_sync_root_id(mount_point);
+    log::info!("cloud_files: unregistering sync root {sync_root_id:?}");
 
     let wide_path = path_to_wide(mount_point);
 
@@ -604,7 +605,7 @@ unsafe extern "system" fn on_fetch_placeholders(
         let identity = if rel_path.is_empty() {
             name.clone()
         } else {
-            format!("{rel_path}\\{name}")
+            format!("{rel_path}/{name}")
         };
         identity_strings.push(identity);
     }
@@ -655,50 +656,172 @@ unsafe extern "system" fn on_fetch_placeholders(
     }
 }
 
-/// Callback invoked when a placeholder file or directory is deleted locally.
-///
-/// Propagates the deletion to the remote filesystem.
+/// Callback invoked when a placeholder file or directory is about to be
+/// deleted locally. Propagates the deletion to the remote filesystem and
+/// responds with ACK_DELETE to allow or deny the operation.
 ///
 /// # Safety
 ///
 /// Called by the Windows Cloud Filter driver. `info` and `params` must be
 /// valid pointers to structures populated by the OS.
-#[allow(dead_code)]
 unsafe extern "system" fn on_notify_delete(
     info: *const CloudFilters::CF_CALLBACK_INFO,
-    _params: *const CloudFilters::CF_CALLBACK_PARAMETERS,
+    params: *const CloudFilters::CF_CALLBACK_PARAMETERS,
 ) {
-    if info.is_null() {
-        log::error!("cloud_files: on_notify_delete called with null info pointer");
+    if info.is_null() || params.is_null() {
+        log::error!("cloud_files: on_notify_delete called with null pointer");
         return;
     }
 
-    // SAFETY: info was checked non-null above.
+    // SAFETY: info and params were checked non-null above.
+    let info_ref = unsafe { &*info };
+    let params_ref = unsafe { &*params };
     let path = unsafe { normalized_path_from_info(info) };
-    log::debug!("cloud_files: on_notify_delete for {path}");
+    log::info!("cloud_files: on_notify_delete for {path}");
+
+    let handle = match TOKIO_HANDLE.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let fs = match REMOTE_FS.get() {
+        Some(f) => f,
+        None => return,
+    };
+
+    let file_identity = extract_file_identity(info_ref);
+
+    // SAFETY: This callback is NOTIFY_DELETE, so the Delete union variant
+    // is the active field per the Cloud Filter driver contract.
+    let is_directory = unsafe { params_ref.Anonymous.Delete.Flags }
+        & CloudFilters::CF_CALLBACK_DELETE_FLAG_IS_DIRECTORY
+        != CloudFilters::CF_CALLBACK_DELETE_FLAG_NONE;
+
+    let result = handle.block_on(async {
+        let (parent_path, name) = split_parent_name(&file_identity);
+        let parent_ino = if parent_path.is_empty() {
+            1u64
+        } else {
+            resolve_relative_path(fs, &parent_path).await?.ino
+        };
+        if is_directory {
+            fs.rmdir(parent_ino, &name).await
+        } else {
+            fs.unlink(parent_ino, &name).await
+        }
+    });
+
+    let completion_status = match result {
+        Ok(()) => {
+            log::info!("cloud_files: deleted remote {file_identity}");
+            NTSTATUS(0)
+        }
+        Err(e) => {
+            log::error!("cloud_files: remote delete failed for {file_identity}: {e}");
+            NTSTATUS(0xC0000001u32 as i32) // STATUS_UNSUCCESSFUL
+        }
+    };
+
+    ack_delete_response(info_ref, completion_status);
 }
 
-/// Callback invoked when a placeholder file or directory is renamed locally.
-///
-/// Propagates the rename to the remote filesystem.
+/// Callback invoked when a placeholder file or directory is about to be
+/// renamed or moved locally. Propagates the rename to the remote filesystem
+/// and responds with ACK_RENAME.
 ///
 /// # Safety
 ///
 /// Called by the Windows Cloud Filter driver. `info` and `params` must be
 /// valid pointers to structures populated by the OS.
-#[allow(dead_code)]
 unsafe extern "system" fn on_notify_rename(
     info: *const CloudFilters::CF_CALLBACK_INFO,
-    _params: *const CloudFilters::CF_CALLBACK_PARAMETERS,
+    params: *const CloudFilters::CF_CALLBACK_PARAMETERS,
 ) {
-    if info.is_null() {
-        log::error!("cloud_files: on_notify_rename called with null info pointer");
+    if info.is_null() || params.is_null() {
+        log::error!("cloud_files: on_notify_rename called with null pointer");
         return;
     }
 
-    // SAFETY: info was checked non-null above.
+    // SAFETY: info and params were checked non-null above.
+    let info_ref = unsafe { &*info };
+    let params_ref = unsafe { &*params };
     let path = unsafe { normalized_path_from_info(info) };
-    log::debug!("cloud_files: on_notify_rename for {path}");
+    log::info!("cloud_files: on_notify_rename for {path}");
+
+    let handle = match TOKIO_HANDLE.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let fs = match REMOTE_FS.get() {
+        Some(f) => f,
+        None => return,
+    };
+
+    let source_identity = extract_file_identity(info_ref);
+
+    // SAFETY: This callback is NOTIFY_RENAME, so the Rename union variant
+    // is the active field per the Cloud Filter driver contract.
+    let target_path_raw = unsafe { params_ref.Anonymous.Rename.TargetPath };
+    let target_full = if target_path_raw.is_null() {
+        log::error!("cloud_files: rename target path is null");
+        ack_rename_response(info_ref, NTSTATUS(0xC0000001u32 as i32));
+        return;
+    } else {
+        // SAFETY: TargetPath is populated by the OS as a valid wide string.
+        unsafe {
+            target_path_raw
+                .to_string()
+                .unwrap_or_else(|_| String::new())
+        }
+    };
+
+    // Convert the full target path to a relative path within the mount.
+    let mount_point = match MOUNT_POINT.get() {
+        Some(p) => p,
+        None => return,
+    };
+    let target_identity = relative_path(mount_point, Path::new(&target_full)).unwrap_or_default();
+
+    if source_identity.is_empty() || target_identity.is_empty() {
+        log::warn!(
+            "cloud_files: rename with empty path — source={source_identity:?}, target={target_identity:?}"
+        );
+        ack_rename_response(info_ref, NTSTATUS(0));
+        return;
+    }
+
+    let result = handle.block_on(async {
+        let (src_parent, src_name) = split_parent_name(&source_identity);
+        let (dst_parent, dst_name) = split_parent_name(&target_identity);
+
+        let src_parent_ino = if src_parent.is_empty() {
+            1u64
+        } else {
+            resolve_relative_path(fs, &src_parent).await?.ino
+        };
+        let dst_parent_ino = if dst_parent.is_empty() {
+            1u64
+        } else {
+            resolve_relative_path(fs, &dst_parent).await?.ino
+        };
+
+        fs.rename(src_parent_ino, &src_name, dst_parent_ino, &dst_name)
+            .await
+    });
+
+    let completion_status = match result {
+        Ok(()) => {
+            log::info!("cloud_files: renamed remote {source_identity} -> {target_identity}");
+            NTSTATUS(0)
+        }
+        Err(e) => {
+            log::error!(
+                "cloud_files: remote rename failed {source_identity} -> {target_identity}: {e}"
+            );
+            NTSTATUS(0xC0000001u32 as i32)
+        }
+    };
+
+    ack_rename_response(info_ref, completion_status);
 }
 
 /// Extracts the `FileIdentity` field from a callback info struct as a UTF-8
@@ -730,7 +853,9 @@ fn extract_file_identity(info: &CloudFilters::CF_CALLBACK_INFO) -> String {
             if let Ok(full_path_str) = unsafe { normalized.to_string() } {
                 let full_path = Path::new(&full_path_str);
                 if let Some(rel) = relative_path(mount_point, full_path) {
-                    return rel;
+                    // Normalize to forward slashes to match our FileIdentity
+                    // convention (platform-agnostic, consistent with RemoteFs).
+                    return rel.replace('\\', "/");
                 }
             }
         }
@@ -815,14 +940,16 @@ async fn resolve_relative_path(fs: &core::RemoteFs, rel_path: &str) -> io::Resul
         return fs.getattr(1).await;
     }
 
+    let typed = Utf8TypedPath::derive(rel_path);
     let mut current_ino = 1u64;
     let mut last_attr = None;
 
-    for component in rel_path.split('\\') {
-        if component.is_empty() {
+    for component in typed.components() {
+        let name = component.as_str();
+        if name.is_empty() {
             continue;
         }
-        let attr = fs.lookup(current_ino, component).await?;
+        let attr = fs.lookup(current_ino, name).await?;
         current_ino = attr.ino;
         last_attr = Some(attr);
     }
@@ -947,6 +1074,84 @@ fn transfer_data_response(
     }
 }
 
+/// Responds to a `NOTIFY_DELETE` callback by calling `CfExecute` with
+/// `CF_OPERATION_TYPE_ACK_DELETE`.
+fn ack_delete_response(info: &CloudFilters::CF_CALLBACK_INFO, status: NTSTATUS) {
+    let op_info = CloudFilters::CF_OPERATION_INFO {
+        StructSize: mem::size_of::<CloudFilters::CF_OPERATION_INFO>() as u32,
+        Type: CloudFilters::CF_OPERATION_TYPE_ACK_DELETE,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: std::ptr::null(),
+        SyncStatus: std::ptr::null(),
+        RequestKey: 0i64,
+    };
+
+    let mut params = CloudFilters::CF_OPERATION_PARAMETERS {
+        ParamSize: mem::size_of::<CloudFilters::CF_OPERATION_PARAMETERS>() as u32,
+        Anonymous: CloudFilters::CF_OPERATION_PARAMETERS_0 {
+            AckDelete: CloudFilters::CF_OPERATION_PARAMETERS_0_7 {
+                Flags: CloudFilters::CF_OPERATION_ACK_DELETE_FLAG_NONE,
+                CompletionStatus: status,
+            },
+        },
+    };
+
+    // SAFETY: op_info and params are valid structs on the stack.
+    let result = unsafe { CloudFilters::CfExecute(&op_info, &mut params) };
+    if let Err(e) = result {
+        log::error!("cloud_files: CfExecute ACK_DELETE failed: {e}");
+    }
+}
+
+/// Responds to a `NOTIFY_RENAME` callback by calling `CfExecute` with
+/// `CF_OPERATION_TYPE_ACK_RENAME`.
+fn ack_rename_response(info: &CloudFilters::CF_CALLBACK_INFO, status: NTSTATUS) {
+    let op_info = CloudFilters::CF_OPERATION_INFO {
+        StructSize: mem::size_of::<CloudFilters::CF_OPERATION_INFO>() as u32,
+        Type: CloudFilters::CF_OPERATION_TYPE_ACK_RENAME,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: std::ptr::null(),
+        SyncStatus: std::ptr::null(),
+        RequestKey: 0i64,
+    };
+
+    let mut params = CloudFilters::CF_OPERATION_PARAMETERS {
+        ParamSize: mem::size_of::<CloudFilters::CF_OPERATION_PARAMETERS>() as u32,
+        Anonymous: CloudFilters::CF_OPERATION_PARAMETERS_0 {
+            AckRename: CloudFilters::CF_OPERATION_PARAMETERS_0_6 {
+                Flags: CloudFilters::CF_OPERATION_ACK_RENAME_FLAG_NONE,
+                CompletionStatus: status,
+            },
+        },
+    };
+
+    // SAFETY: op_info and params are valid structs on the stack.
+    let result = unsafe { CloudFilters::CfExecute(&op_info, &mut params) };
+    if let Err(e) = result {
+        log::error!("cloud_files: CfExecute ACK_RENAME failed: {e}");
+    }
+}
+
+/// Splits a relative path into `(parent_path, file_name)`.
+///
+/// Uses `Utf8TypedPath::derive()` to handle both `/` and `\` separators,
+/// so it works regardless of whether the identity uses Unix or Windows
+/// path conventions.
+///
+/// For a single component like `"file.txt"`, returns `("", "file.txt")`.
+/// For `"subdir/file.txt"`, returns `("subdir", "file.txt")`.
+fn split_parent_name(path: &str) -> (String, String) {
+    let typed = Utf8TypedPath::derive(path);
+    let name = typed.file_name().unwrap_or(path).to_string();
+    let parent = typed
+        .parent()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    (parent, name)
+}
+
 /// Converts an absolute path from the Cloud Filter API into a relative path
 /// within the remote filesystem.
 ///
@@ -967,6 +1172,17 @@ fn relative_path(mount_point: &Path, full_path: &Path) -> Option<String> {
 ///
 /// The format `distant!default` is used for Phase 1. Phase 5 will add
 /// per-user and per-machine uniqueness.
-fn build_sync_root_id() -> String {
-    String::from("distant!default")
+/// Builds a sync root ID string incorporating the mount point path.
+///
+/// Each mount gets a unique ID based on the path hash so multiple mounts
+/// on the same machine don't collide. The format is `distant!<hash>` where
+/// the hash is derived from the mount point's canonical path.
+fn build_sync_root_id(mount_point: &Path) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    mount_point.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("distant!{hash:016x}")
 }

@@ -95,9 +95,9 @@
   - `type C:\CloudMount\rustfmt.toml` displays correct content
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
-- [ ] **P3.2** Chunked transfer for large files
-  - Transfer in 1MB chunks for files > 4MB
-  - Report progress via `CfReportProviderProgress`
+- [-] **P3.2** Chunked transfer for large files
+  - Current: entire file transferred in single CfExecute (works for 144KB+)
+  - Deferred: chunked transfer with progress for very large files (>4MB)
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
 - [ ] **P3.3** CANCEL_FETCH_DATA callback
@@ -108,14 +108,17 @@
 
 ## Phase 4: Write Operations
 
-- [ ] **P4.1** NOTIFY_DELETE callback
-  - Propagate deletions to remote via `RemoteFs::unlink()`/`rmdir()`
-  - `CfExecute(ACK_DELETE)` to allow/deny
+- [x] **P4.1** NOTIFY_DELETE callback
+  - Uses Utf8TypedPath for cross-platform path splitting (split_parent_name)
+  - Single block_on: resolve parent + unlink/rmdir
+  - CfExecute(ACK_DELETE) with STATUS_SUCCESS or STATUS_UNSUCCESSFUL
+  - `del C:\CloudMount\PLAN.md` → file deleted on remote (verified)
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
-- [ ] **P4.2** NOTIFY_RENAME callback
-  - Propagate renames to remote via `RemoteFs::rename()`
-  - `CfExecute(ACK_RENAME)` to allow/deny
+- [x] **P4.2** NOTIFY_RENAME callback
+  - Extracts TargetPath from callback params (Windows path)
+  - Converts to relative path via relative_path() + normalize to /
+  - CfExecute(ACK_RENAME) with status
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
 - [ ] **P4.3** New file creation (write-back)
@@ -132,9 +135,10 @@
 
 ## Phase 5: Multiple Mounts & Status
 
-- [ ] **P5.1** Unique sync root IDs per mount
-  - ID format: `distant!{UserSID}!{hash(mount_path + connection_id)}`
-  - Verify two mounts with different `--remote-root` coexist
+- [x] **P5.1** Unique sync root IDs per mount
+  - ID format: `distant!{hash(mount_path)}` using DefaultHasher
+  - Each mount point gets a deterministic unique ID
+  - Multiple daemon processes can mount different paths simultaneously
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
 - [ ] **P5.2** Mount status detection
