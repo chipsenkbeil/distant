@@ -28,6 +28,11 @@ pub(crate) struct FuseHandler {
 }
 
 /// Converts a crate-level [`FileAttr`] into a [`fuser::FileAttr`].
+///
+/// Overrides `uid` and `gid` with the current process's values so the
+/// mount point is accessible to the user who ran the mount command.
+/// Without this, macFUSE shows root-owned files that are inaccessible
+/// to the unprivileged user.
 fn to_fuser_attr(attr: &FileAttr) -> FuserFileAttr {
     FuserFileAttr {
         ino: INodeNo(attr.ino),
@@ -40,8 +45,8 @@ fn to_fuser_attr(attr: &FileAttr) -> FuserFileAttr {
         kind: to_fuser_file_type(attr.kind),
         perm: attr.perm,
         nlink: attr.nlink,
-        uid: attr.uid,
-        gid: attr.gid,
+        uid: unsafe { libc::getuid() },
+        gid: unsafe { libc::getgid() },
         rdev: 0,
         blksize: 512,
         flags: 0,

@@ -688,9 +688,22 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         .context("Failed to remove FileProvider domains")?;
                     println!("Removed all distant FileProvider domains");
                 }
-                #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
+
+                // Also unmount any NFS/FUSE volume mounts.
+                #[cfg(unix)]
                 {
-                    return Err(anyhow::anyhow!("--all requires macOS FileProvider support").into());
+                    let mounts = detect_distant_volume_mounts();
+                    for mp in &mounts {
+                        let path = std::path::Path::new(mp);
+                        let status = std::process::Command::new("umount")
+                            .arg(path)
+                            .status();
+                        match status {
+                            Ok(s) if s.success() => println!("Unmounted {mp}"),
+                            Ok(s) => eprintln!("Warning: umount {mp} failed ({s})"),
+                            Err(e) => eprintln!("Warning: umount {mp}: {e}"),
+                        }
+                    }
                 }
             }
 
@@ -751,7 +764,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             // NFS/FUSE mounts: detect via OS mount table
             #[cfg(unix)]
             {
-                let nfs_mounts = detect_nfs_mounts();
+                let nfs_mounts = detect_distant_volume_mounts();
                 if !nfs_mounts.is_empty() {
                     match format {
                         Format::Shell => {
@@ -2446,7 +2459,12 @@ async fn use_or_lookup_connection_id(
 /// Distant's NFS mounts come from `localhost` (the embedded NFS server),
 /// so we filter for `localhost:/ on ...` entries.
 #[cfg(unix)]
-fn detect_nfs_mounts() -> Vec<String> {
+/// Detects NFS and FUSE mounts created by distant.
+///
+/// NFS mounts come from `localhost` (embedded NFS server).
+/// FUSE mounts have `FSName=distant` in the mount options.
+#[cfg(unix)]
+fn detect_distant_volume_mounts() -> Vec<String> {
     let output = match std::process::Command::new("mount")
         .stdout(std::process::Stdio::piped())
         .output()
@@ -2457,9 +2475,15 @@ fn detect_nfs_mounts() -> Vec<String> {
 
     output
         .lines()
-        .filter(|line| line.contains("localhost:/") && line.contains("nfs"))
+        .filter(|line| {
+            // NFS: "localhost:/ on /path (nfs, ...)"
+            let is_nfs = line.contains("localhost:/") && line.contains("nfs");
+            // FUSE: "distant on /path (macfuse, ...)" or "(fuse..., FSName=distant)"
+            let is_fuse = (line.starts_with("distant ") && line.contains(" on "))
+                || line.contains("FSName=distant");
+            is_nfs || is_fuse
+        })
         .filter_map(|line| {
-            // Format: "localhost:/ on /path/to/mount (nfs, ...)"
             line.split(" on ")
                 .nth(1)
                 .and_then(|rest| rest.split(" (").next().map(|p| p.to_string()))
