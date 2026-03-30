@@ -88,7 +88,7 @@ fn path_to_wide(p: &Path) -> Vec<u16> {
 /// Converts a [`windows::core::Error`] into a [`std::io::Error`] preserving
 /// the original HRESULT as a raw OS error code.
 fn win_err_to_io(e: windows::core::Error) -> io::Error {
-    io::Error::from_raw_os_error(e.code().0 as i32)
+    io::Error::from_raw_os_error(e.code().0)
 }
 
 /// Registers a sync root, connects with Cloud Filter callbacks, spawns a
@@ -1058,14 +1058,13 @@ unsafe extern "system" fn on_fetch_placeholders(
 
     // Skip directories that have already been populated to avoid
     // ERROR_ALREADY_EXISTS (0x800700B7) from duplicate placeholders.
-    if let Some(dirs) = POPULATED_DIRS.get() {
-        if let Ok(set) = dirs.lock() {
-            if set.contains(&rel_path) {
-                log::debug!("cloud_files: directory already populated, skipping: {rel_path:?}");
-                transfer_placeholders_response(info_ref, &mut [], disable_flag);
-                return;
-            }
-        }
+    if let Some(dirs) = POPULATED_DIRS.get()
+        && let Ok(set) = dirs.lock()
+        && set.contains(&rel_path)
+    {
+        log::debug!("cloud_files: directory already populated, skipping: {rel_path:?}");
+        transfer_placeholders_response(info_ref, &mut [], disable_flag);
+        return;
     }
 
     // Single block_on call: resolve the directory, read its entries, and
@@ -1076,10 +1075,10 @@ unsafe extern "system" fn on_fetch_placeholders(
     let dir_entries = match dir_result {
         Ok(entries) if entries.is_empty() => {
             transfer_placeholders_response(info_ref, &mut [], disable_flag);
-            if let Some(dirs) = POPULATED_DIRS.get() {
-                if let Ok(mut set) = dirs.lock() {
-                    set.insert(rel_path);
-                }
+            if let Some(dirs) = POPULATED_DIRS.get()
+                && let Ok(mut set) = dirs.lock()
+            {
+                set.insert(rel_path);
             }
             return;
         }
@@ -1146,10 +1145,10 @@ unsafe extern "system" fn on_fetch_placeholders(
 
     // Mark this directory as populated so subsequent callbacks return
     // an empty response immediately.
-    if let Some(dirs) = POPULATED_DIRS.get() {
-        if let Ok(mut set) = dirs.lock() {
-            set.insert(rel_path);
-        }
+    if let Some(dirs) = POPULATED_DIRS.get()
+        && let Ok(mut set) = dirs.lock()
+    {
+        set.insert(rel_path);
     }
 }
 
