@@ -142,18 +142,18 @@
 
 - [x] **P5.1** Unique sync root IDs per mount
   - ID format: `distant!{hash(mount_path)}` using DefaultHasher
-  - Verified: two foreground mounts (CloudMount1=project root,
-    CloudMount2=docs/) run simultaneously with independent content
-  - Unmounting one doesn't affect the other
-  - Files: `distant-mount/src/backend/windows_cloud_files.rs`
+  - Verified: two DAEMON mounts (CloudMount1=project root,
+    CloudMount2=docs/) run simultaneously as independent processes
+  - Daemon fix: CREATE_BREAKAWAY_FROM_JOB + DETACHED_PROCESS +
+    CREATE_NEW_PROCESS_GROUP + IsTerminal-based wait + exit(0)
+  - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
+    `src/cli/commands/client.rs`
 
 - [-] **P5.2** Mount status detection
   - Cloud Files sync roots are registered at OS level but have no easy
     enumeration API (would need registry scanning under
     `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager`)
-  - mount-status for cloud files deferred — `--foreground` mounts are
-    visible via process list; daemon mounts have a separate issue
-    (daemon processes exit immediately on Windows — pre-existing infra bug)
+  - Deferred — daemon mode now works, mount-status would be nice but not critical
   - Files: `src/cli/commands/client.rs`
 
 - [x] **P5.3** Selective unmount
