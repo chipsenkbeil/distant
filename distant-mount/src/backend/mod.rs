@@ -62,6 +62,26 @@ impl MountBackend {
         ]
     }
 
+    /// Returns whether this backend requires a long-running foreground process.
+    ///
+    /// NFS and FUSE backends run a server that must stay alive for the mount
+    /// to work. FileProvider and Windows Cloud Files are managed by the OS.
+    pub fn needs_foreground_process(&self) -> bool {
+        match self {
+            #[cfg(all(
+                feature = "fuse",
+                any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+            ))]
+            Self::Fuse => true,
+            #[cfg(feature = "nfs")]
+            Self::Nfs => true,
+            #[cfg(all(feature = "windows-cloud-files", target_os = "windows"))]
+            Self::WindowsCloudFiles => false,
+            #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+            Self::MacosFileProvider => false,
+        }
+    }
+
     /// Returns the backend as a str.
     pub fn as_str(&self) -> &'static str {
         match self {
