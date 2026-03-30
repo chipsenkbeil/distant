@@ -678,53 +678,82 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             feature = "mount-macos-file-provider",
         ))]
         ClientSubcommand::MountStatus { format } => {
+            let mut has_output = false;
+
+            // NFS/FUSE mounts: detect via OS mount table
+            #[cfg(unix)]
+            {
+                let nfs_mounts = detect_nfs_mounts();
+                if !nfs_mounts.is_empty() {
+                    match format {
+                        Format::Shell => {
+                            println!("=== NFS/Volume Mounts ===");
+                            for mp in &nfs_mounts {
+                                println!("  {mp}");
+                            }
+                            println!();
+                        }
+                        Format::Json => {
+                            let entries: Vec<serde_json::Value> = nfs_mounts
+                                .iter()
+                                .map(|mp| {
+                                    serde_json::json!({
+                                        "type": "nfs",
+                                        "mount_point": mp,
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
+                        }
+                    }
+                    has_output = true;
+                }
+            }
+
+            // FileProvider domains
             #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
             {
                 let domains = distant_mount::macos::list_file_provider_domains()
                     .context("Failed to list FileProvider domains")?;
 
-                match format {
-                    Format::Shell => {
-                        if domains.is_empty() {
-                            println!("No FileProvider domains registered");
-                        } else {
+                if !domains.is_empty() {
+                    match format {
+                        Format::Shell => {
+                            println!("=== FileProvider Domains ===");
                             let header = format!(
-                                "{:<40} {:<30} {:<8} {}",
-                                "DOMAIN ID", "DISPLAY NAME", "META", "DESTINATION"
+                                "  {:<40} {:<30} {}",
+                                "DOMAIN ID", "DISPLAY NAME", "DESTINATION"
                             );
                             println!("{header}");
                             for d in &domains {
-                                let meta = if d.has_metadata { "yes" } else { "no" };
                                 let dest = d.destination.as_deref().unwrap_or("-");
-                                println!(
-                                    "{:<40} {:<30} {:<8} {dest}",
-                                    d.identifier, d.display_name, meta,
-                                );
+                                println!("  {:<40} {:<30} {dest}", d.identifier, d.display_name,);
                             }
-                            println!("\n{} domain(s) registered", domains.len());
+                            println!();
+                        }
+                        Format::Json => {
+                            let entries: Vec<serde_json::Value> = domains
+                                .iter()
+                                .map(|d| {
+                                    serde_json::json!({
+                                        "type": "file-provider",
+                                        "identifier": d.identifier,
+                                        "display_name": d.display_name,
+                                        "connection_id": d.connection_id,
+                                        "destination": d.destination,
+                                        "has_metadata": d.has_metadata,
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
                         }
                     }
-                    Format::Json => {
-                        let entries: Vec<serde_json::Value> = domains
-                            .iter()
-                            .map(|d| {
-                                serde_json::json!({
-                                    "identifier": d.identifier,
-                                    "display_name": d.display_name,
-                                    "connection_id": d.connection_id,
-                                    "destination": d.destination,
-                                    "has_metadata": d.has_metadata,
-                                })
-                            })
-                            .collect();
-                        println!("{}", serde_json::to_string_pretty(&entries).unwrap());
-                    }
+                    has_output = true;
                 }
             }
-            #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
-            {
-                let _ = format;
-                println!("Mount status is currently only supported for macOS FileProvider");
+
+            if !has_output {
+                println!("No mounts found");
             }
         }
         ClientSubcommand::Shell {
@@ -2342,6 +2371,32 @@ async fn use_or_lookup_connection_id(
             }
         }
     }
+}
+
+/// Detects NFS mounts created by distant by parsing the OS `mount` output.
+///
+/// Distant's NFS mounts come from `localhost` (the embedded NFS server),
+/// so we filter for `localhost:/ on ...` entries.
+#[cfg(unix)]
+fn detect_nfs_mounts() -> Vec<String> {
+    let output = match std::process::Command::new("mount")
+        .stdout(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    output
+        .lines()
+        .filter(|line| line.contains("localhost:/") && line.contains("nfs"))
+        .filter_map(|line| {
+            // Format: "localhost:/ on /path/to/mount (nfs, ...)"
+            line.split(" on ")
+                .nth(1)
+                .and_then(|rest| rest.split(" (").next().map(|p| p.to_string()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
