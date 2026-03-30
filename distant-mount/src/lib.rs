@@ -183,12 +183,16 @@ async fn mount_cloud_files(
     std::fs::create_dir_all(&mount_point)?;
     let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
 
-    let connection = backend::windows_cloud_files::mount(handle.clone(), fs, &mount_point)?;
+    let guard = backend::windows_cloud_files::mount(handle.clone(), Arc::clone(&fs), &mount_point)?;
+
+    // Pre-populate root directory placeholders after connecting.
+    // Must happen after CfConnectSyncRoot, not inside callbacks.
+    backend::windows_cloud_files::pre_populate(&fs, &mount_point).await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
-        // Keep the Connection alive until shutdown signal.
-        let _connection = connection;
+        // Keep the connection guard alive until shutdown signal.
+        let _guard = guard;
         let _ = shutdown_rx.await;
         // Unregister sync root on shutdown.
         let _ = backend::windows_cloud_files::unmount();

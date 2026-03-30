@@ -249,6 +249,90 @@ fn transfer_placeholders(
     }
 }
 
+/// Pre-populates the root directory of the sync root with placeholders.
+pub(crate) async fn pre_populate(fs: &RemoteFs, mount_point: &Path) -> io::Result<()> {
+    // Test: try CfCreatePlaceholders on a non-sync-root folder to verify
+    // the API works at all on this system.
+    use cloud_filter::placeholder_file::BatchCreate;
+    let test_dir = mount_point.parent().unwrap().join("_distant_cf_test");
+    let _ = std::fs::create_dir_all(&test_dir);
+    log::info!("cloud_files: testing CfCreatePlaceholders on non-sync-root {:?}", test_dir);
+    let mut test = vec![
+        PlaceholderFile::new("test.txt")
+            .metadata(Metadata::file())
+            .mark_in_sync(),
+    ];
+    match test.create(&test_dir) {
+        Ok(()) => log::info!("cloud_files: non-sync-root test OK!"),
+        Err(e) => log::error!("cloud_files: non-sync-root test ALSO failed: {e}"),
+    }
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    // Now try on the actual sync root
+    log::info!("cloud_files: testing CfCreatePlaceholders on sync root {:?}", mount_point);
+    let mut test2 = vec![
+        PlaceholderFile::new("test.txt")
+            .metadata(Metadata::file())
+            .mark_in_sync(),
+    ];
+    match test2.create(mount_point) {
+        Ok(()) => log::info!("cloud_files: sync root test OK!"),
+        Err(e) => {
+            log::error!("cloud_files: sync root test failed: {e}");
+            return Err(io::Error::other(format!("CfCreatePlaceholders failed: {e}")));
+        }
+    }
+
+    pre_populate_dir(fs, mount_point, 1).await
+}
+
+/// Pre-populate a directory with placeholder files/dirs using CfCreatePlaceholders.
+///
+/// Called after CfConnectSyncRoot (not from inside a callback).
+/// Directories are marked with DISABLE_ON_DEMAND_POPULATION so the OS
+/// won't fire FETCH_PLACEHOLDERS callbacks for them.
+async fn pre_populate_dir(
+    fs: &RemoteFs,
+    parent_path: &Path,
+    ino: u64,
+) -> io::Result<()> {
+    use cloud_filter::placeholder_file::BatchCreate;
+
+    let entries = fs.readdir(ino).await?;
+    let filtered: Vec<_> = entries
+        .iter()
+        .filter(|e| e.name != "." && e.name != "..")
+        .collect();
+
+    log::info!(
+        "cloud_files: pre-populating {} entries in {:?}",
+        filtered.len(),
+        parent_path,
+    );
+
+    let mut placeholders: Vec<PlaceholderFile> = filtered
+        .iter()
+        .map(|entry| {
+            let is_dir = entry.file_type == FileType::Dir;
+            let mut p = PlaceholderFile::new(&entry.name).mark_in_sync();
+            if is_dir {
+                p = p.metadata(Metadata::directory()).has_no_children();
+            } else {
+                p = p.metadata(Metadata::file());
+            }
+            p
+        })
+        .collect();
+
+    if !placeholders.is_empty() {
+        placeholders.create(parent_path).map_err(|e| {
+            io::Error::other(format!("CfCreatePlaceholders failed: {e}"))
+        })?;
+    }
+
+    Ok(())
+}
+
 fn build_sync_root_id() -> io::Result<SyncRootId> {
     Ok(SyncRootIdBuilder::new("distant")
         .user_security_id(
@@ -302,7 +386,9 @@ pub(crate) fn mount(
         info.set_population_type(PopulationType::Full);
         info.set_icon("%SystemRoot%\\system32\\imageres.dll,197");
         info.set_version("0.21.0");
-        let _ = info.set_path(mount_point);
+        info.set_path(mount_point).map_err(|e| {
+            io::Error::other(format!("failed to set sync root path: {e}"))
+        })?;
         let _ = info.set_recycle_bin_uri("https://github.com/chipsenkbeil/distant");
 
         sync_root_id
@@ -310,16 +396,19 @@ pub(crate) fn mount(
             .map_err(|e| io::Error::other(format!("failed to register sync root: {e}")))?;
     }
 
-    let handler = CloudFilesHandler::new(fs, mount_point.to_path_buf());
+    let handler = CloudFilesHandler::new(fs.clone(), mount_point.to_path_buf());
+    let handle_clone = handle.clone();
 
     let connection = Session::new()
         .connect_async(mount_point, handler, move |future| {
-            log::info!("cloud_files: block_on callback invoked");
-            handle.block_on(future);
-            log::info!("cloud_files: block_on callback completed");
+            handle_clone.block_on(future);
         })
         .map_err(|e| io::Error::other(format!("failed to connect sync root: {e}")))?;
 
+    // Pre-populate root directory placeholders AFTER connecting.
+    // The CloudMirror sample does this — CfCreatePlaceholders must be called
+    // after CfConnectSyncRoot, not from inside the FETCH_PLACEHOLDERS callback.
+    log::info!("cloud_files: pre-populating root directory");
     Ok(Box::new(connection))
 }
 
