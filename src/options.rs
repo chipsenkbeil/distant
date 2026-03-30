@@ -625,6 +625,10 @@ pub enum ClientSubcommand {
         )]
         backend: distant_mount::MountBackend,
 
+        /// Run mount in foreground (default: daemonize for NFS/FUSE backends)
+        #[clap(long)]
+        foreground: bool,
+
         /// Local mount point (optional for FileProvider backend)
         mount_point: Option<PathBuf>,
     },

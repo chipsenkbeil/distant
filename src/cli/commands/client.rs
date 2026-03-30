@@ -49,6 +49,28 @@ use super::common::RemoteProcessLink;
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
+    // For mount commands that need a foreground process (NFS, FUSE),
+    // daemonize by default: re-exec with --foreground and exit.
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
+    if let ClientSubcommand::Mount {
+        foreground: false,
+        ref backend,
+        ..
+    } = cmd
+        && backend.needs_foreground_process()
+    {
+        use std::ffi::OsString;
+        let pid =
+            crate::cli::Spawner::spawn_running_background(vec![OsString::from("--foreground")])?;
+        debug!("Daemonized mount process (pid {pid})");
+        return Ok(());
+    }
+
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
     rt.block_on(async_run(cmd, quiet))
 }
@@ -472,6 +494,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             attr_ttl,
             dir_ttl,
             backend,
+            foreground: _,
             mount_point,
         } => {
             debug!("Connecting to manager");
@@ -552,15 +575,29 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             // For FileProvider, domain registration is persistent and
             // macOS manages the .appex — no blocking needed.
             if handle.needs_foreground() {
-                println!("Press Ctrl+C to unmount");
-                tokio::signal::ctrl_c()
-                    .await
-                    .context("Failed to listen for Ctrl+C")?;
+                // Wait for Ctrl+C or SIGTERM to unmount cleanly.
+                // SIGTERM is sent when the daemonized process is killed or
+                // when macOS ejects the volume.
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{SignalKind, signal};
+                    let mut sigterm =
+                        signal(SignalKind::terminate()).context("Failed to listen for SIGTERM")?;
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = sigterm.recv() => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::signal::ctrl_c()
+                        .await
+                        .context("Failed to listen for Ctrl+C")?;
+                }
                 handle
                     .unmount()
                     .await
                     .context("Failed to unmount filesystem")?;
-                println!("Unmounted");
             }
         }
         #[cfg(any(
