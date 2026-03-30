@@ -142,8 +142,9 @@
 
 - [x] **P5.1** Unique sync root IDs per mount
   - ID format: `distant!{hash(mount_path)}` using DefaultHasher
-  - Each mount point gets a deterministic unique ID
-  - Multiple daemon processes can mount different paths simultaneously
+  - Verified: two foreground mounts (CloudMount1=project root,
+    CloudMount2=docs/) run simultaneously with independent content
+  - Unmounting one doesn't affect the other
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
 - [-] **P5.2** Mount status detection
