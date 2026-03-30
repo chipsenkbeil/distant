@@ -380,7 +380,8 @@ fn run_watcher_loop(
                 buffer.as_mut_ptr() as *mut c_void,
                 buffer.len() as u32,
                 true,
-                FileSystem::FILE_NOTIFY_CHANGE_FILE_NAME,
+                FileSystem::FILE_NOTIFY_CHANGE_FILE_NAME
+                    | FileSystem::FILE_NOTIFY_CHANGE_LAST_WRITE,
                 None,
                 Some(&mut overlapped as *mut IO::OVERLAPPED),
                 None,
@@ -446,9 +447,17 @@ fn run_watcher_loop(
             continue;
         }
 
-        parse_notify_buffer(&buffer[..bytes_transferred as usize], |relative_path_str| {
-            handle_new_file(handle, fs, mount_point, relative_path_str);
-        });
+        parse_notify_buffer(
+            &buffer[..bytes_transferred as usize],
+            |action, relative_path_str| match action {
+                FileAction::Added => {
+                    handle_new_file(handle, fs, mount_point, relative_path_str);
+                }
+                FileAction::Modified => {
+                    handle_modified_file(handle, fs, mount_point, relative_path_str);
+                }
+            },
+        );
     }
 
     // SAFETY: Closing valid OS handles obtained from CreateEventW
@@ -461,12 +470,19 @@ fn run_watcher_loop(
     Ok(())
 }
 
+/// File change actions detected by the directory watcher.
+enum FileAction {
+    Added,
+    Modified,
+}
+
 /// Parses a `FILE_NOTIFY_INFORMATION` linked list from a raw buffer.
 ///
-/// Calls `callback` with the relative path (as a UTF-8 string with
-/// backslashes preserved) for each `FILE_ACTION_ADDED` entry in the buffer.
-fn parse_notify_buffer(buffer: &[u8], mut callback: impl FnMut(&str)) {
+/// Calls `callback` with the action and relative path for each
+/// `FILE_ACTION_ADDED` or `FILE_ACTION_MODIFIED` entry in the buffer.
+fn parse_notify_buffer(buffer: &[u8], mut callback: impl FnMut(FileAction, &str)) {
     const FILE_ACTION_ADDED: u32 = 1;
+    const FILE_ACTION_MODIFIED: u32 = 3;
 
     let mut offset = 0usize;
     loop {
@@ -481,12 +497,18 @@ fn parse_notify_buffer(buffer: &[u8], mut callback: impl FnMut(&str)) {
         // buffer.
         let next_entry_offset =
             u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap_or([0; 4]));
-        let action =
+        let action_raw =
             u32::from_ne_bytes(buffer[offset + 4..offset + 8].try_into().unwrap_or([0; 4]));
         let file_name_length =
             u32::from_ne_bytes(buffer[offset + 8..offset + 12].try_into().unwrap_or([0; 4]));
 
-        if action == FILE_ACTION_ADDED {
+        let action = match action_raw {
+            FILE_ACTION_ADDED => Some(FileAction::Added),
+            FILE_ACTION_MODIFIED => Some(FileAction::Modified),
+            _ => None,
+        };
+
+        if let Some(action) = action {
             let name_start = offset + 12;
             let name_end = name_start + file_name_length as usize;
             if name_end <= buffer.len() && file_name_length >= 2 {
@@ -498,7 +520,7 @@ fn parse_notify_buffer(buffer: &[u8], mut callback: impl FnMut(&str)) {
                     .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
                     .collect();
                 let name = String::from_utf16_lossy(&wide);
-                callback(&name);
+                callback(action, &name);
             }
         }
 
@@ -646,6 +668,76 @@ fn handle_new_file(
                 "cloud_files: watcher failed to convert {relative_path_str} to placeholder: {e}"
             );
         }
+    }
+}
+
+/// Handles a modified file in the mount directory.
+///
+/// Re-reads the local file content and uploads it to the remote server.
+/// Only processes hydrated placeholder files (not dehydrated ones).
+fn handle_modified_file(
+    handle: &Handle,
+    fs: &Arc<core::RemoteFs>,
+    mount_point: &Path,
+    relative_path_str: &str,
+) {
+    let full_path = mount_point.join(relative_path_str);
+    let wide_full = path_to_wide(&full_path);
+
+    // SAFETY: GetFileAttributesW reads attributes via a valid wide path.
+    let attrs = unsafe { FileSystem::GetFileAttributesW(PCWSTR(wide_full.as_ptr())) };
+    if attrs == u32::MAX {
+        return;
+    }
+
+    // Skip directories.
+    if (attrs & FileSystem::FILE_ATTRIBUTE_DIRECTORY.0) != 0 {
+        return;
+    }
+
+    // Skip non-placeholder files — handle_new_file handles those.
+    // Modified events for placeholder files indicate the user edited a
+    // hydrated file and the content needs to be synced back.
+    if (attrs & FileSystem::FILE_ATTRIBUTE_REPARSE_POINT.0) == 0 {
+        return;
+    }
+
+    let data = match std::fs::read(&full_path) {
+        Ok(d) => d,
+        Err(e) => {
+            log::debug!("cloud_files: watcher skipping modified {relative_path_str}: {e}");
+            return;
+        }
+    };
+
+    let upload_result = handle.block_on(async {
+        let root_path = fs
+            .get_path(1)
+            .await
+            .ok_or_else(|| io::Error::other("root inode not found"))?;
+
+        let normalized_rel = relative_path_str.replace('\\', "/");
+        let root_str = root_path.as_str();
+        let remote_path = if root_str.ends_with('/') {
+            format!("{root_str}{normalized_rel}")
+        } else {
+            format!("{root_str}/{normalized_rel}")
+        };
+
+        let channel = CHANNEL
+            .get()
+            .ok_or_else(|| io::Error::other("CHANNEL not initialized"))?;
+        let mut ch = channel.clone();
+        ch.write_file(remote_path, data, Default::default()).await
+    });
+
+    match upload_result {
+        Ok(()) => log::info!(
+            "cloud_files: watcher synced modified {relative_path_str} to remote"
+        ),
+        Err(e) => log::error!(
+            "cloud_files: watcher failed to sync modified {relative_path_str}: {e}"
+        ),
     }
 }
 

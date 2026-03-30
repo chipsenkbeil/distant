@@ -131,9 +131,11 @@
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`,
     `distant-mount/src/lib.rs`, `distant-mount/Cargo.toml`
 
-- [ ] **P4.4** File modification (write-back)
-  - Detect modified hydrated files
-  - Sync changes back to remote, mark in-sync
+- [x] **P4.4** File modification (write-back)
+  - Watcher now handles FILE_NOTIFY_CHANGE_LAST_WRITE + FILE_ACTION_MODIFIED
+  - Only processes hydrated placeholders (REPARSE_POINT set)
+  - Re-reads local content and uploads via ChannelExt::write_file
+  - Verified: `echo >> rustfmt.toml` synced to remote Mac
   - Files: `distant-mount/src/backend/windows_cloud_files.rs`
 
 ---
