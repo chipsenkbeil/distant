@@ -72,18 +72,76 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .with_context(|| format!("Failed to create mount point {}", mp.display()))?;
         }
         use std::ffi::OsString;
-        let mut extra = vec![OsString::from("--foreground")];
-        // Pass the resolved socket path to the child so it connects to
-        // the correct manager (critical when running via sudo, where the
-        // App Group container path resolves differently for root).
+        use std::process::{Command, Stdio};
+
+        // Build the child command: same binary + args + --foreground
+        let exe = std::env::current_exe().context("Failed to get current exe")?;
+        let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();
+        args.push(OsString::from("--foreground"));
+
+        // Pass the resolved socket path so sudo doesn't break connectivity.
         #[cfg(unix)]
         if network.unix_socket.is_none() {
             let socket = crate::constants::user::UNIX_SOCKET_PATH.as_os_str();
-            extra.push(OsString::from("--unix-socket"));
-            extra.push(socket.to_owned());
+            args.push(OsString::from("--unix-socket"));
+            args.push(socket.to_owned());
         }
-        let pid = crate::cli::Spawner::spawn_running_background(extra)?;
-        debug!("Daemonized mount process (pid {pid})");
+
+        // Spawn child with piped stderr so we can report mount errors.
+        let mut child = Command::new(&exe)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn mount process")?;
+
+        // Wait up to 10s for the child to print "Mounted" or exit with error.
+        let stdout = child.stdout.take().unwrap();
+        let mut stderr = child.stderr.take().unwrap();
+        let pid = child.id();
+
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stdout);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx2 = tx.clone();
+        std::thread::spawn(move || {
+            for line in reader.lines().map_while(Result::ok) {
+                if line.contains("Mounted") {
+                    let _ = tx.send(Ok(line));
+                    return;
+                }
+            }
+            // stdout closed without "Mounted" — read stderr for the error
+            let mut err = String::new();
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut err);
+            let _ = tx.send(Err(err));
+        });
+
+        // Also handle child exit
+        std::thread::spawn(move || {
+            if let Ok(status) = child.wait()
+                && !status.success()
+            {
+                let _ = tx2.send(Err(format!("mount process exited with {status}")));
+            }
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(Ok(line)) => {
+                println!("{line}");
+                debug!("Daemonized mount process (pid {pid})");
+            }
+            Ok(Err(err)) => {
+                let err = err.trim();
+                return Err(anyhow::anyhow!("Mount failed: {err}").into());
+            }
+            Err(_) => {
+                // Timeout — process is still running, mount may still be in progress
+                debug!("Mount process (pid {pid}) still starting...");
+                println!("Mount process started (pid {pid})");
+            }
+        }
         return Ok(());
     }
 

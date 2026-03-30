@@ -110,6 +110,7 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
     });
 
     // Mount now that the NFS server is accepting connections.
+    // (The TCP socket is listening at the kernel level after bind().)
     if let Err(e) = backend::nfs::os_mount(port, &mount_point) {
         let _ = shutdown_tx.send(());
         return Err(e);
