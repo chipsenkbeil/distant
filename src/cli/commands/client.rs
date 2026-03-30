@@ -60,10 +60,16 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
     if let ClientSubcommand::Mount {
         foreground: false,
         ref backend,
+        ref mount_point,
         ..
     } = cmd
         && backend.needs_foreground_process()
     {
+        // Create mount point in the parent so permission errors are visible.
+        if let Some(mp) = mount_point {
+            std::fs::create_dir_all(mp)
+                .with_context(|| format!("Failed to create mount point {}", mp.display()))?;
+        }
         use std::ffi::OsString;
         let pid =
             crate::cli::Spawner::spawn_running_background(vec![OsString::from("--foreground")])?;
