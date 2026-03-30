@@ -89,13 +89,28 @@ pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         }
 
         // Spawn child with piped stderr so we can report mount errors.
-        let mut child = Command::new(&exe)
-            .args(&args)
+        let mut cmd = Command::new(&exe);
+        cmd.args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("Failed to spawn mount process")?;
+            .stderr(Stdio::piped());
+
+        // On Windows, detach the child from the parent's console and
+        // put it in a new process group. Without this, the child
+        // receives CTRL_CLOSE_EVENT when the parent exits, which
+        // tokio::signal::ctrl_c() interprets as a shutdown signal.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+            cmd.creation_flags(
+                CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB,
+            );
+        }
+
+        let mut child = cmd.spawn().context("Failed to spawn mount process")?;
 
         // Wait up to 10s for the child to print "Mounted" or exit with error.
         let stdout = child.stdout.take().unwrap();
@@ -640,9 +655,18 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     .await
                     .context("Failed to mount filesystem")?;
 
-            match mount_point {
-                Some(ref p) => println!("Mounted at {}", p.display()),
-                None => println!("Mounted (visible in Finder sidebar)"),
+            // Use writeln + ignore errors instead of println to avoid
+            // panicking on broken pipe. In daemon mode, the parent closes
+            // the pipe's read end after reading "Mounted", which causes
+            // the next stdout write to fail with ERROR_BROKEN_PIPE.
+            {
+                use std::io::Write;
+                let msg = match mount_point {
+                    Some(ref p) => format!("Mounted at {}", p.display()),
+                    None => "Mounted (visible in Finder sidebar)".to_string(),
+                };
+                let _ = writeln!(std::io::stdout(), "{msg}");
+                let _ = std::io::stdout().flush();
             }
 
             // For backends that need a long-running process (NFS, FUSE,
@@ -665,9 +689,22 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
                 #[cfg(not(unix))]
                 {
-                    tokio::signal::ctrl_c()
-                        .await
-                        .context("Failed to listen for Ctrl+C")?;
+                    // On Windows, the daemon process is created with
+                    // CREATE_NO_WINDOW and has no reliable console for
+                    // signal handling. Use ctrl_c() only when running
+                    // interactively (user typed --foreground). In daemon
+                    // mode (stdout is a pipe, not a terminal), block
+                    // indefinitely — the process is stopped by `taskkill`
+                    // or `distant unmount`, which triggers MountGuard::drop
+                    // for clean teardown.
+                    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                        let _ = tokio::signal::ctrl_c().await;
+                    } else {
+                        // Daemon mode: stdout is a pipe, no console for
+                        // signal handling. Block until the process is
+                        // killed externally (taskkill, distant unmount).
+                        let () = std::future::pending().await;
+                    }
                 }
                 handle
                     .unmount()
