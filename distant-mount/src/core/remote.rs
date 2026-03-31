@@ -552,7 +552,6 @@ impl RemoteFs {
 
         let mut write_buffers = self.write_buffers.lock().await;
 
-        // Check if there is a dirty buffer to flush.
         let needs_flush = write_buffers.get(ino).is_some_and(|buf| buf.is_dirty());
 
         if !needs_flush {
@@ -561,24 +560,39 @@ impl RemoteFs {
 
         let path = self.ino_to_path(ino).await?;
 
-        // Safety: we just checked that the buffer exists and is dirty above,
-        // and we still hold the lock.
         let buf = write_buffers
             .get_mut(ino)
             .expect("buffer exists (checked above)");
-        let data = buf.data().to_vec();
 
         let mut ch = self.channel.clone();
-        let options = WriteFileOptions {
-            offset: None,
-            append: false,
-        };
-        ch.write_file(path.clone(), data, options).await?;
+
+        if buf.dirty_ranges().len() == 1 && buf.dirty_ranges()[0].start == 0 {
+            // Fast path: single dirty range starting at offset 0. This is the
+            // common case for new files and full overwrites. Write the entire
+            // buffer in one call without an offset (creates or overwrites).
+            let data = buf.data().to_vec();
+            ch.write_file(path.clone(), data, Default::default())
+                .await?;
+        } else {
+            // Partial writes: flush each dirty range at its offset. This
+            // preserves existing file content outside the dirty regions,
+            // which is critical for append-style writes where the buffer
+            // has zero-filled gaps for the original content.
+            for range in buf.dirty_ranges().to_vec() {
+                let start = range.start as usize;
+                let end = range.end as usize;
+                let data = buf.data()[start..end].to_vec();
+                let options = WriteFileOptions {
+                    offset: Some(range.start),
+                    append: false,
+                };
+                ch.write_file(path.clone(), data, options).await?;
+            }
+        }
 
         buf.clear();
         drop(write_buffers);
 
-        // Invalidate caches since the file content changed.
         let mut attr_cache = self.attr_cache.lock().await;
         attr_cache.invalidate(&path);
         drop(attr_cache);

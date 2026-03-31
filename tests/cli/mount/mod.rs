@@ -6,7 +6,12 @@
 //! and `distant fs` commands.
 
 mod browse;
+mod directory_ops;
+mod file_create;
+mod file_delete;
+mod file_modify;
 mod file_read;
+mod file_rename;
 mod subdirectory;
 
 use std::io::{BufRead, BufReader};
