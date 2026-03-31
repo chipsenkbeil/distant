@@ -115,6 +115,48 @@
 
 ---
 
+## Phase 6: FileProvider In-Test .app Bundle (macOS only)
+
+- [ ] **P6.1** Add `mount-testing` feature flag
+  - `distant-mount/Cargo.toml`: `mount-testing = []`
+  - Workspace `Cargo.toml`: `mount-testing = ["distant-mount/mount-testing"]`
+  - `--all-features` enables it; release builds exclude it
+  - Files: `distant-mount/Cargo.toml`, `Cargo.toml`
+
+- [ ] **P6.2** Gate `app_group_container_path()` override
+  - `#[cfg(feature = "mount-testing")]` file-based override
+  - Reads `/tmp/distant-test-container-override` for container path
+  - Override code absent from production builds
+  - Files: `distant-mount/src/backend/macos_file_provider/utils.rs`
+
+- [ ] **P6.3** Create test-specific entitlements
+  - No sandbox, no app-groups (allows ad-hoc signing)
+  - Keep network.client + get-task-allow
+  - Files: `resources/macos/test-distant.entitlements`,
+    `resources/macos/test-distant-appex.entitlements`
+
+- [ ] **P6.4** `build_test_app_bundle()` fixture
+  - Run `build-macos-bundle.sh` with ad-hoc signing + test entitlements
+  - Register .appex via `pluginkit -a`
+  - Create temp container, write override file, symlink socket
+  - Only build if not already up-to-date (check binary mtime)
+  - Files: `tests/cli/mount/mod.rs`
+
+- [ ] **P6.5** Override `set_bin_path()` for bundled binary
+  - Point to `target/test-Distant.app/Contents/MacOS/distant`
+  - `is_running_in_app_bundle()` returns true
+  - FileProvider becomes default backend
+  - Files: `tests/cli/mount/mod.rs`
+
+- [ ] **P6.6** FileProvider test cases
+  - List files via `~/Library/CloudStorage/` path
+  - mount-status shows FileProvider domain
+  - Unmount by destination URL
+  - Domain cleanup on teardown
+  - Files: `tests/cli/mount/file_provider.rs`
+
+---
+
 ## Test Infrastructure
 
 - **Harness:** `distant-test-harness` with `ManagerCtx`

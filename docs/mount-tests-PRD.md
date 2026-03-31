@@ -170,8 +170,35 @@ up via `distant unmount`.
 - daemon.rs — single daemon-mode smoke test
 - 14 tests covering error paths, platform behavior, and daemon mode
 
+### Phase 6: FileProvider In-Test .app Bundle (macOS only)
+
+Build `target/test-Distant.app` during test setup so the FileProvider backend
+can be included in `available_backends()` and tested via `ManagerCtx`.
+
+- **P6.1** Add `mount-testing` feature flag to `distant-mount` and workspace
+- **P6.2** Gate `app_group_container_path()` override behind `mount-testing`
+  - File-based override at `/tmp/distant-test-container-override`
+  - Cross-process safe (test writes, .appex reads)
+  - Code absent from production builds (no feature = no code)
+- **P6.3** Create test-specific entitlements (no sandbox, no app-groups)
+  - `resources/macos/test-distant.entitlements`
+  - `resources/macos/test-distant-appex.entitlements`
+- **P6.4** `build_test_app_bundle()` fixture
+  - Runs `scripts/build-macos-bundle.sh` with ad-hoc signing + test entitlements
+  - Registers .appex via `pluginkit -a`
+  - Creates temp container dir, writes override file
+  - Symlinks manager socket into container
+- **P6.5** Override `set_bin_path()` to use bundled binary
+  - `target/test-Distant.app/Contents/MacOS/distant`
+  - Makes `is_running_in_app_bundle()` return true
+  - FileProvider becomes the default backend
+- **P6.6** FileProvider-specific test cases
+  - Listing files via `~/Library/CloudStorage/`
+  - mount-status shows FileProvider domain
+  - Unmount by destination URL
+  - Domain cleanup on test teardown
+
 ## Non-Goals
 
 - Stress testing (covered by separate stress test infrastructure)
 - Performance benchmarking
-- Testing macOS FileProvider .appex lifecycle (requires .app bundle)
