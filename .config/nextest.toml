@@ -13,6 +13,9 @@ max-threads = 4
 [test-groups.pty-tests]
 max-threads = 4
 
+[test-groups.mount-integration]
+max-threads = 1
+
 [profile.default]
 fail-fast = false
 leak-timeout = { period = "500ms", result = "fail" }
@@ -53,3 +56,7 @@ test-group = 'ssh-integration'
 filter = 'test(shell::) | test(spawn::)'
 test-group = 'pty-tests'
 
+# Mount tests: one at a time to prevent stale mounts
+[[profile.default.overrides]]
+filter = 'test(mount::)'
+test-group = 'mount-integration'

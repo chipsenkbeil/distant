@@ -8,40 +8,41 @@
 
 ## Phase 1: Infrastructure
 
-- [ ] **P1.1** Add `mount` module to `tests/cli/mod.rs`
-  - Feature-gate with `#[cfg(any(feature = "mount-fuse", ...))]`
-  - Files: `tests/cli/mod.rs`, `tests/cli/mount/mod.rs`
+- [x] **P1.1** Add `mount` module to `tests/cli/mod.rs`
+  - Feature-gated with `#[cfg(any(feature = "mount-fuse", ...))]`
+  - Files: `tests/cli/mod.rs`, `tests/cli/mount/mod.rs`, `tests/cli/mount/browse.rs`
 
-- [ ] **P1.2** Implement `MountProcess` helper struct
-  - Spawn `distant mount --foreground --backend $BACKEND $MOUNT_POINT`
-  - Wait for "Mounted" on stdout
-  - Drop impl: kill process + unmount cleanup
+- [x] **P1.2** Implement `MountProcess` helper struct
+  - Spawn with `new_std_cmd(["mount"])` + --foreground + --backend
+  - Threaded stdout reader waits for "Mounted" (30s timeout)
+  - Drop: kill + wait + `distant unmount` + remove dir
   - Files: `tests/cli/mount/mod.rs`
 
-- [ ] **P1.3** Implement `available_backends()` helper
-  - Returns `Vec<&'static str>` of backend names available on this platform
-  - Uses `#[cfg]` to build the list at compile time
+- [x] **P1.3** Implement `available_backends()` helper
+  - Returns `Vec<&'static str>` via compile-time `#[cfg]` pushes
+  - Excludes macos-file-provider (needs .app bundle — Phase 6)
+  - Also: `seed_test_data()`, `verify_remote_file/exists/not_exists()`
   - Files: `tests/cli/mount/mod.rs`
 
-- [ ] **P1.4** Add nextest config for mount tests
-  - `mount-integration` test group with `max-threads = 1`
-  - Prevents concurrent mount operations from interfering
+- [x] **P1.4** Add nextest config for mount tests
+  - `mount-integration` group with `max-threads = 1`
+  - Override routes `test(mount::)` to this group
   - Files: `.config/nextest.toml`
 
 ---
 
 ## Phase 2: Core Read Tests
 
-- [ ] **P2.1** `browse.rs` — MNT-01, MNT-02, MNT-03
-  - Mount and list root, foreground exit, default remote root
+- [x] **P2.1** `browse.rs` — MNT-01, MNT-02, MNT-03
+  - All 3 tests passing (NFS backend on macOS)
   - Files: `tests/cli/mount/browse.rs`
 
-- [ ] **P2.2** `file_read.rs` — FRD-01, FRD-02, FRD-03
-  - Read small file, large file, nonexistent file
+- [x] **P2.2** `file_read.rs` — FRD-01, FRD-02, FRD-03
+  - Small file, 100KB file, nonexistent file — all passing
   - Files: `tests/cli/mount/file_read.rs`
 
-- [ ] **P2.3** `subdirectory.rs` — SDT-01, SDT-02
-  - List subdir contents, read deeply nested file
+- [x] **P2.3** `subdirectory.rs` — SDT-01, SDT-02
+  - Subdir listing + deeply nested read — both passing
   - Files: `tests/cli/mount/subdirectory.rs`
 
 ---
@@ -165,5 +166,5 @@
 - **Backend iteration:** `available_backends()` returns compiled-in backends
 - **Seed data:** Created via `distant fs write` / `distant fs make-dir`
 - **Verification:** `distant fs read` / `distant fs exists`
-- **Build:** `cargo test --all-features -p distant -- mount`
-- **Nextest:** `cargo nextest run --all-features -p distant -E 'test(mount)'`
+- **Run tests:** `cargo nextest run --all-features -p distant -E 'test(mount)'`
+  (MUST use nextest — `cargo test` ignores max-threads=1 and causes stale mounts)
