@@ -106,6 +106,13 @@
     FP domain management — gated by per-backend `#[cfg]`
   - Files: distributed across relevant test files
 
+- [ ] **P5.3** `daemon.rs` — DMN-01
+  - Spawn `distant mount` WITHOUT `--foreground`, wait for "Mounted"
+  - List directory via OS commands to confirm mount works
+  - Kill daemon by PID, clean up via `distant unmount`
+  - Standalone smoke test for daemon mount path
+  - Files: `tests/cli/mount/daemon.rs`
+
 ---
 
 ## Test Infrastructure

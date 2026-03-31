@@ -54,8 +54,8 @@ This lives in `tests/cli/mount/mod.rs` alongside a `skip_if_backend_unavailable!
 macro.
 
 **Backend parameterization:** Tests that work across ALL backends use a helper
-function `available_backends() -> Vec<&'static str>` that returns the string
-names of compiled-in backends. Each test iterates over this list. Tests
+function `available_backends() -> &'static [MountBackend]` that returns the list
+of compiled-in backends. Each test iterates over this list. Tests
 specific to one backend use `#[cfg(feature = "mount-nfs")]` etc.
 
 **Seed data:** Created via `distant fs write` / `distant fs make-dir` through
@@ -64,6 +64,10 @@ the `ManagerCtx` before mounting. Verified via `distant fs read` /
 
 **Foreground mode only:** All tests use `--foreground` for controllability.
 The daemon spawn path is a separate concern (already tested manually).
+
+However, you should still create one final test that verifies mounting without
+`--foreground` will still work and be available, but need to figure out how to
+clean up the background process after. This should be its own standalone test.
 
 ### Feature Gating
 
@@ -129,9 +133,16 @@ Each MANUAL_TESTING.md test ID maps to one test function:
 | EDG-03 | `special_chars_in_filename_should_work` | edge_cases.rs |
 | EDG-04 | `rapid_read_write_should_not_corrupt` | edge_cases.rs |
 | EDG-05 | `server_disconnect_should_error_gracefully` | edge_cases.rs |
+| DMN-01 | `daemon_mount_should_list_directory` | daemon.rs |
 
 Backend-specific tests (BKE-*) are included in the relevant files with
 per-backend `#[cfg]` guards.
+
+DMN-01 is a standalone test that verifies the daemon (non-`--foreground`)
+mount path works. It spawns `distant mount` without `--foreground`, waits
+for the "Mounted at" output, lists the directory to confirm it works, then
+kills the daemon process by PID (extracted from the child spawn) and cleans
+up via `distant unmount`.
 
 ## Phases
 
@@ -154,13 +165,13 @@ per-backend `#[cfg]` guards.
 - readonly.rs, remote_root.rs, multi_mount.rs, status.rs, unmount.rs
 - 14 tests covering mount configuration and lifecycle
 
-### Phase 5: Edge Cases (EDG, BKE)
+### Phase 5: Edge Cases + Daemon (EDG, BKE, DMN)
 - edge_cases.rs + backend-specific `#[cfg]` blocks
-- 13 tests covering error paths and platform-specific behavior
+- daemon.rs — single daemon-mode smoke test
+- 14 tests covering error paths, platform behavior, and daemon mode
 
 ## Non-Goals
 
 - Stress testing (covered by separate stress test infrastructure)
 - Performance benchmarking
-- Testing the daemon spawn path (tested manually, not in CI)
 - Testing macOS FileProvider .appex lifecycle (requires .app bundle)
