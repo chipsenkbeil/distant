@@ -6,7 +6,9 @@
 //! and `distant fs` commands.
 
 mod browse;
+mod daemon;
 mod directory_ops;
+mod edge_cases;
 mod file_create;
 mod file_delete;
 mod file_modify;
