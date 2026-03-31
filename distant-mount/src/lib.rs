@@ -71,11 +71,12 @@ async fn mount_fuse(
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("FUSE backend requires a mount point"))?;
+    let readonly = config.readonly;
     std::fs::create_dir_all(&mount_point)?;
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(handle, fs));
 
-    let session = backend::fuse::mount(rt, &mount_point)?;
+    let session = backend::fuse::mount(rt, &mount_point, readonly)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
@@ -96,6 +97,7 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
         .mount_point
         .clone()
         .ok_or_else(|| io::Error::other("NFS backend requires a mount point"))?;
+    let readonly = config.readonly;
     std::fs::create_dir_all(&mount_point)?;
 
     let fs = Arc::new(core::RemoteFs::init(channel, config).await?);
@@ -117,7 +119,7 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<MountHan
 
     // Mount now that the NFS server is accepting connections.
     // (The TCP socket is listening at the kernel level after bind().)
-    if let Err(e) = backend::nfs::os_mount(port, &mount_point) {
+    if let Err(e) = backend::nfs::os_mount(port, &mount_point, readonly) {
         let _ = shutdown_tx.send(());
         return Err(e);
     }

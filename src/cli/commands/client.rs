@@ -726,9 +726,11 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             if all {
                 #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
                 {
-                    distant_mount::macos::remove_all_file_provider_domains()
-                        .context("Failed to remove FileProvider domains")?;
-                    println!("Removed all distant FileProvider domains");
+                    if distant_mount::macos::is_running_in_app_bundle() {
+                        distant_mount::macos::remove_all_file_provider_domains()
+                            .context("Failed to remove FileProvider domains")?;
+                        println!("Removed all distant FileProvider domains");
+                    }
                 }
 
                 // Terminate all Cloud Files mount daemon processes and
@@ -873,9 +875,9 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
             }
 
-            // FileProvider domains
+            // FileProvider domains (only available inside .app bundle)
             #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-            {
+            if distant_mount::macos::is_running_in_app_bundle() {
                 let domains = distant_mount::macos::list_file_provider_domains()
                     .context("Failed to list FileProvider domains")?;
 

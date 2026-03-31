@@ -348,6 +348,7 @@ impl Filesystem for FuseHandler {
 pub(crate) fn mount(
     rt: Arc<Runtime>,
     mount_point: &std::path::Path,
+    readonly: bool,
 ) -> io::Result<fuser::BackgroundSession> {
     let handler = FuseHandler { rt };
     let mut config = fuser::Config::default();
@@ -355,6 +356,9 @@ pub(crate) fn mount(
         fuser::MountOption::FSName("distant".to_string()),
         fuser::MountOption::AutoUnmount,
     ];
+    if readonly {
+        config.mount_options.push(fuser::MountOption::RO);
+    }
     config.acl = SessionACL::All;
     fuser::spawn_mount2(handler, mount_point, &config)
         .map_err(|e| io::Error::other(format!("FUSE mount failed: {e}")))

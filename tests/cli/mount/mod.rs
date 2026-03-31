@@ -12,7 +12,12 @@ mod file_delete;
 mod file_modify;
 mod file_read;
 mod file_rename;
+mod multi_mount;
+mod readonly;
+mod remote_root;
+mod status;
 mod subdirectory;
+mod unmount;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -157,12 +162,22 @@ impl MountProcess {
 
 impl Drop for MountProcess {
     fn drop(&mut self) {
-        // Force-unmount BEFORE killing the mount process. Unmounting
-        // while the NFS server is alive is reliable; after the server
-        // dies, even `umount -f` can hang or fail. The mount_point was
-        // canonicalized at construction time so it matches the mount
-        // table entry (macOS: /private/var/... vs TempDir's /var/...).
-        #[cfg(unix)]
+        // Force-unmount BEFORE killing the mount process. Try both
+        // `umount -f` (works for NFS) and `diskutil unmount force`
+        // (works for macFUSE). The mount_point was canonicalized at
+        // construction time to match the mount table entry.
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("umount")
+                .arg("-f")
+                .arg(&self.mount_point)
+                .output();
+            let _ = std::process::Command::new("diskutil")
+                .args(["unmount", "force"])
+                .arg(&self.mount_point)
+                .output();
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             let _ = std::process::Command::new("umount")
                 .arg("-f")
@@ -175,20 +190,49 @@ impl Drop for MountProcess {
         let _ = self.child.wait();
         #[cfg(windows)]
         {
-            // Windows Cloud Files: unregister the sync root directly.
-            // The mount process being killed already disconnects, but
-            // unregistration cleans up the reparse points.
             let _ = std::process::Command::new(bin_path())
                 .args(["unmount"])
                 .arg(&self.mount_point)
                 .output();
         }
 
-        // Wait for the OS to release the mount point before removing it.
-        std::thread::sleep(Duration::from_millis(500));
+        // Poll until the mount actually disappears from the OS mount
+        // table. Without this, the next test may see a stale mount
+        // entry and produce spurious failures.
+        wait_for_unmount(&self.mount_point);
 
         let _ = std::fs::remove_dir_all(&self.mount_point);
     }
+}
+
+/// Poll the OS mount table until `mount_point` is no longer listed,
+/// or until the timeout expires (5 seconds).
+fn wait_for_unmount(mount_point: &Path) {
+    let mount_str = mount_point.to_string_lossy();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+
+    while std::time::Instant::now() < deadline {
+        let output = std::process::Command::new("mount")
+            .stdout(std::process::Stdio::piped())
+            .output();
+
+        match output {
+            Ok(o) => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                if !stdout.contains(mount_str.as_ref()) {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    eprintln!(
+        "warning: mount point {} still in mount table after 5s timeout",
+        mount_point.display()
+    );
 }
 
 /// Seed the standard test directory structure on the remote server.

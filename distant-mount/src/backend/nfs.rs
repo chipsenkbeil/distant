@@ -307,16 +307,17 @@ pub(crate) async fn start_server(
 ///
 /// Returns an error if the mount point path is not valid UTF-8 or the
 /// mount command fails.
-pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
+pub(crate) fn os_mount(port: u16, mount_point: &Path, readonly: bool) -> io::Result<()> {
     let mount_point_str = mount_point
         .to_str()
         .ok_or_else(|| io::Error::other("mount point is not valid UTF-8"))?;
+    let ro_suffix = if readonly { ",ro" } else { "" };
 
     #[cfg(target_os = "openbsd")]
     let status = std::process::Command::new("mount_nfs")
         .args([
             "-o",
-            &format!("port={port},mountport={port}"),
+            &format!("port={port},mountport={port}{ro_suffix}"),
             "-3",
             "-T",
             "localhost:/",
@@ -328,7 +329,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
     let status = std::process::Command::new("mount_nfs")
         .args([
             "-o",
-            &format!("port={port},mountport={port}"),
+            &format!("port={port},mountport={port}{ro_suffix}"),
             "-3",
             "-T",
             "localhost:/",
@@ -342,7 +343,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
             "-t",
             "nfs",
             "-o",
-            &format!("port={port},mountport={port},nfsvers=3,tcp,nolock"),
+            &format!("port={port},mountport={port},nfsvers=3,tcp,nolock{ro_suffix}"),
             "localhost:/",
             mount_point_str,
         ])
@@ -354,7 +355,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
     let output = std::process::Command::new("mount_nfs")
         .args([
             "-o",
-            &format!("port={port},mountport={port},nfsvers=3,tcp,nolocks"),
+            &format!("port={port},mountport={port},nfsvers=3,tcp,nolocks{ro_suffix}"),
             "localhost:/",
             mount_point_str,
         ])
@@ -366,7 +367,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
     let status = std::process::Command::new("mount_nfs")
         .args([
             "-o",
-            &format!("port={port},mountport={port},nfsv3,tcp,nolockd"),
+            &format!("port={port},mountport={port},nfsv3,tcp,nolockd{ro_suffix}"),
             "localhost:/",
             mount_point_str,
         ])
@@ -376,7 +377,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path) -> io::Result<()> {
     let status = std::process::Command::new("mount")
         .args([
             "-o",
-            &format!("port={port},mountport={port},nolock,mtype=hard"),
+            &format!("port={port},mountport={port},nolock,mtype=hard{ro_suffix}"),
             "localhost:/",
             mount_point_str,
         ])
