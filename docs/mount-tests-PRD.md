@@ -175,8 +175,8 @@ up via `distant unmount`.
 Build `target/test-Distant.app` during test setup so the FileProvider backend
 can be included in `available_backends()` and tested via `ManagerCtx`.
 
-- **P6.1** Add `mount-testing` feature flag to `distant-mount` and workspace
-- **P6.2** Gate `app_group_container_path()` override behind `mount-testing`
+- **P6.1** Add `testing` feature to `distant-mount`, `mount-testing` to workspace
+- **P6.2** Gate `app_group_container_path()` override behind `#[cfg(feature = "testing")]`
   - File-based override at `/tmp/distant-test-container-override`
   - Cross-process safe (test writes, .appex reads)
   - Code absent from production builds (no feature = no code)
@@ -197,6 +197,185 @@ can be included in `available_backends()` and tested via `ManagerCtx`.
   - mount-status shows FileProvider domain
   - Unmount by destination URL
   - Domain cleanup on test teardown
+
+## Phase 6 Implementation Details
+
+### Why this is needed
+
+The macOS FileProvider backend requires a `.app` bundle with a `.appex`
+extension registered via PlugInKit. `fileproviderd` (an Apple system daemon)
+launches the `.appex` as a separate process when Finder accesses the mount.
+No open-source project has automated this testing — distant would be the first.
+
+### Feature flag setup
+
+**`distant-mount/Cargo.toml`:**
+```toml
+[features]
+testing = []
+```
+
+**Workspace `Cargo.toml`:**
+```toml
+mount-testing = ["dep:distant-mount", "distant-mount/testing"]
+```
+
+`--all-features` (standard test command) enables both. Release builds with
+explicit features never include `mount-testing`.
+
+### app_group_container_path() override
+
+**File:** `distant-mount/src/backend/macos_file_provider/utils.rs`
+
+The override is gated by `#[cfg(feature = "testing")]` so the code is
+completely absent from production builds:
+
+```rust
+#[cfg(feature = "testing")]
+const CONTAINER_OVERRIDE_PATH: &str = "/tmp/distant-test-container-override";
+
+pub fn app_group_container_path() -> Option<PathBuf> {
+    #[cfg(feature = "testing")]
+    if let Ok(override_path) = std::fs::read_to_string(CONTAINER_OVERRIDE_PATH) {
+        let path = PathBuf::from(override_path.trim());
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+
+    // Production: NSFileManager API (requires provisioning profile)
+    let group_id = NSString::from_str(APP_GROUP_ID);
+    let manager = NSFileManager::defaultManager();
+    let url = manager.containerURLForSecurityApplicationGroupIdentifier(&group_id)?;
+    let path_ns = url.path()?;
+    Some(PathBuf::from(path_ns.to_string()))
+}
+```
+
+This works cross-process: the test writes the file, and the `.appex` (launched
+by `fileproviderd`) reads it. `fileproviderd` doesn't propagate env vars, so
+the file-based approach is necessary.
+
+All 13 call sites in the codebase go through `app_group_container_path()` or
+`domains_dir()`, so no other code changes are needed.
+
+### Test-specific entitlements
+
+**`resources/macos/test-distant.entitlements`:**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
+```
+
+**`resources/macos/test-distant-appex.entitlements`:** Same content.
+
+Omits `com.apple.security.app-sandbox` and `com.apple.security.application-groups`
+which are restricted entitlements requiring provisioning profiles. Without
+sandbox, the `.appex` can access any filesystem path including the override
+container directory.
+
+### build_test_app_bundle() fixture
+
+In `tests/cli/mount/mod.rs`:
+
+```rust
+#[cfg(all(feature = "mount-testing", target_os = "macos"))]
+fn build_test_app_bundle() -> PathBuf {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binary = workspace.join("target/debug/distant");
+    let bundle = workspace.join("target/test-Distant.app");
+    let main_in_bundle = bundle.join("Contents/MacOS/distant");
+
+    // Skip rebuild if bundle is up-to-date
+    if main_in_bundle.exists() {
+        let bin_mtime = std::fs::metadata(&binary).unwrap().modified().unwrap();
+        let bun_mtime = std::fs::metadata(&main_in_bundle).unwrap().modified().unwrap();
+        if bun_mtime >= bin_mtime {
+            return bundle;
+        }
+    }
+
+    // Build bundle with ad-hoc signing, test entitlements, no profiles
+    let status = std::process::Command::new("bash")
+        .arg(workspace.join("scripts/build-macos-bundle.sh"))
+        .arg(&binary)
+        .env("CODESIGN_IDENTITY", "-")
+        .env("ENTITLEMENTS", workspace.join("resources/macos/test-distant.entitlements"))
+        .env("APPEX_ENTITLEMENTS", workspace.join("resources/macos/test-distant-appex.entitlements"))
+        .env("APP_PROFILE", "")
+        .env("APPEX_PROFILE", "")
+        .status()
+        .expect("build-macos-bundle.sh failed");
+    assert!(status.success());
+
+    // Register with PlugInKit
+    let appex = bundle.join("Contents/PlugIns/DistantFileProvider.appex");
+    let _ = std::process::Command::new("pluginkit")
+        .args(["-a", appex.to_str().unwrap()])
+        .status();
+    let _ = std::process::Command::new("pluginkit")
+        .args(["-e", "use", "-i", "dev.distant.file-provider"])
+        .status();
+
+    bundle
+}
+```
+
+### FileProvider test setup
+
+```rust
+#[cfg(all(feature = "mount-testing", target_os = "macos"))]
+fn setup_file_provider_test(ctx: &ManagerCtx) -> TempDir {
+    let bundle = build_test_app_bundle();
+
+    // Override bin_path to use bundled binary
+    let _ = set_bin_path(bundle.join("Contents/MacOS/distant"));
+
+    // Create temp container and write override file
+    let container = TempDir::new().unwrap();
+    std::fs::create_dir_all(container.path().join("domains")).unwrap();
+    std::fs::write(
+        "/tmp/distant-test-container-override",
+        container.path().to_str().unwrap(),
+    ).unwrap();
+
+    // Symlink the manager socket into the container
+    std::os::unix::fs::symlink(
+        &ctx.socket_or_pipe,
+        container.path().join("distant.sock"),
+    ).unwrap();
+
+    container
+}
+```
+
+### Cleanup
+
+```rust
+fn cleanup_file_provider_test() {
+    let _ = std::fs::remove_file("/tmp/distant-test-container-override");
+    // Domains are removed by distant unmount --all
+}
+```
+
+### Key insight: same binary, two roles
+
+The `distant` binary serves both as CLI and as `.appex`. At startup
+(`src/main.rs`), if `NSBundle.bundlePath()` ends with `.appex`, it enters
+`macos_appex::main()` (XPC listener, never returns). Otherwise it processes
+CLI commands normally. The test uses the CLI path; `fileproviderd` launches
+the `.appex` copy.
+
+Both copies are the SAME binary (built with `--all-features` including
+`testing`), so both have the container override code.
 
 ## Non-Goals
 

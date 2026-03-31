@@ -117,14 +117,15 @@
 
 ## Phase 6: FileProvider In-Test .app Bundle (macOS only)
 
-- [ ] **P6.1** Add `mount-testing` feature flag
-  - `distant-mount/Cargo.toml`: `mount-testing = []`
-  - Workspace `Cargo.toml`: `mount-testing = ["distant-mount/mount-testing"]`
+- [ ] **P6.1** Add `testing` feature to `distant-mount`, `mount-testing` to workspace
+  - `distant-mount/Cargo.toml`: `testing = []`
+  - Workspace `Cargo.toml`: `mount-testing = ["distant-mount/testing"]`
   - `--all-features` enables it; release builds exclude it
+  - CLI tests use `#[cfg(feature = "mount-testing")]` to detect availability
   - Files: `distant-mount/Cargo.toml`, `Cargo.toml`
 
 - [ ] **P6.2** Gate `app_group_container_path()` override
-  - `#[cfg(feature = "mount-testing")]` file-based override
+  - `#[cfg(feature = "testing")]` file-based override (crate-level feature)
   - Reads `/tmp/distant-test-container-override` for container path
   - Override code absent from production builds
   - Files: `distant-mount/src/backend/macos_file_provider/utils.rs`
