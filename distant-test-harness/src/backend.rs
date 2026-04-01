@@ -13,7 +13,7 @@ use std::process::{Command as StdCommand, Stdio};
 
 use assert_cmd::Command;
 
-use crate::manager;
+use crate::{manager, singleton};
 
 /// Identifies which plugin backend a test should exercise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,10 +285,18 @@ impl BackendCtx {
 ///   Linux Docker daemon.
 pub fn ctx_for_backend(backend: Backend) -> Option<BackendCtx> {
     match backend {
-        Backend::Host => Some(BackendCtx::Host(manager::HostManagerCtx::start())),
+        Backend::Host => {
+            let handle = singleton::get_or_start_host();
+            Some(BackendCtx::Host(manager::HostManagerCtx::from_singleton(
+                handle,
+            )))
+        }
         Backend::Ssh => {
             which::which("sshd").ok()?;
-            Some(BackendCtx::Ssh(manager::SshManagerCtx::start()))
+            let handle = singleton::get_or_start_ssh();
+            Some(BackendCtx::Ssh(manager::SshManagerCtx::from_singleton(
+                handle,
+            )))
         }
         Backend::Docker => ctx_for_docker(),
     }
