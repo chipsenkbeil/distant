@@ -40,9 +40,13 @@ pub struct CtxCommand<T> {
 
 /// Context for some listening distant server
 pub struct HostManagerCtx {
-    manager: Child,
-    server: Child,
+    manager: Option<Child>,
+    server: Option<Child>,
     socket_or_pipe: String,
+    /// When false, Drop does not kill processes (singleton mode).
+    owns_processes: bool,
+    /// Holds the shared file lock alive for singleton contexts.
+    _lock_file: Option<std::fs::File>,
 }
 
 impl HostManagerCtx {
@@ -233,9 +237,23 @@ impl HostManagerCtx {
 
         eprintln!("Connected! Proceeding with test...");
         Self {
-            manager,
-            server: server.unwrap(),
+            manager: Some(manager),
+            server: Some(server.unwrap()),
             socket_or_pipe,
+            owns_processes: true,
+            _lock_file: None,
+        }
+    }
+
+    /// Creates a non-owning context that reuses a singleton server.
+    /// Drop will NOT kill any processes.
+    pub fn from_singleton(handle: crate::singleton::SingletonHandle) -> Self {
+        Self {
+            manager: None,
+            server: None,
+            socket_or_pipe: handle.socket_or_pipe,
+            owns_processes: false,
+            _lock_file: Some(handle.lock_file),
         }
     }
 
@@ -473,9 +491,16 @@ pub(crate) fn random_log_file(prefix: &str) -> PathBuf {
 
 impl Drop for HostManagerCtx {
     /// Kills manager, server, and all descendant processes upon drop.
+    /// In singleton mode (owns_processes=false), this is a no-op.
     fn drop(&mut self) {
-        process::kill_process_tree(&mut self.manager);
-        process::kill_process_tree(&mut self.server);
+        if self.owns_processes {
+            if let Some(ref mut manager) = self.manager {
+                process::kill_process_tree(manager);
+            }
+            if let Some(ref mut server) = self.server {
+                process::kill_process_tree(server);
+            }
+        }
     }
 }
 
@@ -656,12 +681,16 @@ impl Drop for ManagerOnlyCtx {
 /// then connects the manager to the sshd with `distant connect ssh://...`. Tests
 /// using this context exercise the full SSH plugin path.
 pub struct SshManagerCtx {
-    manager: Child,
+    manager: Option<Child>,
 
     /// Kept alive so the sshd process and its temp directory persist for the test.
-    _sshd: Sshd,
+    _sshd: Option<Sshd>,
 
     socket_or_pipe: String,
+    /// When false, Drop does not kill processes (singleton mode).
+    owns_processes: bool,
+    /// Holds the shared file lock alive for singleton contexts.
+    _lock_file: Option<std::fs::File>,
 }
 
 impl SshManagerCtx {
@@ -763,9 +792,11 @@ impl SshManagerCtx {
             if output.status.success() {
                 eprintln!("SshManagerCtx: Connected via SSH! Proceeding with test...");
                 return Self {
-                    manager,
-                    _sshd: sshd,
+                    manager: Some(manager),
+                    _sshd: Some(sshd),
                     socket_or_pipe,
+                    owns_processes: true,
+                    _lock_file: None,
                 };
             }
 
@@ -880,8 +911,26 @@ impl SshManagerCtx {
 
 impl Drop for SshManagerCtx {
     /// Kills the manager process. The sshd cleans itself up via its own Drop.
+    /// In singleton mode (owns_processes=false), this is a no-op.
     fn drop(&mut self) {
-        process::kill_process_tree(&mut self.manager);
+        if self.owns_processes
+            && let Some(ref mut manager) = self.manager
+        {
+            process::kill_process_tree(manager);
+        }
+    }
+}
+
+impl SshManagerCtx {
+    /// Creates a non-owning context that reuses a singleton SSH server.
+    pub fn from_singleton(handle: crate::singleton::SingletonHandle) -> Self {
+        Self {
+            manager: None,
+            _sshd: None,
+            socket_or_pipe: handle.socket_or_pipe,
+            owns_processes: false,
+            _lock_file: Some(handle.lock_file),
+        }
     }
 }
 
