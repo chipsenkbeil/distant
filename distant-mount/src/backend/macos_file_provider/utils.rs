@@ -48,9 +48,25 @@ pub fn app_group_container_path() -> Option<PathBuf> {
     let group_id = app_group_id();
     let group_ns = NSString::from_str(&group_id);
     let manager = NSFileManager::defaultManager();
-    let url = manager.containerURLForSecurityApplicationGroupIdentifier(&group_ns)?;
-    let path_ns = url.path()?;
-    Some(PathBuf::from(path_ns.to_string()))
+
+    // Try the system API first (works with provisioning profiles).
+    if let Some(url) = manager.containerURLForSecurityApplicationGroupIdentifier(&group_ns)
+        && let Some(path_ns) = url.path()
+    {
+        return Some(PathBuf::from(path_ns.to_string()));
+    }
+
+    // Fallback: construct the path manually. On macOS outside the sandbox,
+    // containerURLForSecurityApplicationGroupIdentifier may return nil for
+    // group IDs not in the entitlements (e.g., ad-hoc signed test bundles).
+    // The directory lives at ~/Library/Group Containers/{group_id}/.
+    let home = std::env::var("HOME").ok()?;
+    let container = PathBuf::from(home)
+        .join("Library")
+        .join("Group Containers")
+        .join(&group_id);
+    std::fs::create_dir_all(&container).ok()?;
+    Some(container)
 }
 
 /// Returns `true` if this process is running as a macOS `.appex` FileProvider extension.
@@ -79,19 +95,40 @@ fn read_info_key_from_main_bundle(key: &str) -> Option<String> {
 /// the host `.app` bundle. Returns `None` if not running in a bundle or
 /// the `.appex` is not found.
 fn read_info_key_from_embedded_appex(key: &str) -> Option<String> {
-    let plugins_path = NSBundle::mainBundle().builtInPlugInsPath()?;
-    let appex_path = PathBuf::from(plugins_path.to_string()).join("DistantFileProvider.appex");
+    // Try NSBundle's builtInPlugInsPath first (standard approach).
+    let appex_path = NSBundle::mainBundle()
+        .builtInPlugInsPath()
+        .map(|p| PathBuf::from(p.to_string()).join("DistantFileProvider.appex"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            // Fallback: resolve relative to the binary's own path.
+            // When invoked via absolute path (not `open -a`), NSBundle may
+            // not resolve builtInPlugInsPath. Walk from the binary location
+            // (Contents/MacOS/) up to Contents/ then into PlugIns/.
+            let exe = std::env::current_exe().ok()?;
+            let contents = exe.parent()?.parent()?;
+            let candidate = contents.join("PlugIns").join("DistantFileProvider.appex");
+            candidate.exists().then_some(candidate)
+        });
 
-    if !appex_path.exists() {
-        return None;
-    }
-
+    let appex_path = appex_path?;
     let appex_path_ns = NSString::from_str(&appex_path.to_string_lossy());
-
     let appex_bundle = NSBundle::bundleWithPath(&appex_path_ns)?;
 
+    // The key is nested inside the NSExtension dictionary in the plist,
+    // not at the top level. Read NSExtension first, then the nested key.
+    let ext_key = NSString::from_str("NSExtension");
+    let ext_dict = appex_bundle.objectForInfoDictionaryKey(&ext_key)?;
+
+    // SAFETY: NSExtension value is an NSDictionary. The downcast is safe
+    // because we know the plist structure.
+    use objc2_foundation::NSDictionary;
+    let dict: &NSDictionary<NSString, objc2::runtime::AnyObject> = unsafe {
+        &*((&*ext_dict) as *const _ as *const NSDictionary<NSString, objc2::runtime::AnyObject>)
+    };
+
     let key_ns = NSString::from_str(key);
-    let value = appex_bundle.objectForInfoDictionaryKey(&key_ns)?;
+    let value = dict.objectForKey(&key_ns)?;
 
     let ns_str: &NSString = unsafe { &*((&*value) as *const _ as *const NSString) };
     let s = ns_str.to_string();
