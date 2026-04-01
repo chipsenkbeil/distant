@@ -100,27 +100,28 @@
 
 ## Phase 6: FileProvider In-Test .app Bundle (macOS only)
 
-- [ ] **P6.1** Replace hardcoded `APP_GROUP_ID` with plist reading
-  - Read `NSExtensionFileProviderDocumentGroup` from .appex's Info.plist
+- [x] **P6.1** Replace hardcoded `APP_GROUP_ID` with plist reading
+  - Reads `NSExtensionFileProviderDocumentGroup` from .appex's Info.plist
   - .appex reads from own main bundle; host app reads from embedded .appex
   - Falls back to hardcoded default outside any bundle
   - No feature flag needed — plist contents drive behavior
   - Files: `distant-mount/src/backend/macos_file_provider/utils.rs`
 
-- [ ] **P6.2** `build_test_app_bundle()` fixture (all in Rust)
-  - Creates .app bundle directory structure
-  - Copies test binary to app + appex locations
+- [x] **P6.2** `build_test_app_bundle()` fixture (all in Rust)
+  - Creates .app bundle dir structure, copies binary twice
   - Copies production plists, replaces group ID with `group.dev.distant.test`
   - Writes test entitlements inline (no sandbox, no app-groups)
-  - Signs with `codesign -s -` (ad-hoc), registers with `pluginkit -a`
+  - Signs ad-hoc (appex first, then app), registers with pluginkit
   - Skips rebuild if up-to-date (mtime check)
   - No shell script, no test resource files
   - Files: `tests/cli/mount/mod.rs`
 
-- [ ] **P6.3** FileProvider test setup + cases
-  - `set_bin_path()` to bundled binary
-  - Symlink manager socket into test container
-  - Tests: list files, mount-status, unmount by URL, cleanup
+- [-] **P6.3** FileProvider test setup + cases
+  - FP-01: bundle binary is executable (--version) — passing
+  - FP-02: appex plist has test group ID, not production — passing
+  - FP-03: codesign --verify --deep --strict passes — passing
+  - TODO: Full FileProvider mount test (socket symlink, domain registration,
+    file listing via ~/Library/CloudStorage/)
   - Files: `tests/cli/mount/file_provider.rs`
 
 ---

@@ -12,6 +12,8 @@ mod edge_cases;
 mod file_create;
 mod file_delete;
 mod file_modify;
+#[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+mod file_provider;
 mod file_read;
 mod file_rename;
 mod multi_mount;
@@ -28,6 +30,172 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use distant_test_harness::manager::*;
+
+/// Build a signed macOS `.app` bundle for FileProvider integration tests.
+///
+/// Creates a `test-Distant.app` bundle inside the workspace's `target/` directory
+/// using the compiled test binary. The appex's `Info.plist` is patched to use
+/// the test App Group ID (`group.dev.distant.test`) instead of the production one.
+///
+/// The bundle is signed ad-hoc and registered with PlugInKit so that macOS
+/// recognizes the FileProvider extension.
+///
+/// Skips the build if the existing bundle binary is newer than the source binary.
+///
+/// # Panics
+///
+/// Panics if any filesystem operation, code signing, or PlugInKit registration fails.
+#[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+pub fn build_test_app_bundle() -> std::path::PathBuf {
+    use std::fs;
+    use std::process::Command;
+
+    let source_binary = bin_path();
+
+    // The workspace root is the parent of the binary crate directory.
+    // env!("CARGO_MANIFEST_DIR") points to the binary crate's directory,
+    // which IS the workspace root for this project.
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let target_dir = workspace_root.join("target");
+
+    let app_path = target_dir.join("test-Distant.app");
+    let contents = app_path.join("Contents");
+    let macos_dir = contents.join("MacOS");
+    let plugins_dir = contents.join("PlugIns");
+    let appex_path = plugins_dir.join("DistantFileProvider.appex");
+    let appex_contents = appex_path.join("Contents");
+    let appex_macos = appex_contents.join("MacOS");
+
+    let bundle_binary = macos_dir.join("distant");
+
+    // Check if the bundle is already up-to-date by comparing mtimes
+    if bundle_binary.exists() {
+        let source_mtime = fs::metadata(&source_binary).and_then(|m| m.modified()).ok();
+        let bundle_mtime = fs::metadata(&bundle_binary).and_then(|m| m.modified()).ok();
+
+        if let (Some(src), Some(dst)) = (source_mtime, bundle_mtime)
+            && dst >= src
+        {
+            eprintln!("test-Distant.app is up-to-date, skipping rebuild");
+            return app_path;
+        }
+    }
+
+    eprintln!("Building test-Distant.app bundle...");
+
+    // Create the directory structure
+    fs::create_dir_all(&macos_dir)
+        .unwrap_or_else(|e| panic!("failed to create {}: {e}", macos_dir.display()));
+    fs::create_dir_all(&appex_macos)
+        .unwrap_or_else(|e| panic!("failed to create {}: {e}", appex_macos.display()));
+
+    // Copy the test binary into both locations
+    fs::copy(&source_binary, &bundle_binary).unwrap_or_else(|e| {
+        panic!(
+            "failed to copy {} -> {}: {e}",
+            source_binary.display(),
+            bundle_binary.display()
+        )
+    });
+    let appex_binary = appex_macos.join("distant");
+    fs::copy(&source_binary, &appex_binary).unwrap_or_else(|e| {
+        panic!(
+            "failed to copy {} -> {}: {e}",
+            source_binary.display(),
+            appex_binary.display()
+        )
+    });
+
+    // Copy the app's Info.plist as-is
+    let resources_dir = workspace_root.join("resources").join("macos");
+    let app_plist_src = resources_dir.join("Info.plist");
+    let app_plist_dst = contents.join("Info.plist");
+    fs::copy(&app_plist_src, &app_plist_dst).unwrap_or_else(|e| {
+        panic!(
+            "failed to copy {} -> {}: {e}",
+            app_plist_src.display(),
+            app_plist_dst.display()
+        )
+    });
+
+    // Copy the appex's Info.plist with the test App Group ID substitution
+    let appex_plist_src = resources_dir.join("Extension-Info.plist");
+    let appex_plist_content = fs::read_to_string(&appex_plist_src)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", appex_plist_src.display()));
+    let appex_plist_patched =
+        appex_plist_content.replace("39C6AGD73Z.group.dev.distant", "group.dev.distant.test");
+    let appex_plist_dst = appex_contents.join("Info.plist");
+    fs::write(&appex_plist_dst, &appex_plist_patched)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", appex_plist_dst.display()));
+
+    // Write test entitlements to a temp file
+    let entitlements_content = "\
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
+";
+    let entitlements_path = target_dir.join("test-distant-entitlements.plist");
+    fs::write(&entitlements_path, entitlements_content).unwrap_or_else(|e| {
+        panic!(
+            "failed to write entitlements to {}: {e}",
+            entitlements_path.display()
+        )
+    });
+
+    // Sign the appex first (inner-to-outer as required by Apple)
+    let status = Command::new("codesign")
+        .args(["-s", "-", "-f", "--entitlements"])
+        .arg(&entitlements_path)
+        .arg(&appex_path)
+        .status()
+        .expect("failed to run codesign on appex");
+    assert!(
+        status.success(),
+        "codesign failed on appex (exit code: {status})"
+    );
+
+    // Then sign the app bundle
+    let status = Command::new("codesign")
+        .args(["-s", "-", "-f", "--entitlements"])
+        .arg(&entitlements_path)
+        .arg(&app_path)
+        .status()
+        .expect("failed to run codesign on app");
+    assert!(
+        status.success(),
+        "codesign failed on app bundle (exit code: {status})"
+    );
+
+    // Register the appex with PlugInKit
+    let status = Command::new("pluginkit")
+        .args(["-a"])
+        .arg(&appex_path)
+        .status()
+        .expect("failed to run pluginkit -a");
+    assert!(
+        status.success(),
+        "pluginkit -a failed (exit code: {status})"
+    );
+
+    let status = Command::new("pluginkit")
+        .args(["-e", "use", "-i", "dev.distant.file-provider"])
+        .status()
+        .expect("failed to run pluginkit -e use");
+    assert!(
+        status.success(),
+        "pluginkit -e use failed (exit code: {status})"
+    );
+
+    eprintln!("test-Distant.app bundle built and signed successfully");
+    app_path
+}
 
 /// Returns the mount backend names available on this platform.
 ///
