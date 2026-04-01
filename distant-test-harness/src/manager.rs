@@ -462,7 +462,7 @@ pub(crate) fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) 
     }
 }
 
-fn random_log_file(prefix: &str) -> PathBuf {
+pub(crate) fn random_log_file(prefix: &str) -> PathBuf {
     ROOT_LOG_DIR.join(format!(
         "{}.{}.{}.log",
         prefix,

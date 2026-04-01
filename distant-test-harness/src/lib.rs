@@ -5,6 +5,7 @@ pub mod manager;
 pub mod process;
 pub mod pty;
 pub mod scripts;
+pub mod singleton;
 pub mod sshd;
 pub mod utils;
 
