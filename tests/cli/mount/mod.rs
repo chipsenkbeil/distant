@@ -52,11 +52,19 @@ use distant_test_harness::mount::MountBackend;
 )]
 fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
+mod backend;
 mod browse;
+mod daemon;
 mod directory_ops;
+mod edge_cases;
 mod file_create;
 mod file_delete;
 mod file_modify;
 mod file_read;
 mod file_rename;
+mod multi_mount;
+mod readonly;
+mod remote_root;
+mod status;
 mod subdirectory;
+mod unmount;

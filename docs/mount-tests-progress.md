@@ -47,22 +47,22 @@
 
 ## Phase 4: Mount Management
 
-- [ ] **P4.1** `readonly.rs` — RDO-01, RDO-02, RDO-03
-- [ ] **P4.2** `remote_root.rs` — RRT-01, RRT-02
-- [ ] **P4.3** `multi_mount.rs` — MML-01, MML-02, MML-03
-- [ ] **P4.4** `status.rs` — MST-01, MST-02, MST-03
-- [ ] **P4.5** `unmount.rs` — UMT-01, UMT-02, UMT-03
+- [x] **P4.1** `readonly.rs` — RDO-01..03 — pass (except FP)
+- [x] **P4.2** `remote_root.rs` — RRT-01..02 — pass (except FP)
+- [x] **P4.3** `multi_mount.rs` — MML-01..03 — pass (except FP)
+- [-] **P4.4** `status.rs` — MST-01..03 — MST-03 (no mounts) fails all backends (stale mount cleanup needed)
+- [x] **P4.5** `unmount.rs` — UMT-01..03 — pass (except FP)
 
 ---
 
 ## Phase 5: Edge Cases + Daemon + Backend-Specific
 
-- [ ] **P5.1** `edge_cases.rs` — EDG-01..05
-- [ ] **P5.2** `daemon.rs` — DMN-01
-- [ ] **P5.3** `backend/nfs.rs` — BKE-NFS-*
-- [ ] **P5.4** `backend/fuse.rs` — BKE-FUSE-*
-- [ ] **P5.5** `backend/macos_file_provider.rs` — FP-01..04
-- [ ] **P5.6** `backend/windows_cloud_files.rs` — BKE-WCF-*
+- [x] **P5.1** `edge_cases.rs` — EDG-01..05 — pass (except FP + ssh_fuse timing)
+- [x] **P5.2** `daemon.rs` — DMN-01 — pass (except FP)
+- [x] **P5.3** `backend/nfs.rs` — BKE-NFS — pass
+- [x] **P5.4** `backend/fuse.rs` — BKE-FUSE — pass
+- [-] **P5.5** `backend/macos_file_provider.rs` — FP-01..04 — needs .app bundle wiring
+- [x] **P5.6** `backend/windows_cloud_files.rs` — stub (Windows only)
 
 ---
 
