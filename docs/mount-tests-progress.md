@@ -8,12 +8,15 @@
 
 ## Phase A: Production Code Fixes
 
-- [x] **A1** Fix FUSE+SSH EIO bug
-  - Root cause: write_buffers Mutex held across network I/O in flush()
-  - Fix: Extract data under lock, release lock, then do network I/O
-  - Also: added warn!() logging to io_error_to_errno + more errno mappings
-  - All ssh_fuse tests now pass (198/199, 1 docker_nfs sync timing → B1)
-  - Unlocks: B2 (remove mount_op_or_skip macro)
+- [-] **A1** Fix FUSE+SSH EIO bug
+  - Fixed: write_buffers Mutex held across network I/O in flush()
+  - Fixed: double-slash path bug in normalize_path (used typed-path normalize/join)
+  - Added: warn!() logging to io_error_to_errno + more errno mappings
+  - Status: EIO still intermittent on ssh_fuse write tests (6/199 fail).
+    Log shows FUSE create/write/flush callbacks never fire — macFUSE returns
+    EIO before our handler runs. Needs deeper investigation of macFUSE
+    daemon_timeout or SFTP connection state.
+  - Unlocks: B2 (remove mount_op_or_skip macro) — blocked until EIO resolved
 
 - [ ] **A2** Enforce readonly on WCF + FileProvider
   - Investigate native readonly support in Cloud Filter API and NSFileProviderDomain
@@ -47,7 +50,8 @@
   - Replace `wait_for_sync()` (2s sleep) and 50ms sleep in rapid test
 
 - [ ] **B2** Remove `mount_op_or_skip!` macro (depends on A1)
-  - Replace all uses with `.unwrap_or_else(|e| panic!(...))`
+  - Already removed in current code, but ssh_fuse tests fail without it
+  - Need to either fix EIO root cause or bring macro back as safety net
   - All write operations must succeed for all backends
 
 - [ ] **B3** Fix all test hacks
@@ -90,6 +94,22 @@
 - [ ] **D1** Update MANUAL_TESTING.md with final results
 - [ ] **D2** Final update of PRD + progress docs
 - [ ] **D3** Update docs/TODO.md with deferred items (same as A5)
+
+---
+
+## Singleton Test Server Infrastructure (Completed)
+
+- [x] Add `fs4`, `serde` dependencies to test harness
+- [x] Add `--shutdown lonely=N` to `distant manager listen`
+- [x] Create `singleton.rs` with file-lock coordination, stale cleanup
+- [x] Add `owns_processes` + `_lock_file` to context types, gate Drop
+- [x] Wire `ctx_for_backend()` to use singleton servers
+- [x] Detach singleton processes (process_group), adjust nextest config
+- [x] Update TODO.md with sshd/Docker cleanup note (TD-0)
+
+**Result:** Test run time reduced from 595s → ~400s. Only 3 singleton
+processes (2 managers + 1 server) instead of hundreds. Mount parallelism
+set to 2 (each mount is a heavy FUSE/NFS daemon).
 
 ---
 
