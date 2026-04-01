@@ -262,13 +262,6 @@ impl Api for DockerApi {
         options: WriteFileOptions,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
-            if options.offset.is_some() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "offset writes not supported for Docker containers",
-                ));
-            }
-
             let path_str = path.as_str();
 
             if options.append {
@@ -300,6 +293,21 @@ impl Api for DockerApi {
                 let mut combined = existing;
                 combined.extend_from_slice(&data);
                 utils::tar_write_file(self.client.inner(), &self.container, path_str, &combined)
+                    .await
+            } else if let Some(offset) = options.offset {
+                // Offset write: read existing content, patch the range, write back.
+                let mut existing =
+                    utils::tar_read_file(self.client.inner(), &self.container, path_str)
+                        .await
+                        .unwrap_or_default();
+
+                let end = offset as usize + data.len();
+                if end > existing.len() {
+                    existing.resize(end, 0);
+                }
+                existing[offset as usize..end].copy_from_slice(&data);
+
+                utils::tar_write_file(self.client.inner(), &self.container, path_str, &existing)
                     .await
             } else {
                 utils::tar_write_file(self.client.inner(), &self.container, path_str, &data).await

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use distant_core::protocol::{
-    FileType, SearchQueryCondition, SearchQueryMatch, SearchQueryOptions,
+    FileType, SearchQueryCondition, SearchQueryMatch, SearchQueryOptions, WriteFileOptions,
 };
 use distant_core::{ChannelExt, Client};
 use distant_test_harness::docker::{Ctx, client, client_with_tunnel_tools};
@@ -97,6 +97,138 @@ async fn append_file_should_append_data(#[future] client: Option<Ctx<Client>>) {
         .await
         .unwrap();
     assert_eq!(result, b"hello world");
+
+    let _ = client.remove(path, false).await;
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn write_file_with_offset_should_patch_existing_content(
+    #[future] client: Option<Ctx<Client>>,
+) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = test_temp_dir().join("distant-test-offset-write.txt");
+
+    client
+        .write_file(path.clone(), b"hello world".to_vec(), Default::default())
+        .await
+        .unwrap();
+    client
+        .write_file(
+            path.clone(),
+            b"WORLD".to_vec(),
+            WriteFileOptions {
+                offset: Some(6),
+                append: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(result, b"hello WORLD");
+
+    let _ = client.remove(path, false).await;
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn write_file_with_offset_beyond_end_should_extend_file(
+    #[future] client: Option<Ctx<Client>>,
+) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = test_temp_dir().join("distant-test-offset-extend.txt");
+
+    client
+        .write_file(path.clone(), b"abc".to_vec(), Default::default())
+        .await
+        .unwrap();
+    client
+        .write_file(
+            path.clone(),
+            b"xyz".to_vec(),
+            WriteFileOptions {
+                offset: Some(5),
+                append: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
+    // Bytes 3..5 should be zero-filled
+    assert_eq!(result, b"abc\0\0xyz");
+
+    let _ = client.remove(path, false).await;
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn write_file_with_offset_zero_should_overwrite_from_start(
+    #[future] client: Option<Ctx<Client>>,
+) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = test_temp_dir().join("distant-test-offset-zero.txt");
+
+    client
+        .write_file(path.clone(), b"hello".to_vec(), Default::default())
+        .await
+        .unwrap();
+    client
+        .write_file(
+            path.clone(),
+            b"XX".to_vec(),
+            WriteFileOptions {
+                offset: Some(0),
+                append: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(result, b"XXllo");
+
+    let _ = client.remove(path, false).await;
+}
+
+#[rstest]
+#[test(tokio::test)]
+async fn write_file_with_offset_to_nonexistent_should_create_with_zero_fill(
+    #[future] client: Option<Ctx<Client>>,
+) {
+    let mut client = skip_if_no_docker!(client.await);
+    let path = test_temp_dir().join("distant-test-offset-nonexistent.txt");
+
+    // Ensure file doesn't exist
+    let _ = client.remove(path.clone(), false).await;
+
+    client
+        .write_file(
+            path.clone(),
+            b"abc".to_vec(),
+            WriteFileOptions {
+                offset: Some(3),
+                append: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
+    assert_eq!(result, b"\0\0\0abc");
 
     let _ = client.remove(path, false).await;
 }

@@ -8,15 +8,14 @@
 
 ## Phase A: Production Code Fixes
 
-- [-] **A1** Fix FUSE+SSH EIO bug
+- [x] **A1** Fix FUSE+SSH EIO bug
   - Fixed: write_buffers Mutex held across network I/O in flush()
   - Fixed: double-slash path bug in normalize_path (used typed-path normalize/join)
+  - Fixed: SFTP errors mapped to correct io::ErrorKind (sftp_io_error helper)
+    Root cause: all SFTP errors were ErrorKind::Other → mapped to EIO by FUSE.
+    macFUSE got EIO from lookup (instead of ENOENT) and refused to call create().
   - Added: warn!() logging to io_error_to_errno + more errno mappings
-  - Status: EIO still intermittent on ssh_fuse write tests (6/199 fail).
-    Log shows FUSE create/write/flush callbacks never fire — macFUSE returns
-    EIO before our handler runs. Needs deeper investigation of macFUSE
-    daemon_timeout or SFTP connection state.
-  - Unlocks: B2 (remove mount_op_or_skip macro) — blocked until EIO resolved
+  - Result: 198/199 pass (1 docker_nfs append timing issue remains)
 
 - [ ] **A2** Enforce readonly on WCF + FileProvider
   - Investigate native readonly support in Cloud Filter API and NSFileProviderDomain
@@ -35,24 +34,20 @@
   - Mount point detection: `~/Library/CloudStorage/Distant-*`
   - Unlocks: B4, C1
 
-- [ ] **A5** Update docs/TODO.md with deferred features
-  - setattr (pending distant protocol), symlinks, hard links
-  - File locking, extended attributes, large file streaming
+- [x] **A5** Update docs/TODO.md with deferred features
+  - Updated Issue #145 with remaining mount work items
+  - Added TD-0 for singleton sshd/Docker cleanup
 
 ---
 
 ## Phase B: Test Infrastructure Improvements
 
-- [ ] **B1** Replace fixed sleeps with polling helpers
-  - `wait_until_exists(ctx, path)` — polls every 200ms, 10s timeout
-  - `wait_until_content(ctx, path, expected)` — same
-  - `wait_until_gone(ctx, path)` — same
-  - Replace `wait_for_sync()` (2s sleep) and 50ms sleep in rapid test
+- [x] **B1** Replace fixed sleeps with polling helpers
+  - wait_until_exists, wait_until_content, wait_until_gone in mount.rs
+  - All write tests use polling instead of wait_for_sync() sleep
 
-- [ ] **B2** Remove `mount_op_or_skip!` macro (depends on A1)
-  - Already removed in current code, but ssh_fuse tests fail without it
-  - Need to either fix EIO root cause or bring macro back as safety net
-  - All write operations must succeed for all backends
+- [x] **B2** Remove `mount_op_or_skip!` macro
+  - Removed — all ssh_fuse write tests now pass with SFTP error mapping fix
 
 - [ ] **B3** Fix all test hacks
   - FRN-02: Cross-dir rename must assert success (not graceful skip)

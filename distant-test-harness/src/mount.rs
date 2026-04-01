@@ -212,9 +212,25 @@ pub fn wait_until_exists(ctx: &BackendCtx, path: &str) {
 
 /// Poll until a remote file has the expected content, or panic after 10 seconds.
 pub fn wait_until_content(ctx: &BackendCtx, path: &str, expected: &str) {
-    poll_until(
-        || ctx.cli_exists(path) && ctx.cli_read(path) == expected,
-        &format!("waiting for {path} to contain {expected:?}"),
+    let start = Instant::now();
+    let timeout = Duration::from_secs(10);
+    let interval = Duration::from_millis(200);
+
+    while start.elapsed() < timeout {
+        if ctx.cli_exists(path) && ctx.cli_read(path) == expected {
+            return;
+        }
+        std::thread::sleep(interval);
+    }
+
+    let actual = if ctx.cli_exists(path) {
+        ctx.cli_read(path)
+    } else {
+        "<file does not exist>".to_string()
+    };
+    panic!(
+        "poll timeout after {}s: waiting for {path} to contain {expected:?}, actual: {actual:?}",
+        timeout.as_secs()
     );
 }
 
