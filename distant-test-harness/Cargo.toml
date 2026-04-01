@@ -7,12 +7,14 @@ publish = false
 [features]
 default = []
 docker = ["dep:distant-docker", "dep:bollard"]
+mount = ["dep:distant-mount"]
 
 [dependencies]
 distant-core = { path = "../distant-core" }
 distant-host = { path = "../distant-host" }
 distant-ssh = { path = "../distant-ssh", default-features = false, features = ["serde"] }
 distant-docker = { path = "../distant-docker", optional = true }
+distant-mount = { path = "../distant-mount", optional = true }
 anyhow = "1"
 assert_cmd = "2"
 assert_fs = "1"
@@ -23,6 +25,7 @@ indoc = "2"
 log = "0.4"
 predicates = "3"
 rstest = "0.26"
+rstest_reuse = "0.7"
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 whoami = "2"

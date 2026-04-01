@@ -732,12 +732,10 @@ fn handle_modified_file(
     });
 
     match upload_result {
-        Ok(()) => log::info!(
-            "cloud_files: watcher synced modified {relative_path_str} to remote"
-        ),
-        Err(e) => log::error!(
-            "cloud_files: watcher failed to sync modified {relative_path_str}: {e}"
-        ),
+        Ok(()) => log::info!("cloud_files: watcher synced modified {relative_path_str} to remote"),
+        Err(e) => {
+            log::error!("cloud_files: watcher failed to sync modified {relative_path_str}: {e}")
+        }
     }
 }
 

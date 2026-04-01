@@ -27,7 +27,12 @@ version = "0.21.0-dev"
 license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ci)'] }
+# The mount feature values are used in rstest_reuse templates defined in the
+# test harness but evaluated at the binary crate's expansion site.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(ci)',
+    'cfg(feature, values("mount-nfs", "mount-fuse", "mount-windows-cloud-files", "mount-macos-file-provider"))',
+] }
 warnings = { level = "deny", priority = -1 }
 
 [workspace.lints.clippy]
@@ -106,7 +111,7 @@ windows-service = "0.8.0"
 [dev-dependencies]
 assert_cmd = "2.1"
 assert_fs = "1.1.3"
-distant-test-harness = { path = "distant-test-harness", features = ["docker"] }
+distant-test-harness = { path = "distant-test-harness", features = ["docker", "mount"] }
 env_logger = "0.11.9"
 expectrl = "0.8"
 indoc = "2.0.7"
@@ -114,6 +119,7 @@ portable-pty = "0.9.0"
 predicates = "3.1.4"
 regex = "1"
 rstest = "0.26.1"
+rstest_reuse = "0.7"
 serde_json = "1"
 test-log = "0.2.19"
 toml = "0.7"

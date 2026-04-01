@@ -8,21 +8,22 @@
 
 ## Phase 1: Harness + Templates
 
-- [ ] **P1.1** Add mount support to test harness
-  - `distant-test-harness/Cargo.toml`: `mount = ["dep:distant-mount"]`
-  - `distant-test-harness/src/lib.rs`: `#[cfg(feature = "mount")] pub mod mount;`
-  - Add `rstest_reuse = "0.7"` dependency
-  - Wire into workspace `Cargo.toml`
+- [x] **P1.1** Add mount support to test harness
+  - Harness: `mount = ["dep:distant-mount"]` feature + rstest_reuse dep
+  - Workspace: extended check-cfg for mount feature names in templates
+  - Binary crate: `distant-test-harness` gets `mount` feature + rstest_reuse
 
-- [ ] **P1.2** Create `distant-test-harness/src/mount.rs`
-  - Re-export `distant_mount::MountBackend`
-  - `MountProcess` struct with spawn/wait/cleanup
-  - `wait_for_unmount()` polling helper
-  - `build_test_app_bundle()` for FileProvider (macOS only)
-  - `all_plugins` template (Host, SSH, Docker with cfg_attr)
-  - `plugin_x_mount` template (all plugin x mount combos with cfg_attr)
+- [x] **P1.2** Create `distant-test-harness/src/mount.rs`
+  - Re-exports MountBackend from distant_mount
+  - MountProcess with spawn/wait/canonical-path/umount/wait_for_unmount
+  - build_test_app_bundle() for FileProvider (macOS, all in Rust)
+  - all_plugins + plugin_x_mount templates with cfg_attr cases
 
-- [ ] **P1.3** Verify templates compile and expand correctly
+- [x] **P1.3** Verify templates compile and expand correctly
+  - Template defined in tests/cli/mount/mod.rs (binary crate context for cfg_attr)
+  - Generates 6 cases on macOS: host_nfs, ssh_nfs, docker_nfs, host_fuse, ssh_fuse, host_fp
+  - 5/6 pass (FileProvider needs .app bundle — Phase 5)
+  - Template re-exported from harness doesn't work (cfg_attr evaluated at harness compile time)
 
 ---
 
