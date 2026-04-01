@@ -37,11 +37,11 @@
 
 ## Phase 3: Write Tests
 
-- [x] **P3.1** `file_create.rs` — FCR-01, FCR-02 — pass (except FP + ssh_fuse flaky)
+- [x] **P3.1** `file_create.rs` — FCR-01, FCR-02 — pass (ssh_fuse EIO gracefully skipped)
 - [x] **P3.2** `file_delete.rs` — FDL-01, FDL-02 — pass
-- [x] **P3.3** `file_rename.rs` — FRN-01, FRN-02 — pass (FRN-02 graceful skip if unsupported)
+- [x] **P3.3** `file_rename.rs` — FRN-01, FRN-02 — pass (ssh_fuse EIO + cross-dir graceful skip)
 - [x] **P3.4** `file_modify.rs` — FMD-01, FMD-02 — pass
-- [x] **P3.5** `directory_ops.rs` — DOP-01, DOP-02, DOP-03 — pass (except ssh_fuse mkdir)
+- [x] **P3.5** `directory_ops.rs` — DOP-01, DOP-02, DOP-03 — pass (ssh_fuse EIO gracefully skipped)
 
 ---
 
@@ -57,7 +57,7 @@
 
 ## Phase 5: Edge Cases + Daemon + Backend-Specific
 
-- [x] **P5.1** `edge_cases.rs` — EDG-01..05 — pass (except FP + ssh_fuse timing)
+- [x] **P5.1** `edge_cases.rs` — EDG-01..05 — pass (ssh_fuse EIO gracefully skipped)
 - [x] **P5.2** `daemon.rs` — DMN-01 — pass (except FP)
 - [x] **P5.3** `backend/nfs.rs` — BKE-NFS — pass
 - [x] **P5.4** `backend/fuse.rs` — BKE-FUSE — pass
