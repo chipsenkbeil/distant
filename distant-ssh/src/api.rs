@@ -151,7 +151,7 @@ impl SshApi {
         let metadata = sftp
             .symlink_metadata(path)
             .await
-            .map_err(|e| io::Error::other(format!("SFTP symlink_metadata '{path}': {e}")))?;
+            .map_err(|e| sftp_io_error(e, &format!("SFTP symlink_metadata '{path}'")))?;
 
         if options.exclude_symlinks && metadata.is_symlink() {
             return Ok(None);
@@ -163,11 +163,11 @@ impl SshApi {
             let target = sftp
                 .read_link(path)
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP read_link '{path}': {e}")))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP read_link '{path}'")))?;
             let target_metadata = sftp
                 .metadata(&target)
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP metadata '{target}': {e}")))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP metadata '{target}'")))?;
             (target, target_metadata)
         } else {
             (path.to_string(), metadata)
@@ -220,7 +220,7 @@ impl SshApi {
 
         sftp.set_metadata(&resolved_path, new_attrs)
             .await
-            .map_err(|e| io::Error::other(format!("SFTP set_metadata '{resolved_path}': {e}")))?;
+            .map_err(|e| sftp_io_error(e, &format!("SFTP set_metadata '{resolved_path}'")))?;
 
         if resolved_metadata.is_dir() {
             Ok(Some(resolved_path))
@@ -228,6 +228,34 @@ impl SshApi {
             Ok(None)
         }
     }
+}
+
+/// Converts a russh-sftp error into an [`io::Error`] with the correct
+/// [`io::ErrorKind`] based on the SFTP status code.
+fn sftp_io_error(e: russh_sftp::client::error::Error, context: &str) -> io::Error {
+    use russh_sftp::client::error::Error as SftpError;
+    use russh_sftp::protocol::StatusCode;
+
+    let (kind, detail) = match &e {
+        SftpError::Status(status) => {
+            let kind = match status.status_code {
+                StatusCode::NoSuchFile => io::ErrorKind::NotFound,
+                StatusCode::PermissionDenied => io::ErrorKind::PermissionDenied,
+                StatusCode::OpUnsupported => io::ErrorKind::Unsupported,
+                StatusCode::Eof => io::ErrorKind::UnexpectedEof,
+                _ => io::ErrorKind::Other,
+            };
+            (
+                kind,
+                format!("{}: {}", status.status_code, status.error_message),
+            )
+        }
+        SftpError::Timeout => (io::ErrorKind::TimedOut, e.to_string()),
+        SftpError::IO(msg) => (io::ErrorKind::Other, msg.clone()),
+        _ => (io::ErrorKind::Other, e.to_string()),
+    };
+
+    io::Error::new(kind, format!("{context}: {detail}"))
 }
 
 impl Api for SshApi {
@@ -250,7 +278,7 @@ impl Api for SshApi {
             let mut file = sftp
                 .open(sftp_path.as_str())
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP open '{}': {e}", sftp_path)))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP open '{}'", sftp_path)))?;
 
             if let Some(offset) = options.offset {
                 file.seek(io::SeekFrom::Start(offset)).await?;
@@ -297,7 +325,7 @@ impl Api for SshApi {
                     )
                     .await
                     .map_err(|e| {
-                        io::Error::other(format!("SFTP open_with_flags '{}': {e}", sftp_path))
+                        sftp_io_error(e, &format!("SFTP open_with_flags '{}'", sftp_path))
                     })?;
 
                 file.write_all(&data).await?;
@@ -310,7 +338,7 @@ impl Api for SshApi {
                     .open_with_flags(sftp_path.as_str(), OpenFlags::WRITE | OpenFlags::CREATE)
                     .await
                     .map_err(|e| {
-                        io::Error::other(format!("SFTP open_with_flags '{}': {e}", sftp_path))
+                        sftp_io_error(e, &format!("SFTP open_with_flags '{}'", sftp_path))
                     })?;
 
                 file.seek(io::SeekFrom::Start(offset)).await?;
@@ -322,7 +350,7 @@ impl Api for SshApi {
             let mut file = sftp
                 .create(sftp_path.as_str())
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP create '{}': {e}", sftp_path)))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP create '{}'", sftp_path)))?;
 
             file.write_all(&data).await?;
             file.flush().await?;
@@ -375,7 +403,7 @@ impl Api for SshApi {
                 let dir_entries = sftp
                     .read_dir(dir_path.as_str())
                     .await
-                    .map_err(|e| io::Error::other(format!("SFTP read_dir '{}': {e}", dir_path)))?;
+                    .map_err(|e| sftp_io_error(e, &format!("SFTP read_dir '{}'", dir_path)))?;
 
                 let mut entries = Vec::new();
                 for entry in dir_entries {
@@ -577,7 +605,7 @@ impl Api for SshApi {
             } else {
                 sftp.create_dir(sftp_path.as_str())
                     .await
-                    .map_err(|e| io::Error::other(format!("SFTP create_dir '{}': {e}", sftp_path)))
+                    .map_err(|e| sftp_io_error(e, &format!("SFTP create_dir '{}'", sftp_path)))
             }
         }
     }
@@ -600,7 +628,7 @@ impl Api for SshApi {
             let metadata = sftp
                 .metadata(sftp_path.as_str())
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP metadata '{}': {e}", sftp_path)))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP metadata '{}'", sftp_path)))?;
 
             if metadata.is_dir() {
                 if force {
@@ -612,7 +640,7 @@ impl Api for SshApi {
                         let entries = sftp
                             .read_dir(&dir)
                             .await
-                            .map_err(|e| io::Error::other(format!("SFTP read_dir '{dir}': {e}")))?;
+                            .map_err(|e| sftp_io_error(e, &format!("SFTP read_dir '{dir}'")))?;
 
                         for entry in entries {
                             let filename = entry.file_name();
@@ -624,9 +652,7 @@ impl Api for SshApi {
                                 stack.push(entry_path.clone());
                             } else {
                                 sftp.remove_file(&entry_path).await.map_err(|e| {
-                                    io::Error::other(format!(
-                                        "SFTP remove_file '{entry_path}': {e}"
-                                    ))
+                                    sftp_io_error(e, &format!("SFTP remove_file '{entry_path}'"))
                                 })?;
                             }
                         }
@@ -636,21 +662,21 @@ impl Api for SshApi {
 
                     // Remove directories in reverse order (deepest first)
                     for dir in dirs_to_remove.into_iter().rev() {
-                        sftp.remove_dir(&dir).await.map_err(|e| {
-                            io::Error::other(format!("SFTP remove_dir '{dir}': {e}"))
-                        })?;
+                        sftp.remove_dir(&dir)
+                            .await
+                            .map_err(|e| sftp_io_error(e, &format!("SFTP remove_dir '{dir}'")))?;
                     }
 
                     Ok(())
                 } else {
-                    sftp.remove_dir(sftp_path.as_str()).await.map_err(|e| {
-                        io::Error::other(format!("SFTP remove_dir '{}': {e}", sftp_path))
-                    })
+                    sftp.remove_dir(sftp_path.as_str())
+                        .await
+                        .map_err(|e| sftp_io_error(e, &format!("SFTP remove_dir '{}'", sftp_path)))
                 }
             } else {
                 sftp.remove_file(sftp_path.as_str())
                     .await
-                    .map_err(|e| io::Error::other(format!("SFTP remove_file '{}': {e}", sftp_path)))
+                    .map_err(|e| sftp_io_error(e, &format!("SFTP remove_file '{}'", sftp_path)))
             }
         }
     }
@@ -708,7 +734,7 @@ impl Api for SshApi {
             sftp.rename(src_path.as_str(), dst_path.as_str())
                 .await
                 .map_err(|e| {
-                    io::Error::other(format!("SFTP rename '{}' -> '{}': {e}", src_path, dst_path))
+                    sftp_io_error(e, &format!("SFTP rename '{}' -> '{}'", src_path, dst_path))
                 })
         }
     }
@@ -775,7 +801,7 @@ impl Api for SshApi {
             } else {
                 sftp.symlink_metadata(sftp_path.as_str()).await
             }
-            .map_err(|e| io::Error::other(format!("SFTP metadata '{}': {e}", sftp_path)))?;
+            .map_err(|e| sftp_io_error(e, &format!("SFTP metadata '{}'", sftp_path)))?;
 
             use std::time::SystemTime;
 
@@ -880,7 +906,10 @@ impl Api for SshApi {
             // Recursively apply to directory contents via BFS
             if options.recursive {
                 while let Some(dir) = dirs.pop_front() {
-                    let dir_entries = sftp.read_dir(&dir).await.map_err(io::Error::other)?;
+                    let dir_entries = sftp
+                        .read_dir(&dir)
+                        .await
+                        .map_err(|e| sftp_io_error(e, &format!("SFTP read_dir '{dir}'")))?;
                     for entry in dir_entries {
                         let filename = entry.file_name();
                         if filename == "." || filename == ".." {
@@ -1214,7 +1243,10 @@ impl Api for SshApi {
                 .cached_current_dir
                 .get_or_try_init(async {
                     let sftp = self.get_sftp().await?;
-                    let path_str = sftp.canonicalize(".").await.map_err(io::Error::other)?;
+                    let path_str = sftp
+                        .canonicalize(".")
+                        .await
+                        .map_err(|e| sftp_io_error(e, "SFTP canonicalize '.'"))?;
 
                     // Fix Windows paths: /C:/... -> C:\...
                     let current_dir = self.sftp_from_wire(path_str).to_remote_path().to_string();

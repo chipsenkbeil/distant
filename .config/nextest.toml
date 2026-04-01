@@ -56,7 +56,8 @@ test-group = 'ssh-integration'
 filter = 'test(shell::) | test(spawn::)'
 test-group = 'pty-tests'
 
-# Mount tests: one at a time to prevent stale mounts
+# Mount tests use singleton servers that outlive individual test processes
 [[profile.default.overrides]]
 filter = 'test(mount::)'
 test-group = 'mount-integration'
+leak-timeout = { period = "1s", result = "pass" }
