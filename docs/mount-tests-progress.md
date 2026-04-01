@@ -29,9 +29,9 @@
 
 ## Phase 2: Core Read Tests
 
-- [ ] **P2.1** `browse.rs` — MNT-01, MNT-02, MNT-03
-- [ ] **P2.2** `file_read.rs` — FRD-01, FRD-02, FRD-03
-- [ ] **P2.3** `subdirectory.rs` — SDT-01, SDT-02
+- [x] **P2.1** `browse.rs` — MNT-01, MNT-02, MNT-03 — 15/18 pass (3 FP)
+- [x] **P2.2** `file_read.rs` — FRD-01, FRD-02, FRD-03 — 15/18 pass (3 FP)
+- [x] **P2.3** `subdirectory.rs` — SDT-01, SDT-02 — 10/12 pass (2 FP)
 
 ---
 

@@ -53,3 +53,5 @@ use distant_test_harness::mount::MountBackend;
 fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
 mod browse;
+mod file_read;
+mod subdirectory;
