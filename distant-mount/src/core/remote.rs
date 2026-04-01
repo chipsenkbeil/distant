@@ -689,13 +689,8 @@ impl RemoteFs {
     /// Returns an error if the parent inode is not in the inode table.
     async fn child_path(&self, parent_ino: u64, name: &str) -> io::Result<RemotePath> {
         let parent_path = self.ino_to_path(parent_ino).await?;
-        let parent_str = parent_path.as_str();
-        let child = if parent_str.ends_with('/') {
-            RemotePath::new(format!("{parent_str}{name}"))
-        } else {
-            RemotePath::new(format!("{parent_str}/{name}"))
-        };
-        Ok(child)
+        let joined = Utf8TypedPath::derive(parent_path.as_str()).join(name);
+        Ok(RemotePath::new(joined.to_string()))
     }
 
     /// Resolves an inode number to its remote path.
@@ -827,12 +822,8 @@ fn extract_file_name(path: &RemotePath) -> String {
 /// (Windows vs Unix) and reconstruct with `/` separators. This ensures
 /// Windows paths like `C:\Users\foo` become `C:/Users/foo`.
 fn normalize_path(path: RemotePath) -> RemotePath {
-    let typed = Utf8TypedPath::derive(path.as_str());
-    let components: Vec<&str> = typed.components().map(|c| c.as_str()).collect();
-    if components.is_empty() {
-        return path;
-    }
-    RemotePath::new(components.join("/"))
+    let normalized = Utf8TypedPath::derive(path.as_str()).normalize();
+    RemotePath::new(normalized.to_string())
 }
 
 /// Extracts a byte range from a data slice, clamping to the actual length.
