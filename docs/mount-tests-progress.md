@@ -50,7 +50,7 @@
 - [x] **P4.1** `readonly.rs` — RDO-01..03 — pass (except FP)
 - [x] **P4.2** `remote_root.rs` — RRT-01..02 — pass (except FP)
 - [x] **P4.3** `multi_mount.rs` — MML-01..03 — pass (except FP)
-- [-] **P4.4** `status.rs` — MST-01..03 — MST-03 (no mounts) fails all backends (stale mount cleanup needed)
+- [x] **P4.4** `status.rs` — MST-01..03 — pass (MST-03 uses cleanup_all_stale_mounts)
 - [x] **P4.5** `unmount.rs` — UMT-01..03 — pass (except FP)
 
 ---
@@ -61,7 +61,9 @@
 - [x] **P5.2** `daemon.rs` — DMN-01 — pass (except FP)
 - [x] **P5.3** `backend/nfs.rs` — BKE-NFS — pass
 - [x] **P5.4** `backend/fuse.rs` — BKE-FUSE — pass
-- [-] **P5.5** `backend/macos_file_provider.rs` — FP-01..04 — needs .app bundle wiring
+- [-] **P5.5** `backend/macos_file_provider.rs` — FP-01..04 — bundle validation passes;
+  full mount test deferred (FileProvider excluded from plugin_x_mount template
+  to prevent orphaned domains in Finder sidebar)
 - [x] **P5.6** `backend/windows_cloud_files.rs` — stub (Windows only)
 
 ---
