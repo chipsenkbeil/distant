@@ -1,37 +1,49 @@
-# Mount CLI Integration Tests — PRD
+# Mount Backends — Production Fixes & Full Test Coverage PRD
 
 ## Overview
 
-Implement automated CLI integration tests for `distant mount`, `distant
-unmount`, and `distant mount-status` covering all test cases from
-`docs/MANUAL_TESTING.md`. Tests exercise every combination of plugin
-backend (Host, SSH, Docker) x mount backend (NFS, FUSE, Windows Cloud
-Files, macOS FileProvider) that is available on the platform.
+Complete the mount feature across all 4 backends (NFS, FUSE, Windows Cloud
+Files, macOS FileProvider) by fixing production bugs, removing test
+workarounds, and achieving a fully green test matrix with zero skips.
+
+This PRD supersedes the original test-only PRD. It covers production code
+fixes, test infrastructure improvements, test rewrites, and documentation.
+
+## Requirements (User's 10-Point List)
+
+1. Fix FUSE+SSH EIO bug — writes through FUSE fail when backend is SSH
+2. Add FileProvider back to the cross-backend test template
+3. Fix all test shortcuts — no `mount_op_or_skip!`, no silent `return`
+4. Expose ALL cache TTLs via CLI — `--read-ttl`, FUSE kernel TTL, etc.
+5. Investigate readonly native support on WCF and FP; enforce if not native
+6. Update `docs/TODO.md` with deferred features (setattr, symlinks, etc.)
+7. Docker backend should work in the test matrix
+8. Test matrix must be all-green with zero skips
+9. Windows Cloud Files testing via separate script (SSH to windows-vm)
+10. Replace all fixed sleeps with polling helpers
 
 ## Architecture
 
-### rstest_reuse templates with cfg_attr cases
+### Backend x Plugin Test Matrix
 
-Add `rstest_reuse` for reusable test case templates. Define two templates:
+|              | Host | SSH  | Docker |
+|--------------|------|------|--------|
+| NFS          | ✓    | ✓    | ✓      |
+| FUSE         | ✓    | ✓    | —      |
+| WCF          | ✓*   | —    | —      |
+| FileProvider | ✓    | —    | —      |
 
-**`all_plugins`** — for non-mount tests (can replace inline case lists):
+*WCF runs only on Windows via separate script. Docker+FUSE is not supported.
+
+### rstest_reuse Template (in `tests/cli/mount/mod.rs`)
+
 ```rust
-#[export]
 #[template]
 #[rstest]
-#[case::host(Backend::Host)]
-#[case::ssh(Backend::Ssh)]
-#[cfg_attr(feature = "docker", case::docker(Backend::Docker))]
-fn all_plugins(#[case] backend: Backend) {}
-```
-
-**`plugin_x_mount`** — every valid plugin x mount combination:
-```rust
-#[export]
-#[template]
-#[rstest]
-#[cfg_attr(feature = "mount-nfs", case::host_nfs(Backend::Host, MountBackend::Nfs))]
-#[cfg_attr(feature = "mount-nfs", case::ssh_nfs(Backend::Ssh, MountBackend::Nfs))]
+#[cfg_attr(feature = "mount-nfs",
+    case::host_nfs(Backend::Host, MountBackend::Nfs))]
+#[cfg_attr(feature = "mount-nfs",
+    case::ssh_nfs(Backend::Ssh, MountBackend::Nfs))]
 #[cfg_attr(all(feature = "docker", feature = "mount-nfs"),
     case::docker_nfs(Backend::Docker, MountBackend::Nfs))]
 #[cfg_attr(all(feature = "mount-fuse",
@@ -47,104 +59,152 @@ fn all_plugins(#[case] backend: Backend) {}
 fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 ```
 
-### Test harness additions
+Template is defined in the binary crate (not the harness) so `cfg_attr`
+evaluates against the correct feature flags.
 
-**`distant-test-harness/Cargo.toml`:**
-- Add `mount = ["dep:distant-mount"]` feature
-- Add `distant-mount` optional dep
-- Add `rstest_reuse = "0.7"` dep
+### MountProcess Abstraction
 
-**`distant-test-harness/src/mount.rs`** (new):
-- Re-export `distant_mount::MountBackend`
-- `MountProcess` struct: spawn foreground mount, wait for "Mounted",
-  canonical path, umount -f before kill, wait_for_unmount polling
-- `build_test_app_bundle()` for FileProvider (all in Rust, no scripts)
-- Template definitions (`all_plugins`, `plugin_x_mount`)
+`MountProcess` (in `distant-test-harness/src/mount.rs`) handles:
+- Spawning the mount process with correct binary (regular or .app bundle)
+- Waiting for "Mounted" confirmation on stdout
+- Canonicalizing mount paths (macOS `/var` → `/private/var`)
+- Backend-specific mount point detection (FP: `~/Library/CloudStorage/`)
+- Cleanup on drop: umount -f, diskutil unmount, kill, wait_for_unmount
+- FileProvider: builds test .app bundle, registers/removes domain
 
-### Test file organization
-
-```
-tests/cli/
-  mount/
-    mod.rs           — re-exports, shared helpers
-    browse.rs        — MNT-01..03
-    file_read.rs     — FRD-01..03
-    subdirectory.rs  — SDT-01..02
-    file_create.rs   — FCR-01..02
-    file_delete.rs   — FDL-01..02
-    file_rename.rs   — FRN-01..02
-    file_modify.rs   — FMD-01..02
-    directory_ops.rs — DOP-01..03
-    readonly.rs      — RDO-01..03
-    remote_root.rs   — RRT-01..02
-    multi_mount.rs   — MML-01..03
-    status.rs        — MST-01..03
-    unmount.rs       — UMT-01..03
-    edge_cases.rs    — EDG-01..05
-    daemon.rs        — DMN-01
-    backend/
-      mod.rs                 — backend-specific test module
-      nfs.rs                 — BKE-NFS-*
-      fuse.rs                — BKE-FUSE-*
-      macos_file_provider.rs — FP-01..04
-      windows_cloud_files.rs — BKE-WCF-*
-```
-
-### Test pattern
+### Test Pattern
 
 ```rust
-use rstest_reuse::apply;
-use distant_test_harness::mount::plugin_x_mount;
-
-#[apply(plugin_x_mount)]
+#[apply(super::plugin_x_mount)]
 #[test_log::test]
-fn mount_should_list_root_directory(
-    #[case] backend: Backend,
-    #[case] mount: MountBackend,
-) {
+fn test_name(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
-    let dir = ctx.unique_dir("mount-browse");
+
+    // Seed data via CLI
+    let dir = ctx.unique_dir("mount-test-label");
     ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
+    ctx.cli_write(&ctx.child_path(&dir, "file.txt"), "content");
 
+    // Mount
     let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &[
-        "--remote-root", &dir,
-    ]);
+    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    let entries = std::fs::read_dir(mp.mount_point()).unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect::<Vec<_>>();
+    // Exercise via local filesystem
+    let content = std::fs::read_to_string(mp.mount_point().join("file.txt")).unwrap();
+    assert_eq!(content, "content");
 
-    assert!(entries.contains(&"hello.txt".to_string()));
+    // Verify via CLI (not local fs)
+    assert!(ctx.cli_exists(&ctx.child_path(&dir, "file.txt")));
 }
+```
+
+### Sync Verification
+
+Replace `wait_for_sync()` (fixed 2s sleep) with polling helpers:
+
+```rust
+/// Poll until a remote file exists, or timeout after 10s.
+fn wait_until_exists(ctx: &BackendCtx, path: &str) { ... }
+
+/// Poll until a remote file has expected content, or timeout after 10s.
+fn wait_until_content(ctx: &BackendCtx, path: &str, expected: &str) { ... }
+
+/// Poll until a remote path no longer exists, or timeout after 10s.
+fn wait_until_gone(ctx: &BackendCtx, path: &str) { ... }
+```
+
+### Test File Organization
+
+```
+tests/cli/mount/
+  mod.rs              — template, mount_op_or_skip macro (to be removed), module list
+  browse.rs           — MNT-01..03 (directory listing)
+  file_read.rs        — FRD-01..03 (file read)
+  subdirectory.rs     — SDT-01..02 (nested directory traversal)
+  file_create.rs      — FCR-01..02 (file creation)
+  file_delete.rs      — FDL-01..02 (file deletion)
+  file_rename.rs      — FRN-01..02 (rename, cross-dir move)
+  file_modify.rs      — FMD-01..02 (append, overwrite)
+  directory_ops.rs    — DOP-01..03 (mkdir, rmdir, list empty)
+  readonly.rs         — RDO-01..03 (readonly enforcement)
+  remote_root.rs      — RRT-01..02 (custom root, nonexistent root)
+  multi_mount.rs      — MML-01..03 (concurrent mounts, same root)
+  status.rs           — MST-01..03 (mount status reporting)
+  unmount.rs          — UMT-01..03 (unmount by name/path/all)
+  edge_cases.rs       — EDG-01..05 (auto-create, file path, spaces, rapid, stale)
+  daemon.rs           — DMN-01 (background mount)
+  backend/
+    mod.rs
+    nfs.rs                 — NFS-specific tests
+    fuse.rs                — FUSE-specific tests
+    macos_file_provider.rs — FP bundle validation + FP-specific tests
+    windows_cloud_files.rs — WCF stub (compile-gated, tested on Windows VM)
 ```
 
 ## Phases
 
-### Phase 1: Harness + Templates
-- Add `mount` feature + `distant-mount` dep to harness
-- Add `rstest_reuse` dep
-- Create `mount.rs` with MountBackend re-export, MountProcess, templates
-- Wire into workspace Cargo.toml
+### Phase A: Production Code Fixes
 
-### Phase 2: Rewrite Core Tests (MNT, FRD, SDT)
-- Rewrite browse.rs, file_read.rs, subdirectory.rs with `#[apply(plugin_x_mount)]`
-- Use `BackendCtx` + `cli_write/read/exists/mkdir`
+| ID  | Task | Description |
+|-----|------|-------------|
+| A1  | Fix FUSE+SSH EIO | Investigate and fix write path through FUSE when server is SSH |
+| A2  | Readonly enforcement | Native or Rust-level readonly for WCF and FP |
+| A3  | TTL CLI exposure | `--read-ttl`, `--fuse-entry-ttl`, `--mount-option KEY=VALUE` |
+| A4  | FileProvider in template | FP-aware MountProcess spawn + domain cleanup |
+| A5  | TODO updates | Deferred features in `docs/TODO.md` |
 
-### Phase 3: Rewrite Write Tests (FCR, FDL, FRN, FMD, DOP)
-- Rewrite all write tests with template
+### Phase B: Test Infrastructure
 
-### Phase 4: Rewrite Management Tests (RDO, RRT, MML, MST, UMT)
-- Rewrite readonly, remote_root, multi_mount, status, unmount
+| ID  | Task | Description |
+|-----|------|-------------|
+| B1  | Polling helpers | Replace `wait_for_sync()` with `wait_until_exists/content/gone` |
+| B2  | Remove skip macro | After A1, remove `mount_op_or_skip!` |
+| B3  | Fix test hacks | FRN-02 cross-dir, MML-03 same-root, RRT-02, MST-03 |
+| B4  | FP test fixture | MountProcess builds/spawns .app bundle for FP |
+| B5  | Windows VM script | `scripts/test-windows-mount.sh` for remote testing |
 
-### Phase 5: Edge Cases + Daemon + Backend-Specific
-- edge_cases.rs, daemon.rs
-- backend/nfs.rs, backend/fuse.rs, backend/macos_file_provider.rs,
-  backend/windows_cloud_files.rs
+### Phase C: Test Quality
+
+| ID  | Task | Description |
+|-----|------|-------------|
+| C1  | Cross-backend parity | All tests work for all backends (no backend exceptions) |
+| C2  | Missing coverage | Large files, Docker+NFS combos, cache TTL |
+| C3  | Validation | Run code-validator + test-validator on all code |
+
+### Phase D: Documentation
+
+| ID  | Task | Description |
+|-----|------|-------------|
+| D1  | MANUAL_TESTING.md | Update with new test results |
+| D2  | PRD + progress | Final update of these docs |
+| D3  | TODO.md | Deferred features documented |
 
 ## Non-Goals
 
-- Stress testing
-- Performance benchmarking
+- Stress testing / performance benchmarking
+- setattr implementation (pending distant protocol changes)
+- Symlink / hard link support (deferred)
+- macOS FileProvider App Store signing (test uses ad-hoc)
+- Windows CI integration (separate script only)
+
+## Verification
+
+```bash
+# All mount tests pass with zero skips on macOS
+cargo nextest run --all-features -p distant -E 'test(mount::)'
+
+# Windows tests via SSH (separate)
+scripts/test-windows-mount.sh
+
+# Clippy clean
+cargo clippy --all-features --workspace --all-targets
+```
+
+## Dependencies Between Phases
+
+```
+A1 (FUSE+SSH fix) ──→ B2 (remove skip macro) ──→ C1 (cross-backend parity)
+A2 (readonly)     ──→ C1
+A3 (TTL CLI)      ──→ C2 (TTL tests)
+A4 (FP template)  ──→ B4 (FP fixture) ──→ C1
+```

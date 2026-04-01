@@ -539,60 +539,76 @@ impl RemoteFs {
 
     /// Flushes any buffered writes for the given inode to the remote server.
     ///
-    /// If the write buffer is dirty, the full buffer contents are written to
-    /// the remote file and the buffer is cleared. The attribute and read caches
-    /// are invalidated to reflect the updated content.
+    /// Extracts dirty data from the write buffer and releases the lock before
+    /// performing network I/O, so concurrent flushes on other inodes are not
+    /// blocked behind SSH round-trips.
+    ///
+    /// The attribute and read caches are invalidated after the write attempt
+    /// regardless of outcome.
     ///
     /// # Errors
     ///
-    /// Returns an error if the inode is unknown or the remote `write_file`
-    /// call fails.
+    /// Returns an error if the inode is unknown or the remote write fails.
     pub async fn flush(&self, ino: u64) -> io::Result<()> {
         debug!("flush ino={}", ino);
 
-        let mut write_buffers = self.write_buffers.lock().await;
-
-        let needs_flush = write_buffers.get(ino).is_some_and(|buf| buf.is_dirty());
-
-        if !needs_flush {
-            return Ok(());
-        }
-
+        // Resolve the path before acquiring write_buffers to avoid holding
+        // both the inodes read-lock and write_buffers lock simultaneously.
         let path = self.ino_to_path(ino).await?;
 
-        let buf = write_buffers
-            .get_mut(ino)
-            .expect("buffer exists (checked above)");
+        // Extract data and dirty ranges under the lock, then release it
+        // before doing any network I/O.
+        let flush_data = {
+            let mut write_buffers = self.write_buffers.lock().await;
 
+            let needs_flush = write_buffers.get(ino).is_some_and(|buf| buf.is_dirty());
+
+            if !needs_flush {
+                return Ok(());
+            }
+
+            let buf = write_buffers
+                .get_mut(ino)
+                .expect("buffer exists (checked above)");
+
+            let data = buf.data().to_vec();
+            let dirty_ranges = buf.dirty_ranges().to_vec();
+            buf.clear();
+
+            (data, dirty_ranges)
+        };
+
+        let (data, dirty_ranges) = flush_data;
         let mut ch = self.channel.clone();
 
-        if buf.dirty_ranges().len() == 1 && buf.dirty_ranges()[0].start == 0 {
+        let write_result = if dirty_ranges.len() == 1 && dirty_ranges[0].start == 0 {
             // Fast path: single dirty range starting at offset 0. This is the
             // common case for new files and full overwrites. Write the entire
             // buffer in one call without an offset (creates or overwrites).
-            let data = buf.data().to_vec();
-            ch.write_file(path.clone(), data, Default::default())
-                .await?;
+            ch.write_file(path.clone(), data, Default::default()).await
         } else {
             // Partial writes: flush each dirty range at its offset. This
             // preserves existing file content outside the dirty regions,
             // which is critical for append-style writes where the buffer
             // has zero-filled gaps for the original content.
-            for range in buf.dirty_ranges().to_vec() {
+            let mut result = Ok(());
+            for range in dirty_ranges {
                 let start = range.start as usize;
                 let end = range.end as usize;
-                let data = buf.data()[start..end].to_vec();
+                let chunk = data[start..end].to_vec();
                 let options = WriteFileOptions {
                     offset: Some(range.start),
                     append: false,
                 };
-                ch.write_file(path.clone(), data, options).await?;
+                if let Err(e) = ch.write_file(path.clone(), chunk, options).await {
+                    result = Err(e);
+                    break;
+                }
             }
-        }
+            result
+        };
 
-        buf.clear();
-        drop(write_buffers);
-
+        // Invalidate caches regardless of write outcome.
         let mut attr_cache = self.attr_cache.lock().await;
         attr_cache.invalidate(&path);
         drop(attr_cache);
@@ -600,7 +616,7 @@ impl RemoteFs {
         let mut read_cache = self.read_cache.lock().await;
         read_cache.invalidate(&ino);
 
-        Ok(())
+        write_result
     }
 
     /// Synchronizes buffered writes to the remote server.

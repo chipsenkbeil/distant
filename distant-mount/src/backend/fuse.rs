@@ -8,6 +8,8 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::warn;
+
 use fuser::{
     BsdFileFlags, Errno, FileAttr as FuserFileAttr, FileHandle, FileType as FuserFileType,
     Filesystem, FopenFlags, Generation, INodeNo, KernelConfig, LockOwner, OpenFlags, RenameFlags,
@@ -63,13 +65,27 @@ fn to_fuser_file_type(ft: FileType) -> FuserFileType {
 }
 
 /// Maps an [`io::Error`] to a fuser [`Errno`] for FUSE error replies.
+///
+/// Logs the original error at `warn` level before mapping so that
+/// connection-level failures and unexpected error kinds are visible in logs
+/// without requiring the caller to log separately.
 fn io_error_to_errno(err: &io::Error) -> Errno {
+    warn!("FUSE error: {err}");
+
     match err.kind() {
         io::ErrorKind::NotFound => Errno::ENOENT,
         io::ErrorKind::PermissionDenied => Errno::EACCES,
         io::ErrorKind::AlreadyExists => Errno::EEXIST,
-        io::ErrorKind::InvalidInput => Errno::EINVAL,
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => Errno::EINVAL,
         io::ErrorKind::Unsupported => Errno::ENOSYS,
+        io::ErrorKind::TimedOut => Errno::ETIMEDOUT,
+        io::ErrorKind::ConnectionRefused => Errno::ECONNREFUSED,
+        io::ErrorKind::ConnectionReset => Errno::ECONNRESET,
+        io::ErrorKind::ConnectionAborted => Errno::ECONNABORTED,
+        io::ErrorKind::BrokenPipe => Errno::EPIPE,
+        io::ErrorKind::WouldBlock => Errno::EAGAIN,
+        io::ErrorKind::DirectoryNotEmpty => Errno::ENOTEMPTY,
+        io::ErrorKind::IsADirectory => Errno::EISDIR,
         _ => Errno::EIO,
     }
 }

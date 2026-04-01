@@ -1,75 +1,64 @@
-# Mount Test Implementation Loop
+# Mount Backend Fix & Test Loop
 
-Iteratively implement mount CLI integration tests using the Backend x
-MountBackend rstest template pattern. Each iteration completes one
-progress item, writes the test code, verifies it compiles and passes,
-and updates the progress tracker.
+Iteratively fix production bugs, improve test infrastructure, and achieve
+a fully green mount test matrix with zero workarounds.
 
 ## Context Files
 
 Read these at the start of every iteration:
 
-1. `docs/mount-tests-PRD.md` — architecture, templates, file organization
+1. `docs/mount-tests-PRD.md` — architecture, phases, dependencies
 2. `docs/mount-tests-progress.md` — current completion status
 3. `docs/MANUAL_TESTING.md` — full test case descriptions
 4. `docs/TESTING.md` — naming conventions
 
-## Key Patterns
+## Phase Order & Dependencies
 
-### Template usage (from PRD)
-
-All mount tests use `#[apply(plugin_x_mount)]`:
-```rust
-use rstest_reuse::apply;
-use distant_test_harness::mount::{plugin_x_mount, MountBackend, MountProcess};
-use distant_test_harness::backend::Backend;
-use distant_test_harness::skip_if_no_backend;
-
-#[apply(plugin_x_mount)]
-#[test_log::test]
-fn mount_should_list_root_directory(
-    #[case] backend: Backend,
-    #[case] mount: MountBackend,
-) {
-    let ctx = skip_if_no_backend!(backend);
-    let dir = ctx.unique_dir("mount-browse");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &[
-        "--remote-root", &dir,
-    ]);
-
-    let entries = std::fs::read_dir(mp.mount_point()).unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-
-    assert!(entries.contains(&"hello.txt".to_string()));
-}
+```
+A1 (FUSE+SSH fix) ──→ B2 (remove skip macro) ──→ C1 (cross-backend)
+A2 (readonly)     ──→ C1
+A3 (TTL CLI)      ──→ C2 (TTL tests)
+A4 (FP template)  ──→ B4 (FP fixture) ──→ C1
+A5 (TODOs)        → D3
+B1 (polling)      → C1
+B3 (test hacks)   → C1
+B5 (Windows script) — independent
 ```
 
-### Existing BackendCtx helpers
+## Key Patterns
 
-- `ctx.unique_dir("label")` — temp dir path valid for the backend
-- `ctx.child_path(&dir, "name")` — join with correct separator
-- `ctx.cli_write(&path, "content")` — create file via `distant fs write`
-- `ctx.cli_read(&path) -> String` — read file via `distant fs read`
-- `ctx.cli_exists(&path) -> bool` — check existence
-- `ctx.cli_mkdir(&path)` — create directory
-- `skip_if_no_backend!(backend)` — skip if unavailable
+### Agent Usage
+
+Use custom agents from `.claude/agents/` per CLAUDE.md:
+- **rust-explorer** for investigating bugs (A1, A2)
+- **rust-coder** for production fixes (A1-A4) and test infra (B1-B5)
+- **code-validator** after any production code change (BLOCKING)
+- **test-implementor** for test rewrites (C1-C2)
+- **test-validator** after test changes (BLOCKING)
+
+### MountProcess + Template
+
+All tests use `#[apply(super::plugin_x_mount)]` with `skip_if_no_backend!`.
+See PRD for full pattern.
+
+### Polling Helpers (Phase B1)
+
+Replace `wait_for_sync()` (2s sleep) with:
+```rust
+mount::wait_until_exists(&ctx, &path);    // polls 200ms, 10s timeout
+mount::wait_until_content(&ctx, &path, expected);
+mount::wait_until_gone(&ctx, &path);
+```
 
 ## Iteration Protocol
 
 ### Step 1: Select Next Item
-First `[ ]` in phase order. `[-]` items take priority in same phase.
-Phase 1 MUST complete before Phase 2.
+Pick the first `[ ]` item in progress.md whose dependencies are met.
+`[-]` items take priority.
 
 ### Step 2: Implement
-- Use `#[apply(plugin_x_mount)]` for parameterized tests
-- Use `BackendCtx` helpers for seed data and verification
-- `MountProcess` for mount lifecycle
+- Production fixes: use rust-explorer → rust-coder → code-validator pipeline
+- Test changes: use test-implementor → test-validator pipeline
 - `cargo fmt --all` + `cargo clippy --all-features --workspace --all-targets`
 
 ### Step 3: Test
@@ -78,22 +67,23 @@ cargo nextest run --all-features -p distant -E 'test(mount::)'
 ```
 
 ### Step 4: Update Progress
-Mark `[x]` when all tests pass. Mark `[-]` with notes if partial.
+Mark `[x]` when done. Mark `[-]` with notes if partial.
 
 ### Step 5: Report
 ```
-== Mount Test Loop Iteration ==
-Item:    P2.1 — browse.rs (MNT-01..03)
+== Mount Fix Loop Iteration ==
+Item:    A1 — Fix FUSE+SSH EIO bug
 Status:  [x] Complete
-Tests:   host_nfs, host_fuse, ssh_nfs, ssh_fuse — all passing
-Next:    P2.2 — file_read.rs
+Details: Root cause was X, fixed by Y
+Next:    A2 — Enforce readonly on WCF + FP
 ```
 
 ## Rules
 
-- **One item per iteration**
+- **One item per iteration** (unless items are trivially small)
 - **Always update progress.md**
-- **Phase order matters**
-- **All tests must pass** before committing
+- **Respect dependency order**
+- **All tests must pass** before moving on
 - **Use nextest** (not `cargo test`)
-- **Commit after each phase**
+- **Commit after each phase milestone** (A complete, B complete, etc.)
+- **Use custom agents** per CLAUDE.md pipeline

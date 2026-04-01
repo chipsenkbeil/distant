@@ -1,4 +1,4 @@
-# Mount CLI Integration Tests — Progress
+# Mount Backends — Progress Tracker
 
 > Auto-updated by the `/mount-test-loop` command.
 >
@@ -6,72 +6,115 @@
 
 ---
 
-## Phase 1: Harness + Templates
+## Phase A: Production Code Fixes
 
-- [x] **P1.1** Add mount support to test harness
-  - Harness: `mount = ["dep:distant-mount"]` feature + rstest_reuse dep
-  - Workspace: extended check-cfg for mount feature names in templates
-  - Binary crate: `distant-test-harness` gets `mount` feature + rstest_reuse
+- [x] **A1** Fix FUSE+SSH EIO bug
+  - Root cause: write_buffers Mutex held across network I/O in flush()
+  - Fix: Extract data under lock, release lock, then do network I/O
+  - Also: added warn!() logging to io_error_to_errno + more errno mappings
+  - All ssh_fuse tests now pass (198/199, 1 docker_nfs sync timing → B1)
+  - Unlocks: B2 (remove mount_op_or_skip macro)
 
-- [x] **P1.2** Create `distant-test-harness/src/mount.rs`
-  - Re-exports MountBackend from distant_mount
-  - MountProcess with spawn/wait/canonical-path/umount/wait_for_unmount
-  - build_test_app_bundle() for FileProvider (macOS, all in Rust)
-  - all_plugins + plugin_x_mount templates with cfg_attr cases
+- [ ] **A2** Enforce readonly on WCF + FileProvider
+  - Investigate native readonly support in Cloud Filter API and NSFileProviderDomain
+  - If no native support, enforce at Rust callback level
+  - Unlocks: C1 (readonly tests work for all backends)
 
-- [x] **P1.3** Verify templates compile and expand correctly
-  - Template defined in tests/cli/mount/mod.rs (binary crate context for cfg_attr)
-  - Generates 6 cases on macOS: host_nfs, ssh_nfs, docker_nfs, host_fuse, ssh_fuse, host_fp
-  - 5/6 pass (FileProvider needs .app bundle — Phase 5)
-  - Template re-exported from harness doesn't work (cfg_attr evaluated at harness compile time)
+- [ ] **A3** Expose ALL cache TTLs via CLI
+  - `--read-ttl <SECS>` (currently hardcoded to 30s)
+  - `--fuse-entry-ttl <SECS>` (FUSE kernel TTL, currently 1s)
+  - `--mount-option KEY=VALUE` for backend-specific options
+  - Unlocks: C2 (TTL behavior tests)
 
----
+- [ ] **A4** Add FileProvider back to cross-backend template
+  - MountProcess needs FP-aware spawn (build .app bundle, spawn bundled binary)
+  - Domain cleanup on drop (unmount --all via bundled binary)
+  - Mount point detection: `~/Library/CloudStorage/Distant-*`
+  - Unlocks: B4, C1
 
-## Phase 2: Core Read Tests
-
-- [x] **P2.1** `browse.rs` — MNT-01, MNT-02, MNT-03 — 15/18 pass (3 FP)
-- [x] **P2.2** `file_read.rs` — FRD-01, FRD-02, FRD-03 — 15/18 pass (3 FP)
-- [x] **P2.3** `subdirectory.rs` — SDT-01, SDT-02 — 10/12 pass (2 FP)
-
----
-
-## Phase 3: Write Tests
-
-- [x] **P3.1** `file_create.rs` — FCR-01, FCR-02 — pass (ssh_fuse EIO gracefully skipped)
-- [x] **P3.2** `file_delete.rs` — FDL-01, FDL-02 — pass
-- [x] **P3.3** `file_rename.rs` — FRN-01, FRN-02 — pass (ssh_fuse EIO + cross-dir graceful skip)
-- [x] **P3.4** `file_modify.rs` — FMD-01, FMD-02 — pass
-- [x] **P3.5** `directory_ops.rs` — DOP-01, DOP-02, DOP-03 — pass (ssh_fuse EIO gracefully skipped)
+- [ ] **A5** Update docs/TODO.md with deferred features
+  - setattr (pending distant protocol), symlinks, hard links
+  - File locking, extended attributes, large file streaming
 
 ---
 
-## Phase 4: Mount Management
+## Phase B: Test Infrastructure Improvements
 
-- [x] **P4.1** `readonly.rs` — RDO-01..03 — pass (except FP)
-- [x] **P4.2** `remote_root.rs` — RRT-01..02 — pass (except FP)
-- [x] **P4.3** `multi_mount.rs` — MML-01..03 — pass (except FP)
-- [x] **P4.4** `status.rs` — MST-01..03 — pass (MST-03 uses cleanup_all_stale_mounts)
-- [x] **P4.5** `unmount.rs` — UMT-01..03 — pass (except FP)
+- [ ] **B1** Replace fixed sleeps with polling helpers
+  - `wait_until_exists(ctx, path)` — polls every 200ms, 10s timeout
+  - `wait_until_content(ctx, path, expected)` — same
+  - `wait_until_gone(ctx, path)` — same
+  - Replace `wait_for_sync()` (2s sleep) and 50ms sleep in rapid test
+
+- [ ] **B2** Remove `mount_op_or_skip!` macro (depends on A1)
+  - Replace all uses with `.unwrap_or_else(|e| panic!(...))`
+  - All write operations must succeed for all backends
+
+- [ ] **B3** Fix all test hacks
+  - FRN-02: Cross-dir rename must assert success (not graceful skip)
+  - MML-03: Same-root-twice must define + assert expected behavior
+  - RRT-02: Nonexistent root must assert specific error
+  - MST-03: Assert exact "No mounts found" output
+
+- [ ] **B4** FileProvider test fixture in MountProcess (depends on A4)
+  - build_test_app_bundle() called automatically
+  - Bundled binary spawned for FP mounts
+  - Container + socket symlink setup
+  - Domain cleanup on drop
+
+- [ ] **B5** Windows VM test script
+  - `scripts/test-windows-mount.sh`
+  - rsync code → build → nextest on windows-vm
+  - WCF cases compile-gated to `target_os = "windows"`
 
 ---
 
-## Phase 5: Edge Cases + Daemon + Backend-Specific
+## Phase C: Test Quality
 
-- [x] **P5.1** `edge_cases.rs` — EDG-01..05 — pass (ssh_fuse EIO gracefully skipped)
-- [x] **P5.2** `daemon.rs` — DMN-01 — pass (except FP)
-- [x] **P5.3** `backend/nfs.rs` — BKE-NFS — pass
-- [x] **P5.4** `backend/fuse.rs` — BKE-FUSE — pass
-- [-] **P5.5** `backend/macos_file_provider.rs` — FP-01..04 — bundle validation passes;
-  full mount test deferred (FileProvider excluded from plugin_x_mount template
-  to prevent orphaned domains in Finder sidebar)
-- [x] **P5.6** `backend/windows_cloud_files.rs` — stub (Windows only)
+- [ ] **C1** Full cross-backend parity (depends on A1, A2, A4)
+  - Every test works for ALL backends in template
+  - No backend-specific workarounds or exceptions
+  - FileProvider uses MountProcess abstraction seamlessly
+
+- [ ] **C2** Missing test coverage
+  - Large files (1MB+)
+  - Docker+NFS combination verified
+  - Cache TTL behavior tests (depends on A3)
+
+- [ ] **C3** Run code-validator + test-validator on all code
+
+---
+
+## Phase D: Documentation
+
+- [ ] **D1** Update MANUAL_TESTING.md with final results
+- [ ] **D2** Final update of PRD + progress docs
+- [ ] **D3** Update docs/TODO.md with deferred items (same as A5)
+
+---
+
+## Prior Work (Completed in Previous Session)
+
+These phases are complete and form the baseline:
+
+- [x] **P1** Harness + Templates — mount feature, rstest_reuse, MountProcess, templates
+- [x] **P2** Core Read Tests — browse, file_read, subdirectory (15/18 pass each, 3 FP skip)
+- [x] **P3** Write Tests — file_create, file_delete, file_rename, file_modify, directory_ops
+- [x] **P4** Mount Management — readonly, remote_root, multi_mount, status, unmount
+- [x] **P5** Edge Cases + Daemon + Backend-Specific — all implemented
+
+**Current state:** 199 tests all passing, but with workarounds:
+- `mount_op_or_skip!` hides FUSE+SSH EIO failures
+- FileProvider excluded from cross-backend template
+- Fixed 2s sleeps for sync verification
+- Some tests gracefully skip on certain backends
 
 ---
 
 ## Test Infrastructure
 
 - **Harness:** `distant-test-harness` with `BackendCtx`
-- **Templates:** `all_plugins`, `plugin_x_mount` via rstest_reuse
+- **Templates:** `plugin_x_mount` via rstest_reuse (in binary crate mod.rs)
 - **Mount helper:** `MountProcess` in harness mount module
 - **Seed data:** `ctx.cli_write()`, `ctx.cli_mkdir()`, `ctx.unique_dir()`
 - **Verification:** `ctx.cli_read()`, `ctx.cli_exists()`
