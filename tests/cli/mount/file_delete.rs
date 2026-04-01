@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
 /// FDL-01: Removing a file through the mount should delete it from the
@@ -24,10 +24,11 @@ fn delete_file_should_remove_from_remote(#[case] backend: Backend, #[case] mount
     std::fs::remove_file(mp.mount_point().join("hello.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove hello.txt: {e}"));
 
-    distant_test_harness::mount::wait_for_sync();
+    let remote_path = ctx.child_path(&dir, "hello.txt");
+    mount::wait_until_gone(&ctx, &remote_path);
 
     assert!(
-        !ctx.cli_exists(&ctx.child_path(&dir, "hello.txt")),
+        !ctx.cli_exists(&remote_path),
         "[{backend:?}/{mount}] hello.txt should be removed from remote"
     );
 }

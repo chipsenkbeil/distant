@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
 /// DOP-01: Creating a directory through the mount should propagate to the
@@ -20,17 +20,14 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    mount_op_or_skip!(
-        std::fs::create_dir(mp.mount_point().join("new-dir")),
-        "create new-dir",
-        backend,
-        mount
-    );
+    std::fs::create_dir(mp.mount_point().join("new-dir"))
+        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to create new-dir: {e}"));
 
-    distant_test_harness::mount::wait_for_sync();
+    let remote_path = ctx.child_path(&dir, "new-dir");
+    mount::wait_until_exists(&ctx, &remote_path);
 
     assert!(
-        ctx.cli_exists(&ctx.child_path(&dir, "new-dir")),
+        ctx.cli_exists(&remote_path),
         "[{backend:?}/{mount}] new-dir should exist on remote"
     );
 }
@@ -52,10 +49,11 @@ fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: Moun
     std::fs::remove_dir(mp.mount_point().join("empty-dir"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
 
-    distant_test_harness::mount::wait_for_sync();
+    let remote_path = ctx.child_path(&dir, "empty-dir");
+    mount::wait_until_gone(&ctx, &remote_path);
 
     assert!(
-        !ctx.cli_exists(&ctx.child_path(&dir, "empty-dir")),
+        !ctx.cli_exists(&remote_path),
         "[{backend:?}/{mount}] empty-dir should be removed from remote"
     );
 }

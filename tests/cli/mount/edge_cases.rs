@@ -100,12 +100,8 @@ fn rapid_write_read_should_not_corrupt(#[case] backend: Backend, #[case] mount: 
         let content = format!("iteration-{i}");
         let path = mp.mount_point().join(&name);
 
-        mount_op_or_skip!(
-            std::fs::write(&path, &content),
-            format!("write iteration {i}"),
-            backend,
-            mount
-        );
+        std::fs::write(&path, &content)
+            .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] write failed on iteration {i}: {e}"));
 
         std::thread::sleep(Duration::from_millis(50));
 

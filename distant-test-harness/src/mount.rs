@@ -184,12 +184,50 @@ pub fn wait_for_unmount(mount_point: &Path) {
     }
 }
 
-/// Wait for write operations to propagate through the mount to the remote.
+/// Poll until a condition is met on the remote, or timeout after 10 seconds.
 ///
-/// SSH + FUSE can be slow — 500ms is insufficient for write propagation
-/// in some cases. This uses a generous 2-second sleep. Tests that need
-/// to verify remote state after writes should call this instead of
-/// a fixed `thread::sleep`.
+/// Calls `check` every 200ms. Returns `Ok(())` when `check` returns `true`,
+/// or panics with `msg` if the timeout expires.
+fn poll_until(check: impl Fn() -> bool, msg: &str) {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(10);
+    let interval = Duration::from_millis(200);
+
+    while start.elapsed() < timeout {
+        if check() {
+            return;
+        }
+        std::thread::sleep(interval);
+    }
+    panic!("poll timeout after {}s: {msg}", timeout.as_secs());
+}
+
+/// Poll until a remote file exists, or panic after 10 seconds.
+pub fn wait_until_exists(ctx: &BackendCtx, path: &str) {
+    poll_until(
+        || ctx.cli_exists(path),
+        &format!("waiting for {path} to exist"),
+    );
+}
+
+/// Poll until a remote file has the expected content, or panic after 10 seconds.
+pub fn wait_until_content(ctx: &BackendCtx, path: &str, expected: &str) {
+    poll_until(
+        || ctx.cli_exists(path) && ctx.cli_read(path) == expected,
+        &format!("waiting for {path} to contain {expected:?}"),
+    );
+}
+
+/// Poll until a remote path no longer exists, or panic after 10 seconds.
+pub fn wait_until_gone(ctx: &BackendCtx, path: &str) {
+    poll_until(
+        || !ctx.cli_exists(path),
+        &format!("waiting for {path} to disappear"),
+    );
+}
+
+/// Deprecated: use [`wait_until_exists`], [`wait_until_content`], or
+/// [`wait_until_gone`] instead for polling-based sync verification.
 pub fn wait_for_sync() {
     std::thread::sleep(Duration::from_secs(2));
 }

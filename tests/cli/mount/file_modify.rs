@@ -6,7 +6,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
 /// FMD-01: Overwriting an existing file through the mount should sync the
@@ -26,10 +26,11 @@ fn overwrite_file_should_sync_to_remote(#[case] backend: Backend, #[case] mount:
     std::fs::write(mp.mount_point().join("hello.txt"), "overwritten")
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to overwrite hello.txt: {e}"));
 
-    distant_test_harness::mount::wait_for_sync();
+    let remote_path = ctx.child_path(&dir, "hello.txt");
+    mount::wait_until_content(&ctx, &remote_path, "overwritten");
 
     assert_eq!(
-        ctx.cli_read(&ctx.child_path(&dir, "hello.txt")),
+        ctx.cli_read(&remote_path),
         "overwritten",
         "[{backend:?}/{mount}] remote content should be overwritten"
     );
@@ -61,10 +62,11 @@ fn append_to_file_should_sync_to_remote(#[case] backend: Backend, #[case] mount:
 
     drop(file);
 
-    distant_test_harness::mount::wait_for_sync();
+    let remote_path = ctx.child_path(&dir, "hello.txt");
+    mount::wait_until_content(&ctx, &remote_path, "hello world appended");
 
     assert_eq!(
-        ctx.cli_read(&ctx.child_path(&dir, "hello.txt")),
+        ctx.cli_read(&remote_path),
         "hello world appended",
         "[{backend:?}/{mount}] remote content should include appended text"
     );
