@@ -1,7 +1,5 @@
 //! Integration tests for creating files through a mounted directory.
 
-use std::time::Duration;
-
 use rstest::rstest;
 use rstest_reuse::{self, *};
 
@@ -25,7 +23,7 @@ fn create_file_should_appear_on_remote(#[case] backend: Backend, #[case] mount: 
     std::fs::write(mp.mount_point().join("new.txt"), "created")
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to write new.txt: {e}"));
 
-    std::thread::sleep(Duration::from_millis(500));
+    distant_test_harness::mount::wait_for_sync();
 
     let remote_path = ctx.child_path(&dir, "new.txt");
     assert!(
@@ -62,7 +60,7 @@ fn create_file_in_subdir_should_appear_on_remote(
     )
     .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to write subdir/new.txt: {e}"));
 
-    std::thread::sleep(Duration::from_millis(500));
+    distant_test_harness::mount::wait_for_sync();
 
     let remote_path = ctx.child_path(&ctx.child_path(&dir, "subdir"), "new.txt");
     assert!(

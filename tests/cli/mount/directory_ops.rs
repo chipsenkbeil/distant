@@ -1,7 +1,5 @@
 //! Integration tests for directory operations through a mounted directory.
 
-use std::time::Duration;
-
 use rstest::rstest;
 use rstest_reuse::{self, *};
 
@@ -25,7 +23,7 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
     std::fs::create_dir(mp.mount_point().join("new-dir"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to create new-dir: {e}"));
 
-    std::thread::sleep(Duration::from_millis(500));
+    distant_test_harness::mount::wait_for_sync();
 
     assert!(
         ctx.cli_exists(&ctx.child_path(&dir, "new-dir")),
@@ -50,7 +48,7 @@ fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: Moun
     std::fs::remove_dir(mp.mount_point().join("empty-dir"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
 
-    std::thread::sleep(Duration::from_millis(500));
+    distant_test_harness::mount::wait_for_sync();
 
     assert!(
         !ctx.cli_exists(&ctx.child_path(&dir, "empty-dir")),

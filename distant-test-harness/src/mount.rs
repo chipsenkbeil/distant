@@ -184,6 +184,16 @@ pub fn wait_for_unmount(mount_point: &Path) {
     }
 }
 
+/// Wait for write operations to propagate through the mount to the remote.
+///
+/// SSH + FUSE can be slow — 500ms is insufficient for write propagation
+/// in some cases. This uses a generous 2-second sleep. Tests that need
+/// to verify remote state after writes should call this instead of
+/// a fixed `thread::sleep`.
+pub fn wait_for_sync() {
+    std::thread::sleep(Duration::from_secs(2));
+}
+
 /// Force-unmount all stale distant mounts (NFS + FUSE) and poll until
 /// the OS mount table is clear. Call before asserting "no mounts found".
 pub fn cleanup_all_stale_mounts() {
