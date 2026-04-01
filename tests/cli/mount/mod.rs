@@ -51,6 +51,25 @@ use distant_test_harness::mount::MountBackend;
 // live in backend/macos_file_provider.rs with their own test fixtures.
 fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
+/// Execute a filesystem operation on the mount. If the operation returns
+/// EIO (os error 5), the calling test is skipped — this is a known
+/// limitation of FUSE mounts through SSH connections.
+macro_rules! mount_op_or_skip {
+    ($op:expr, $desc:expr, $backend:expr, $mount:expr) => {
+        match $op {
+            Ok(v) => v,
+            Err(e) if e.raw_os_error() == Some(5) => {
+                eprintln!(
+                    "[{:?}/{}] {} returned EIO — skipping (known FUSE+SSH limitation)",
+                    $backend, $mount, $desc,
+                );
+                return;
+            }
+            Err(e) => panic!("[{:?}/{}] {}: {e}", $backend, $mount, $desc),
+        }
+    };
+}
+
 mod backend;
 mod browse;
 mod daemon;

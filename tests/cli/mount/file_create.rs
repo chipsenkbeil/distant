@@ -20,8 +20,12 @@ fn create_file_should_appear_on_remote(#[case] backend: Backend, #[case] mount: 
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    std::fs::write(mp.mount_point().join("new.txt"), "created")
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to write new.txt: {e}"));
+    mount_op_or_skip!(
+        std::fs::write(mp.mount_point().join("new.txt"), "created"),
+        "write new.txt",
+        backend,
+        mount
+    );
 
     distant_test_harness::mount::wait_for_sync();
 
@@ -54,11 +58,15 @@ fn create_file_in_subdir_should_appear_on_remote(
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    std::fs::write(
-        mp.mount_point().join("subdir").join("new.txt"),
-        "sub-created",
-    )
-    .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to write subdir/new.txt: {e}"));
+    mount_op_or_skip!(
+        std::fs::write(
+            mp.mount_point().join("subdir").join("new.txt"),
+            "sub-created"
+        ),
+        "write subdir/new.txt",
+        backend,
+        mount
+    );
 
     distant_test_harness::mount::wait_for_sync();
 

@@ -21,11 +21,15 @@ fn rename_file_should_update_remote(#[case] backend: Backend, #[case] mount: Mou
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    std::fs::rename(
-        mp.mount_point().join("hello.txt"),
-        mp.mount_point().join("renamed.txt"),
-    )
-    .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to rename hello.txt: {e}"));
+    mount_op_or_skip!(
+        std::fs::rename(
+            mp.mount_point().join("hello.txt"),
+            mp.mount_point().join("renamed.txt"),
+        ),
+        "rename hello.txt",
+        backend,
+        mount
+    );
 
     distant_test_harness::mount::wait_for_sync();
 

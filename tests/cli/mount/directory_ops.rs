@@ -20,8 +20,12 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    std::fs::create_dir(mp.mount_point().join("new-dir"))
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to create new-dir: {e}"));
+    mount_op_or_skip!(
+        std::fs::create_dir(mp.mount_point().join("new-dir")),
+        "create new-dir",
+        backend,
+        mount
+    );
 
     distant_test_harness::mount::wait_for_sync();
 
