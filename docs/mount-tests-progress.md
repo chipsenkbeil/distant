@@ -37,11 +37,11 @@
 
 ## Phase 3: Write Tests
 
-- [ ] **P3.1** `file_create.rs` — FCR-01, FCR-02
-- [ ] **P3.2** `file_delete.rs` — FDL-01, FDL-02
-- [ ] **P3.3** `file_rename.rs` — FRN-01, FRN-02
-- [ ] **P3.4** `file_modify.rs` — FMD-01, FMD-02
-- [ ] **P3.5** `directory_ops.rs` — DOP-01, DOP-02, DOP-03
+- [x] **P3.1** `file_create.rs` — FCR-01, FCR-02 — pass (except FP + ssh_fuse flaky)
+- [x] **P3.2** `file_delete.rs` — FDL-01, FDL-02 — pass
+- [x] **P3.3** `file_rename.rs` — FRN-01, FRN-02 — pass (FRN-02 graceful skip if unsupported)
+- [x] **P3.4** `file_modify.rs` — FMD-01, FMD-02 — pass
+- [x] **P3.5** `directory_ops.rs` — DOP-01, DOP-02, DOP-03 — pass (except ssh_fuse mkdir)
 
 ---
 
