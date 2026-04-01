@@ -53,12 +53,10 @@ fn remote_root_nonexistent_should_fail(#[case] backend: Backend, #[case] mount: 
     let bogus = ctx.unique_dir("mount-rroot-nonexistent");
 
     let mount_dir = assert_fs::TempDir::new().unwrap();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &bogus]);
-    }));
+    let result = MountProcess::try_spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &bogus]);
 
     assert!(
         result.is_err(),
-        "[{backend:?}/{mount}] spawning with nonexistent remote root should panic"
+        "[{backend:?}/{mount}] spawning with nonexistent remote root should fail"
     );
 }

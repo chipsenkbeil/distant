@@ -51,13 +51,11 @@ fn mount_onto_file_should_fail(#[case] backend: Backend, #[case] mount: MountBac
     let file_path = tmp.path().join("regular-file");
     std::fs::write(&file_path, "i am a file").expect("failed to create regular file");
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        MountProcess::spawn(&ctx, mount, &file_path, &["--remote-root", &dir]);
-    }));
+    let result = MountProcess::try_spawn(&ctx, mount, &file_path, &["--remote-root", &dir]);
 
     assert!(
         result.is_err(),
-        "[{backend:?}/{mount}] mounting onto a regular file should panic"
+        "[{backend:?}/{mount}] mounting onto a regular file should fail"
     );
 }
 

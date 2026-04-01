@@ -71,13 +71,13 @@ fn daemon_mount_should_serve_content(
         "[{backend:?}/{mount_backend}] daemon mount should contain daemon.txt, got: {entries:?}"
     );
 
-    let _ = child.kill();
-    let _ = child.wait();
+    // Unmount first (before killing), then kill the process tree.
+    let mp_str = canonical.to_string_lossy();
 
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("diskutil")
-            .args(["unmount", "force", &canonical.to_string_lossy()])
+            .args(["unmount", "force", &mp_str])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -87,11 +87,13 @@ fn daemon_mount_should_serve_content(
     {
         let _ = std::process::Command::new("umount")
             .arg("-f")
-            .arg(&canonical)
+            .arg(&*mp_str)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     }
+
+    distant_test_harness::process::kill_process_tree(&mut child);
 
     mount::wait_for_unmount(&canonical);
     let _ = std::fs::remove_dir_all(&canonical);

@@ -119,9 +119,7 @@ fn same_root_twice_should_work_or_fail_gracefully(
 
     let mp_a = MountProcess::spawn(&ctx, mount, mount_a.path(), &["--remote-root", &dir]);
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        MountProcess::spawn(&ctx, mount, mount_b.path(), &["--remote-root", &dir])
-    }));
+    let result = MountProcess::try_spawn(&ctx, mount, mount_b.path(), &["--remote-root", &dir]);
 
     let content_a = std::fs::read_to_string(mp_a.mount_point().join("shared.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read from mount A: {e}"));
@@ -142,8 +140,8 @@ fn same_root_twice_should_work_or_fail_gracefully(
                 "[{backend:?}/{mount}] second mount should also serve the same content"
             );
         }
-        Err(_) => {
-            log::info!("[{backend:?}/{mount}] second mount with same root failed gracefully");
+        Err(e) => {
+            log::info!("[{backend:?}/{mount}] second mount with same root failed gracefully: {e}");
         }
     }
 }

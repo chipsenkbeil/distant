@@ -56,7 +56,17 @@ impl MountProcess {
     ///
     /// Panics if the process fails to spawn, does not print "Mounted" within
     /// the timeout, or if the mount point cannot be canonicalized.
-    pub fn spawn(ctx: &BackendCtx, mount: MountBackend, mount_point: &Path, args: &[&str]) -> Self {
+    /// Spawns a `distant mount --foreground` process and waits for it to be ready.
+    ///
+    /// Returns `Err` if the mount fails to start (process exits early or
+    /// doesn't print "Mounted" within the timeout). The caller can use this
+    /// to test error cases without leaking processes.
+    pub fn try_spawn(
+        ctx: &BackendCtx,
+        mount: MountBackend,
+        mount_point: &Path,
+        args: &[&str],
+    ) -> Result<Self, String> {
         std::fs::create_dir_all(mount_point).expect("failed to create mount point directory");
 
         let mut cmd = ctx.new_std_cmd(["mount"]);
@@ -83,33 +93,51 @@ impl MountProcess {
                 }
             }
             let _ = tx.send(Err(
-                "mount process stdout closed without printing 'Mounted'",
+                "mount process stdout closed without printing 'Mounted'".to_string(),
             ));
         });
 
         match rx.recv_timeout(MOUNT_READY_TIMEOUT) {
             Ok(Ok(())) => {}
-            Ok(Err(msg)) => panic!("mount failed: {msg}"),
+            Ok(Err(msg)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(msg);
+            }
             Err(_) => {
                 let _ = child.kill();
-                panic!(
+                let _ = child.wait();
+                return Err(format!(
                     "mount process did not print 'Mounted' within {}s",
                     MOUNT_READY_TIMEOUT.as_secs()
-                );
+                ));
             }
         }
 
         let canonical = std::fs::canonicalize(mount_point).unwrap_or_else(|e| {
+            let _ = child.kill();
+            let _ = child.wait();
             panic!(
                 "failed to canonicalize mount point {}: {e}",
                 mount_point.display()
             )
         });
 
-        Self {
+        Ok(Self {
             child,
             mount_point: canonical,
-        }
+        })
+    }
+
+    /// Spawns a `distant mount --foreground` process and waits for it to be ready.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the mount fails to start. Use [`try_spawn`](Self::try_spawn)
+    /// for tests that expect the mount to fail.
+    pub fn spawn(ctx: &BackendCtx, mount: MountBackend, mount_point: &Path, args: &[&str]) -> Self {
+        Self::try_spawn(ctx, mount, mount_point, args)
+            .unwrap_or_else(|e| panic!("mount failed: {e}"))
     }
 
     /// Returns the canonicalized mount point path.

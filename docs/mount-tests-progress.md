@@ -49,6 +49,11 @@
 - [x] **B2** Remove `mount_op_or_skip!` macro
   - Removed — all ssh_fuse write tests now pass with SFTP error mapping fix
 
+- [ ] **B2.5** Fix stale mount process leaks after test run
+  - daemon.rs: mount process forks and parent exits, child survives kill
+  - remote_root.rs nonexistent test: catch_unwind prevents MountProcess::drop
+  - Need cleanup in these tests or a broader kill-on-test-exit mechanism
+
 - [ ] **B3** Fix all test hacks
   - FRN-02: Cross-dir rename must assert success (not graceful skip)
   - MML-03: Same-root-twice must define + assert expected behavior
