@@ -26,6 +26,22 @@ Each item is tagged with a category:
 These are internal shortcuts and known rough edges that should eventually be
 addressed.
 
+### TD-0: Singleton test server — sshd/Docker cleanup after nextest
+
+**(Enhancement)** The singleton test infrastructure (`distant-test-harness/src/singleton.rs`)
+shares manager+server across all tests via file-lock coordination. Servers
+auto-exit via `--shutdown lonely=10`. However, sshd and Docker containers
+stay alive after nextest finishes (cleaned up on next run startup).
+
+Options to explore:
+1. Lock-file-watching reaper process that kills sshd when no shared locks remain
+2. Nextest teardown scripts (not yet implemented in nextest — tracking issue #978)
+3. `#[dtor]` from `ctor` crate works for `cargo test` (single process) but
+   not for nextest (process-per-test, serial mount tests mean dtor fires after
+   every test)
+
+For now this is acceptable — sshd is ~2MB RSS, Docker container is idle.
+
 ### TD-1: Windows service integration incomplete
 
 **(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service
@@ -314,22 +330,37 @@ methods as features (static-key always available, password as opt-in).
 
 ---
 
-### Issue #145: Support user-level file system mounting
+### Issue #145: Mount feature — remaining work
 
-- **Type:** Enhancement (Long-term)
+- **Type:** Enhancement
 - **URL:** https://github.com/chipsenkbeil/distant/issues/145
 
-**Problem:** Want SSHFS-like mounting of remote filesystems.
+**Status:** Core mount feature is implemented in `distant-mount` with four
+backends: NFS, FUSE (`fuser`), macOS FileProvider, Windows Cloud Files.
+CLI commands `distant mount`, `distant unmount`, `distant mount-status`
+are functional. 192/199 integration tests pass.
 
-**Codebase context:** No FUSE/filesystem mounting code exists in the
-codebase. This is a large standalone feature.
-
-**Work needed:**
-1. Linux: Use `fuser` crate (modern Rust FUSE library)
-2. macOS: Investigate Finder Sync Extension or macFUSE
-3. Windows: Use Cloud Files API (Windows 10+)
-4. Large feature — each platform has different requirements
-5. All three platforms need the distant client API as the data source
+**Remaining work:**
+1. **(Bug)** FUSE+SSH write EIO: `std::fs::write` through a FUSE mount
+   backed by SSH intermittently returns EIO. The flush lock fix (release
+   `write_buffers` before network I/O) reduced frequency but didn't
+   eliminate it. Needs deeper investigation of the SFTP write path.
+2. **(Limitation)** `setattr` not implemented — requires distant protocol
+   changes to support `chmod`/`chown`/`utime` on remote files.
+3. **(Limitation)** Symlinks and hard links not implemented — needs protocol
+   support for `symlink`, `readlink`, `link`.
+4. **(Limitation)** File locking (POSIX `flock`/`fcntl`) not implemented.
+5. **(Limitation)** Extended attributes (`xattr`) not implemented.
+6. **(Limitation)** Large file streaming — files are fully buffered in
+   memory. Need chunked read/write for files > RAM.
+7. **(Enhancement)** Readonly enforcement on Windows Cloud Files and macOS
+   FileProvider backends — currently only NFS and FUSE support `--readonly`.
+8. **(Enhancement)** Expose `--read-ttl`, `--fuse-entry-ttl`, and
+   `--mount-option KEY=VALUE` CLI options for cache and backend tuning.
+9. **(Enhancement)** Add FileProvider back to cross-backend test template
+   with proper MountProcess fixture for .app bundle lifecycle.
+10. **(Enhancement)** Windows Cloud Files automated testing via SSH to
+    windows-vm (currently manual only).
 
 ---
 
