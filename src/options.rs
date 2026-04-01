@@ -1676,6 +1676,10 @@ pub enum ManagerSubcommand {
         #[clap(long)]
         user: bool,
 
+        /// Rules for how the manager will shut down automatically
+        #[clap(long, default_value_t = Value::Default(Shutdown::Never))]
+        shutdown: Value<Shutdown>,
+
         /// Register an external plugin (NAME=PATH). Scheme defaults to NAME.
         /// Can be specified multiple times.
         #[clap(long = "plugin", value_parser = parse_plugin_flag)]
@@ -4585,6 +4589,7 @@ mod tests {
                 access: None,
                 daemon: false,
                 user: false,
+                shutdown: Value::Default(Shutdown::Never),
                 plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: None,
@@ -4621,6 +4626,7 @@ mod tests {
                     access: Some(AccessControl::Group),
                     daemon: false,
                     user: false,
+                    shutdown: Value::Default(Shutdown::Never),
                     plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -4644,6 +4650,7 @@ mod tests {
                 access: Some(AccessControl::Owner),
                 daemon: false,
                 user: false,
+                shutdown: Value::Default(Shutdown::Never),
                 plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -4680,6 +4687,7 @@ mod tests {
                     access: Some(AccessControl::Owner),
                     daemon: false,
                     user: false,
+                    shutdown: Value::Default(Shutdown::Never),
                     plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -5153,6 +5161,7 @@ mod tests {
             access: None,
             daemon: false,
             user: false,
+            shutdown: Value::Default(Shutdown::Never),
             plugin: Vec::new(),
             network: NetworkSettings::default(),
         });
@@ -5622,6 +5631,7 @@ mod tests {
             access: None,
             daemon: false,
             user: false,
+            shutdown: Value::Default(Shutdown::Never),
             plugin: Vec::new(),
             network: NetworkSettings::default(),
         };

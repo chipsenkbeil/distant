@@ -110,6 +110,7 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
             daemon: _daemon,
             network,
             user,
+            shutdown,
             plugin: extra_plugins,
         } => {
             #[cfg(unix)]
@@ -138,6 +139,7 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
                     plugins,
                     ..Default::default()
                 },
+                shutdown: shutdown.into_inner(),
                 network,
             }
             .listen()
