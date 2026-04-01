@@ -184,6 +184,58 @@ pub fn wait_for_unmount(mount_point: &Path) {
     }
 }
 
+/// Force-unmount all stale distant mounts (NFS + FUSE) and poll until
+/// the OS mount table is clear. Call before asserting "no mounts found".
+pub fn cleanup_all_stale_mounts() {
+    #[cfg(unix)]
+    {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let output = match Command::new("mount").stdout(Stdio::piped()).output() {
+                Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+                Err(_) => return,
+            };
+
+            let stale: Vec<String> = output
+                .lines()
+                .filter(|line| {
+                    let is_nfs = line.contains("localhost:/") && line.contains("nfs");
+                    let is_fuse = line.starts_with("distant ") || line.contains("FSName=distant");
+                    is_nfs || is_fuse
+                })
+                .filter_map(|line| {
+                    line.split(" on ")
+                        .nth(1)
+                        .and_then(|rest| rest.split(" (").next())
+                        .map(|s| s.to_string())
+                })
+                .collect();
+
+            if stale.is_empty() {
+                return;
+            }
+
+            for path in &stale {
+                let _ = Command::new("umount").arg("-f").arg(path).output();
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = Command::new("diskutil")
+                        .args(["unmount", "force"])
+                        .arg(path)
+                        .output();
+                }
+            }
+
+            if Instant::now() >= deadline {
+                eprintln!("warning: stale mounts still present after 10s: {stale:?}");
+                return;
+            }
+
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+}
+
 /// Builds a test `.app` bundle for the macOS FileProvider backend.
 ///
 /// Creates the directory structure under `target/test-Distant.app/`, copies

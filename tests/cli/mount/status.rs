@@ -72,10 +72,12 @@ fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBac
 }
 
 /// MST-03: With no active mounts, `mount-status` should print "No mounts found".
-#[apply(super::plugin_x_mount)]
+/// This test does not need the plugin_x_mount template — it tests a single
+/// global condition. Using a plain #[test] avoids running it N times.
 #[test_log::test]
-fn status_no_mounts_should_say_none(#[case] backend: Backend, #[case] mount: MountBackend) {
-    let _ = (backend, mount);
+fn status_no_mounts_should_say_none() {
+    // Clean up any stale mounts left by prior tests.
+    distant_test_harness::mount::cleanup_all_stale_mounts();
 
     let output = Command::new(manager::bin_path())
         .arg("mount-status")
