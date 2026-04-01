@@ -14,7 +14,7 @@ max-threads = 4
 max-threads = 4
 
 [test-groups.mount-integration]
-max-threads = 4
+max-threads = 2
 
 [profile.default]
 fail-fast = false
