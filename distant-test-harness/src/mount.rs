@@ -67,7 +67,12 @@ impl MountProcess {
         mount_point: &Path,
         args: &[&str],
     ) -> Result<Self, String> {
-        std::fs::create_dir_all(mount_point).expect("failed to create mount point directory");
+        if let Err(e) = std::fs::create_dir_all(mount_point) {
+            return Err(format!(
+                "failed to create mount point {}: {e}",
+                mount_point.display()
+            ));
+        }
 
         let mut cmd = ctx.new_std_cmd(["mount"]);
         cmd.arg("--backend").arg(mount.as_str()).arg("--foreground");
@@ -114,14 +119,17 @@ impl MountProcess {
             }
         }
 
-        let canonical = std::fs::canonicalize(mount_point).unwrap_or_else(|e| {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!(
-                "failed to canonicalize mount point {}: {e}",
-                mount_point.display()
-            )
-        });
+        let canonical = match std::fs::canonicalize(mount_point) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "failed to canonicalize mount point {}: {e}",
+                    mount_point.display()
+                ));
+            }
+        };
 
         Ok(Self {
             child,
