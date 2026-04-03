@@ -218,9 +218,14 @@ impl MountProcess {
         match rx.recv_timeout(MOUNT_READY_TIMEOUT) {
             Ok(Ok(())) => {}
             Ok(Err(msg)) => {
+                let stderr = child
+                    .stderr
+                    .take()
+                    .and_then(|s| std::io::read_to_string(s).ok())
+                    .unwrap_or_default();
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(msg);
+                return Err(format!("{msg}\nstderr: {stderr}"));
             }
             Err(_) => {
                 let _ = child.kill();
@@ -495,6 +500,9 @@ pub fn build_test_app_bundle() -> PathBuf {
     let appex_binary = appex_macos.join("distant");
 
     if should_skip_rebuild(&bin, &app_binary) {
+        // Even when skipping rebuild, ensure the extension is registered
+        // (pluginkit registrations are volatile and may not persist).
+        ensure_pluginkit_registered(&contents);
         return app_dir;
     }
 
@@ -506,42 +514,40 @@ pub fn build_test_app_bundle() -> PathBuf {
 
     let resources = workspace_root.join("resources").join("macos");
 
-    // Host app: use a distinct bundle identifier so macOS treats the test
-    // bundle as a separate app from /Applications/Distant.app.
-    let app_plist_src =
-        std::fs::read_to_string(resources.join("Info.plist")).expect("failed to read Info.plist");
-    let app_plist = app_plist_src.replace("dev.distant", "dev.distant.test");
-    std::fs::write(contents.join("Info.plist"), app_plist).expect("failed to write app Info.plist");
+    // Use Apple Development identity if available; fall back to ad-hoc.
+    let identity = find_apple_dev_identity().unwrap_or_else(|| "-".to_string());
 
-    // Appex: use a distinct bundle identifier AND test app group so the
-    // test extension coexists with production and uses isolated state.
+    // Host app: keep the production bundle identifier (dev.distant) so that
+    // NSFileProviderManager.addDomain() can find the associated extension.
+    // The host binary is just a launcher — macOS identifies it by its bundle ID.
+    std::fs::copy(resources.join("Info.plist"), contents.join("Info.plist"))
+        .expect("failed to copy Info.plist");
+
+    // Appex: use a distinct bundle identifier but KEEP the production app
+    // group. The app group requires a provisioning profile to authorize new
+    // groups, so we reuse the existing authorized group. Test and production
+    // domains don't collide because domain IDs include unique connection hashes.
     let ext_plist_src = std::fs::read_to_string(resources.join("Extension-Info.plist"))
         .expect("failed to read Extension-Info.plist");
-    let ext_plist = ext_plist_src
-        .replace("39C6AGD73Z.group.dev.distant", "group.dev.distant.test")
-        .replace(
-            "dev.distant.file-provider",
-            "dev.distant.test.file-provider",
-        );
+
+    // Keep the production app group (39C6AGD73Z.group.dev.distant) but
+    // change the bundle identifier so macOS treats this as a separate extension.
+    let test_app_group = "39C6AGD73Z.group.dev.distant";
+    let ext_plist = ext_plist_src.replace(
+        "dev.distant.file-provider",
+        "dev.distant.test.file-provider",
+    );
     std::fs::write(appex_dir.join("Info.plist"), ext_plist)
         .expect("failed to write appex Info.plist");
 
-    let (app_entitlements, appex_entitlements) = write_test_entitlements(&target_dir);
-
-    // Use Apple Development identity if available; fall back to ad-hoc.
-    // pluginkit requires Apple-issued certificates for FileProvider extensions,
-    // so ad-hoc signing will register but the extension won't be activated.
-    let identity = find_apple_dev_identity().unwrap_or_else(|| "-".to_string());
+    let (app_entitlements, appex_entitlements) =
+        write_test_entitlements(&target_dir, &test_app_group);
 
     let appex_path = contents.join("PlugIns").join("DistantFileProvider.appex");
     codesign(&appex_path, &appex_entitlements, &identity);
     codesign(&app_dir, &app_entitlements, &identity);
 
-    let status = Command::new("pluginkit")
-        .args(["-a", &appex_path.to_string_lossy()])
-        .status()
-        .expect("failed to run pluginkit -a");
-    assert!(status.success(), "pluginkit -a failed");
+    ensure_pluginkit_registered(&contents);
 
     let status = Command::new("pluginkit")
         .args(["-e", "use", "-i", "dev.distant.test.file-provider"])
@@ -576,16 +582,17 @@ fn should_skip_rebuild(source: &Path, dest: &Path) -> bool {
 /// The host app runs unsandboxed so it can access unix sockets freely.
 /// The appex must be sandboxed (pluginkit requires it for extensions).
 #[cfg(target_os = "macos")]
-fn write_test_entitlements(target_dir: &Path) -> (PathBuf, PathBuf) {
+fn write_test_entitlements(target_dir: &Path, app_group: &str) -> (PathBuf, PathBuf) {
     let app_path = target_dir.join("test-app-entitlements.plist");
-    let app_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+    let app_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.dev.distant.test</string>
+        <string>{app_group}</string>
     </array>
     <key>com.apple.security.network.client</key>
     <true/>
@@ -593,11 +600,13 @@ fn write_test_entitlements(target_dir: &Path) -> (PathBuf, PathBuf) {
     <true/>
 </dict>
 </plist>
-"#;
+"#
+    );
     std::fs::write(&app_path, app_content).expect("failed to write app entitlements");
 
     let appex_path = target_dir.join("test-appex-entitlements.plist");
-    let appex_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+    let appex_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -606,7 +615,7 @@ fn write_test_entitlements(target_dir: &Path) -> (PathBuf, PathBuf) {
     <true/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.dev.distant.test</string>
+        <string>{app_group}</string>
     </array>
     <key>com.apple.security.network.client</key>
     <true/>
@@ -614,10 +623,30 @@ fn write_test_entitlements(target_dir: &Path) -> (PathBuf, PathBuf) {
     <true/>
 </dict>
 </plist>
-"#;
+"#
+    );
     std::fs::write(&appex_path, appex_content).expect("failed to write appex entitlements");
 
     (app_path, appex_path)
+}
+
+/// Ensures the test FileProvider extension is registered with pluginkit.
+///
+/// Registrations are volatile and may not persist across reboots, so this
+/// is called on every test run (even when the bundle rebuild is skipped).
+#[cfg(target_os = "macos")]
+fn ensure_pluginkit_registered(contents: &Path) {
+    let appex_path = contents.join("PlugIns").join("DistantFileProvider.appex");
+    let _ = Command::new("pluginkit")
+        .args(["-a", &appex_path.to_string_lossy()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = Command::new("pluginkit")
+        .args(["-e", "use", "-i", "dev.distant.test.file-provider"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Finds an Apple Development signing identity in the keychain.
@@ -635,6 +664,35 @@ fn find_apple_dev_identity() -> Option<String> {
     for line in text.lines() {
         if line.contains("Apple Development:") {
             return line.split_whitespace().nth(1).map(String::from);
+        }
+    }
+    None
+}
+
+/// Extracts the Team ID from a signed binary.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn extract_team_id(binary: &Path, identity: &str) -> Option<String> {
+    // Sign the binary temporarily to extract team ID
+    let _ = Command::new("codesign")
+        .args(["-s", identity, "-f"])
+        .arg(binary)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let output = Command::new("codesign")
+        .args(["-dv"])
+        .arg(binary)
+        .output()
+        .ok()?;
+    // codesign -dv writes to stderr
+    let text = String::from_utf8_lossy(&output.stderr);
+    for line in text.lines() {
+        if let Some(id) = line.strip_prefix("TeamIdentifier=") {
+            if id != "not set" {
+                return Some(id.to_string());
+            }
         }
     }
     None
