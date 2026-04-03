@@ -900,6 +900,15 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
         )
     };
 
+    // Enable testing mode for test bundles so the domain is auto-activated
+    // without requiring production provisioning profiles.
+    if is_test_bundle() {
+        debug!("file_provider: enabling testingModes for test bundle");
+        unsafe {
+            domain.setTestingModes(NSFileProviderDomainTestingModes::AlwaysEnabled);
+        }
+    }
+
     // Also remove any domain with the exact same identifier (re-mount of the
     // same connection).
     remove_domain_blocking(&domain);
@@ -967,6 +976,17 @@ fn sanitize_display_name(destination: &str, remote_root: Option<&String>) -> Str
         Some(root) => format!("{destination}:{root}"),
         None => destination.to_owned(),
     }
+}
+
+/// Returns `true` if the current process is running from a test bundle.
+///
+/// Detected by checking if the main bundle's `CFBundleIdentifier` contains
+/// `.test`. Production bundles use `dev.distant`; test bundles use
+/// `dev.distant.test`.
+fn is_test_bundle() -> bool {
+    NSBundle::mainBundle()
+        .bundleIdentifier()
+        .is_some_and(|id| id.to_string().contains(".test"))
 }
 
 /// Removes a single FileProvider domain by identifier and cleans up its

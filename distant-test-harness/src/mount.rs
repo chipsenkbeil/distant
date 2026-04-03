@@ -505,34 +505,46 @@ pub fn build_test_app_bundle() -> PathBuf {
     std::fs::copy(&bin, &appex_binary).expect("failed to copy binary to appex bundle");
 
     let resources = workspace_root.join("resources").join("macos");
-    std::fs::copy(resources.join("Info.plist"), contents.join("Info.plist"))
-        .expect("failed to copy Info.plist");
 
+    // Host app: use a distinct bundle identifier so macOS treats the test
+    // bundle as a separate app from /Applications/Distant.app.
+    let app_plist_src =
+        std::fs::read_to_string(resources.join("Info.plist")).expect("failed to read Info.plist");
+    let app_plist = app_plist_src.replace("dev.distant", "dev.distant.test");
+    std::fs::write(contents.join("Info.plist"), app_plist).expect("failed to write app Info.plist");
+
+    // Appex: use a distinct bundle identifier AND test app group so the
+    // test extension coexists with production and uses isolated state.
     let ext_plist_src = std::fs::read_to_string(resources.join("Extension-Info.plist"))
         .expect("failed to read Extension-Info.plist");
     let ext_plist = ext_plist_src
         .replace("39C6AGD73Z.group.dev.distant", "group.dev.distant.test")
         .replace(
             "dev.distant.file-provider",
-            "dev.distant.file-provider.test",
+            "dev.distant.test.file-provider",
         );
     std::fs::write(appex_dir.join("Info.plist"), ext_plist)
         .expect("failed to write appex Info.plist");
 
-    let entitlements = write_test_entitlements(&target_dir);
+    let (app_entitlements, appex_entitlements) = write_test_entitlements(&target_dir);
+
+    // Use Apple Development identity if available; fall back to ad-hoc.
+    // pluginkit requires Apple-issued certificates for FileProvider extensions,
+    // so ad-hoc signing will register but the extension won't be activated.
+    let identity = find_apple_dev_identity().unwrap_or_else(|| "-".to_string());
 
     let appex_path = contents.join("PlugIns").join("DistantFileProvider.appex");
-    codesign(&appex_path, &entitlements);
-    codesign(&app_dir, &entitlements);
+    codesign(&appex_path, &appex_entitlements, &identity);
+    codesign(&app_dir, &app_entitlements, &identity);
 
     let status = Command::new("pluginkit")
-        .args(["-a", &app_dir.to_string_lossy()])
+        .args(["-a", &appex_path.to_string_lossy()])
         .status()
         .expect("failed to run pluginkit -a");
     assert!(status.success(), "pluginkit -a failed");
 
     let status = Command::new("pluginkit")
-        .args(["-e", "use", "-i", "dev.distant.file-provider.test"])
+        .args(["-e", "use", "-i", "dev.distant.test.file-provider"])
         .status()
         .expect("failed to run pluginkit -e");
     assert!(status.success(), "pluginkit -e use failed");
@@ -559,15 +571,22 @@ fn should_skip_rebuild(source: &Path, dest: &Path) -> bool {
     }
 }
 
-/// Writes a minimal test entitlements plist to a temp file and returns its path.
+/// Writes test entitlements plists for the host app and appex.
+///
+/// The host app runs unsandboxed so it can access unix sockets freely.
+/// The appex must be sandboxed (pluginkit requires it for extensions).
 #[cfg(target_os = "macos")]
-fn write_test_entitlements(target_dir: &Path) -> PathBuf {
-    let path = target_dir.join("test-entitlements.plist");
-    let content = r#"<?xml version="1.0" encoding="UTF-8"?>
+fn write_test_entitlements(target_dir: &Path) -> (PathBuf, PathBuf) {
+    let app_path = target_dir.join("test-app-entitlements.plist");
+    let app_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.dev.distant.test</string>
+    </array>
     <key>com.apple.security.network.client</key>
     <true/>
     <key>com.apple.security.get-task-allow</key>
@@ -575,15 +594,57 @@ fn write_test_entitlements(target_dir: &Path) -> PathBuf {
 </dict>
 </plist>
 "#;
-    std::fs::write(&path, content).expect("failed to write test entitlements");
-    path
+    std::fs::write(&app_path, app_content).expect("failed to write app entitlements");
+
+    let appex_path = target_dir.join("test-appex-entitlements.plist");
+    let appex_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.dev.distant.test</string>
+    </array>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
+"#;
+    std::fs::write(&appex_path, appex_content).expect("failed to write appex entitlements");
+
+    (app_path, appex_path)
 }
 
-/// Signs a bundle or appex with ad-hoc codesign.
+/// Finds an Apple Development signing identity in the keychain.
+///
+/// Returns the identity hash string if found, or `None` if no Apple
+/// Development certificate is available (ad-hoc signing will be used
+/// as a fallback, but pluginkit may reject the extension).
 #[cfg(target_os = "macos")]
-fn codesign(path: &Path, entitlements: &Path) {
+fn find_apple_dev_identity() -> Option<String> {
+    let output = Command::new("security")
+        .args(["find-identity", "-v", "-p", "codesigning"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if line.contains("Apple Development:") {
+            return line.split_whitespace().nth(1).map(String::from);
+        }
+    }
+    None
+}
+
+/// Signs a bundle or appex with the given identity (or ad-hoc if `None`).
+#[cfg(target_os = "macos")]
+fn codesign(path: &Path, entitlements: &Path, identity: &str) {
     let status = Command::new("codesign")
-        .args(["-s", "-", "-f", "--entitlements"])
+        .args(["-s", identity, "-f", "--entitlements"])
         .arg(entitlements)
         .arg(path)
         .status()
