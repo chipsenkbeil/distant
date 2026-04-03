@@ -545,6 +545,11 @@ impl DockerManagerCtx {
         &self.container
     }
 
+    /// Returns the socket/pipe path used by this manager.
+    pub fn socket_or_pipe(&self) -> &str {
+        &self.socket_or_pipe
+    }
+
     /// Produces a new test command configured with subcommands.
     pub fn new_assert_cmd(&self, subcommands: impl IntoIterator<Item = &'static str>) -> Command {
         let mut cmd = Command::new(bin_path());

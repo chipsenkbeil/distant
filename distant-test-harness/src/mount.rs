@@ -36,32 +36,58 @@ const UNMOUNT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 ///
 /// Wraps a child process running `distant mount --foreground` and handles
 /// cleanup (unmount + kill + directory removal) on drop.
+///
+/// For macOS FileProvider mounts, the child process exits after printing
+/// "Mounted" (no foreground needed), and the mount point is discovered
+/// under `~/Library/CloudStorage/` rather than being specified by the caller.
 pub struct MountProcess {
     child: Child,
     mount_point: PathBuf,
+
+    /// When true, this mount was created via the macOS FileProvider backend.
+    /// Cleanup uses `distant unmount --all` via the bundled binary instead of
+    /// `umount`/`diskutil`.
+    is_file_provider: bool,
+
+    /// Path to the `.app` bundle binary used for FileProvider mounts.
+    /// Stored so that Drop can invoke `unmount --all` through the same binary.
+    #[cfg(target_os = "macos")]
+    bundled_bin: Option<PathBuf>,
 }
 
 impl MountProcess {
-    /// Spawns a `distant mount --foreground` process and waits for it to be ready.
+    /// Spawns a `distant mount` process and waits for it to be ready.
     ///
-    /// Uses `ctx.new_std_cmd(["mount"])` to get a properly configured command,
-    /// then adds `--backend`, `--foreground`, any extra `args`, and the
-    /// `mount_point`. Blocks until the process prints "Mounted" on stdout
-    /// (up to 30 seconds).
+    /// For FUSE/NFS/WCF backends, uses `ctx.new_std_cmd(["mount"])` to get a
+    /// properly configured command, then adds `--backend`, `--foreground`, any
+    /// extra `args`, and the `mount_point`. Blocks until the process prints
+    /// "Mounted" on stdout (up to 30 seconds). The mount point is then
+    /// canonicalized to resolve macOS `/var` to `/private/var` symlinks.
     ///
-    /// After mount succeeds, the mount point is canonicalized to resolve
-    /// macOS `/var` to `/private/var` symlinks.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the process fails to spawn, does not print "Mounted" within
-    /// the timeout, or if the mount point cannot be canonicalized.
-    /// Spawns a `distant mount --foreground` process and waits for it to be ready.
+    /// For macOS FileProvider, builds a `.app` bundle via
+    /// [`build_test_app_bundle`] and runs the bundled binary with the context's
+    /// socket. The process exits after printing "Mounted" and the mount point
+    /// is discovered under `~/Library/CloudStorage/`.
     ///
     /// Returns `Err` if the mount fails to start (process exits early or
     /// doesn't print "Mounted" within the timeout). The caller can use this
     /// to test error cases without leaking processes.
     pub fn try_spawn(
+        ctx: &BackendCtx,
+        mount: MountBackend,
+        mount_point: &Path,
+        args: &[&str],
+    ) -> Result<Self, String> {
+        #[cfg(target_os = "macos")]
+        if matches!(mount, MountBackend::MacosFileProvider) {
+            return Self::try_spawn_file_provider(ctx, args);
+        }
+
+        Self::try_spawn_foreground(ctx, mount, mount_point, args)
+    }
+
+    /// Spawns a foreground mount process for FUSE/NFS/WCF backends.
+    fn try_spawn_foreground(
         ctx: &BackendCtx,
         mount: MountBackend,
         mount_point: &Path,
@@ -134,6 +160,88 @@ impl MountProcess {
         Ok(Self {
             child,
             mount_point: canonical,
+            is_file_provider: false,
+            #[cfg(target_os = "macos")]
+            bundled_bin: None,
+        })
+    }
+
+    /// Spawns a macOS FileProvider mount using the bundled `.app` binary.
+    ///
+    /// The bundled binary talks to the same manager via the context's unix
+    /// socket. The process prints "Mounted" and then exits. The mount point
+    /// is discovered by scanning `~/Library/CloudStorage/` for new entries.
+    #[cfg(target_os = "macos")]
+    fn try_spawn_file_provider(ctx: &BackendCtx, args: &[&str]) -> Result<Self, String> {
+        use crate::manager;
+
+        let app_dir = build_test_app_bundle();
+        let bundled_binary = app_dir.join("Contents").join("MacOS").join("distant");
+
+        let cloud_storage = dirs_cloud_storage();
+        let before: std::collections::HashSet<_> = list_cloud_storage_entries(&cloud_storage);
+
+        let mut cmd = Command::new(&bundled_binary);
+        cmd.arg("mount");
+        cmd.arg("--log-file")
+            .arg(manager::random_log_file("mount-fp"));
+        cmd.arg("--log-level").arg("trace");
+        cmd.arg("--unix-socket").arg(ctx.socket_or_pipe());
+        cmd.arg("--backend").arg("macos-file-provider");
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .expect("failed to spawn distant mount (file-provider) process");
+
+        let stdout = child.stdout.take().expect("stdout was not piped");
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.contains("Mounted") {
+                    let _ = tx.send(Ok(()));
+                    return;
+                }
+            }
+            let _ = tx.send(Err(
+                "file-provider mount stdout closed without printing 'Mounted'".to_string(),
+            ));
+        });
+
+        match rx.recv_timeout(MOUNT_READY_TIMEOUT) {
+            Ok(Ok(())) => {}
+            Ok(Err(msg)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(msg);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "file-provider mount did not print 'Mounted' within {}s",
+                    MOUNT_READY_TIMEOUT.as_secs()
+                ));
+            }
+        }
+
+        // The child exits after printing "Mounted"; reap it now.
+        let _ = child.wait();
+
+        let mount_point = discover_cloud_storage_entry(&cloud_storage, &before)?;
+
+        Ok(Self {
+            child,
+            mount_point,
+            is_file_provider: true,
+            bundled_bin: Some(bundled_binary),
         })
     }
 
@@ -156,6 +264,22 @@ impl MountProcess {
 
 impl Drop for MountProcess {
     fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.is_file_provider {
+            if let Some(ref bin) = self.bundled_bin {
+                let _ = Command::new(bin)
+                    .args(["unmount", "--all"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+
+            // The child already exited after mounting; reap just in case.
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            return;
+        }
+
         let mp = self.mount_point.to_string_lossy();
 
         #[cfg(target_os = "macos")]
@@ -386,7 +510,12 @@ pub fn build_test_app_bundle() -> PathBuf {
 
     let ext_plist_src = std::fs::read_to_string(resources.join("Extension-Info.plist"))
         .expect("failed to read Extension-Info.plist");
-    let ext_plist = ext_plist_src.replace("39C6AGD73Z.group.dev.distant", "group.dev.distant.test");
+    let ext_plist = ext_plist_src
+        .replace("39C6AGD73Z.group.dev.distant", "group.dev.distant.test")
+        .replace(
+            "dev.distant.file-provider",
+            "dev.distant.file-provider.test",
+        );
     std::fs::write(appex_dir.join("Info.plist"), ext_plist)
         .expect("failed to write appex Info.plist");
 
@@ -403,7 +532,7 @@ pub fn build_test_app_bundle() -> PathBuf {
     assert!(status.success(), "pluginkit -a failed");
 
     let status = Command::new("pluginkit")
-        .args(["-e", "use", "-i", "dev.distant.file-provider"])
+        .args(["-e", "use", "-i", "dev.distant.file-provider.test"])
         .status()
         .expect("failed to run pluginkit -e");
     assert!(status.success(), "pluginkit -e use failed");
@@ -482,6 +611,58 @@ fn find_workspace_root() -> PathBuf {
             );
         }
     }
+}
+
+/// Returns the `~/Library/CloudStorage/` directory path.
+#[cfg(target_os = "macos")]
+fn dirs_cloud_storage() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").expect("HOME not set"))
+        .join("Library")
+        .join("CloudStorage")
+}
+
+/// Lists the current entries in the CloudStorage directory.
+#[cfg(target_os = "macos")]
+fn list_cloud_storage_entries(dir: &Path) -> std::collections::HashSet<PathBuf> {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
+        Err(_) => std::collections::HashSet::new(),
+    }
+}
+
+/// Discovers a newly-appeared entry in `~/Library/CloudStorage/` by comparing
+/// the current listing against a snapshot taken before the mount.
+///
+/// Polls for up to [`MOUNT_READY_TIMEOUT`] to handle potential delay between
+/// the process printing "Mounted" and the directory appearing on disk.
+#[cfg(target_os = "macos")]
+fn discover_cloud_storage_entry(
+    cloud_storage: &Path,
+    before: &std::collections::HashSet<PathBuf>,
+) -> Result<PathBuf, String> {
+    let start = Instant::now();
+    let poll_interval = Duration::from_millis(200);
+
+    while start.elapsed() < MOUNT_READY_TIMEOUT {
+        let current = list_cloud_storage_entries(cloud_storage);
+        let new_entries: Vec<_> = current.difference(before).collect();
+
+        if let Some(entry) = new_entries.into_iter().find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("Distant"))
+        }) {
+            return Ok(entry.clone());
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+
+    Err(format!(
+        "no new Distant entry appeared in {} within {}s",
+        cloud_storage.display(),
+        MOUNT_READY_TIMEOUT.as_secs()
+    ))
 }
 
 /// Template for testing all plugin backends (host, ssh, docker).

@@ -46,9 +46,10 @@ use distant_test_harness::mount::MountBackend;
     all(feature = "mount-windows-cloud-files", target_os = "windows"),
     case::host_wcf(Backend::Host, MountBackend::WindowsCloudFiles)
 )]
-// FileProvider is NOT in the cross-backend template because it requires
-// a signed .app bundle and special setup. FileProvider-specific tests
-// live in backend/macos_file_provider.rs with their own test fixtures.
+#[cfg_attr(
+    all(feature = "mount-macos-file-provider", target_os = "macos"),
+    case::host_fp(Backend::Host, MountBackend::MacosFileProvider)
+)]
 fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
 mod backend;

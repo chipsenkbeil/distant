@@ -69,6 +69,18 @@ impl BackendCtx {
         }
     }
 
+    /// Returns the socket/pipe path used by this context's manager.
+    ///
+    /// On Unix this is a Unix socket path; on Windows a named pipe name.
+    pub fn socket_or_pipe(&self) -> &str {
+        match self {
+            Self::Host(ctx) => ctx.socket_or_pipe(),
+            Self::Ssh(ctx) => ctx.socket_or_pipe(),
+            #[cfg(feature = "docker")]
+            Self::Docker(ctx) => ctx.socket_or_pipe(),
+        }
+    }
+
     /// Produces a new [`std::process::Command`] configured with the given subcommands.
     ///
     /// The returned command is pre-configured with piped stdio and the

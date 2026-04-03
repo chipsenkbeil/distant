@@ -932,6 +932,11 @@ impl SshManagerCtx {
             _lock_file: Some(handle.lock_file),
         }
     }
+
+    /// Returns the socket/pipe path used by this manager.
+    pub fn socket_or_pipe(&self) -> &str {
+        &self.socket_or_pipe
+    }
 }
 
 #[fixture]
