@@ -1,5 +1,24 @@
 # Mount Backends — Production Fixes & Full Test Coverage PRD
 
+## Status (2026-04-02)
+
+**199/199 mount tests passing.** Major items completed:
+- [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
+- [ ] 2. FileProvider in template — deferred (needs .app bundle fixture)
+- [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
+- [ ] 4. TTL CLI exposure — not started
+- [ ] 5. Readonly on WCF/FP — not started
+- [x] 6. TODO.md updated — deferred features documented
+- [x] 7. Docker in test matrix — works, offset writes added
+- [x] 8. All-green test matrix — 199/199 with zero skips
+- [ ] 9. Windows VM script — not started
+- [x] 10. Fixed sleeps replaced — polling helpers implemented
+
+Additional completed work not in original requirements:
+- Singleton test servers (file-lock coordination, lonely shutdown)
+- Process leak fixes (try_spawn, daemon test rewrite)
+- Docker offset write support
+
 ## Overview
 
 Complete the mount feature across all 4 backends (NFS, FUSE, Windows Cloud
