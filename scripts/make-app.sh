@@ -37,9 +37,9 @@ if [ -z "${CODESIGN_IDENTITY:-}" ]; then
     fi
 fi
 
-# Default provisioning profiles (dev builds from ~/Downloads)
-APP_PROFILE="${APP_PROFILE:-$HOME/Downloads/Distant_Dev.provisionprofile}"
-APPEX_PROFILE="${APPEX_PROFILE:-$HOME/Downloads/Distant_FileProvider_Dev.provisionprofile}"
+# Default provisioning profiles (checked into the repo)
+APP_PROFILE="${APP_PROFILE:-$PROJECT_DIR/resources/macos/profiles/Distant_Dev.provisionprofile}"
+APPEX_PROFILE="${APPEX_PROFILE:-$PROJECT_DIR/resources/macos/profiles/Distant_FileProvider_Dev.provisionprofile}"
 
 # Validate profiles exist
 for profile in "$APP_PROFILE" "$APPEX_PROFILE"; do
