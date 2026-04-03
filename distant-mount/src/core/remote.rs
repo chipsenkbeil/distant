@@ -277,12 +277,25 @@ impl RemoteFs {
     ///
     /// Data is accumulated in an in-memory [`WriteBuffer`](crate::write_buffer::WriteBuffer)
     /// and flushed to the remote on [`flush`](Self::flush), [`fsync`](Self::fsync),
+    /// Returns a read-only error if the mount is configured as readonly.
+    fn check_writable(&self) -> io::Result<()> {
+        if self.config.readonly {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "filesystem is mounted read-only",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// or [`release`](Self::release).
     ///
     /// # Errors
     ///
     /// Returns an error if the inode is unknown or a lock is poisoned.
     pub async fn write(&self, ino: u64, offset: u64, data: &[u8]) -> io::Result<u32> {
+        self.check_writable()?;
         let path = self.ino_to_path(ino).await?;
 
         debug!("write ino={} offset={} len={}", ino, offset, data.len());
@@ -318,6 +331,7 @@ impl RemoteFs {
     /// Returns an error if the parent inode is unknown, the remote write fails,
     /// or the metadata fetch fails.
     pub async fn create(&self, parent_ino: u64, name: &str, _mode: u32) -> io::Result<FileAttr> {
+        self.check_writable()?;
         let child_path = self.child_path(parent_ino, name).await?;
 
         debug!(
@@ -372,6 +386,7 @@ impl RemoteFs {
     /// Returns an error if the parent inode is unknown, the remote
     /// `create_dir` call fails, or the metadata fetch fails.
     pub async fn mkdir(&self, parent_ino: u64, name: &str, _mode: u32) -> io::Result<FileAttr> {
+        self.check_writable()?;
         let child_path = self.child_path(parent_ino, name).await?;
 
         debug!(
@@ -419,6 +434,7 @@ impl RemoteFs {
     /// Returns an error if the parent inode is unknown or the remote `remove`
     /// call fails.
     pub async fn unlink(&self, parent_ino: u64, name: &str) -> io::Result<()> {
+        self.check_writable()?;
         let child_path = self.child_path(parent_ino, name).await?;
 
         debug!(
@@ -460,6 +476,7 @@ impl RemoteFs {
     /// Returns an error if the parent inode is unknown or the remote `remove`
     /// call fails.
     pub async fn rmdir(&self, parent_ino: u64, name: &str) -> io::Result<()> {
+        self.check_writable()?;
         let child_path = self.child_path(parent_ino, name).await?;
 
         debug!(
@@ -502,6 +519,7 @@ impl RemoteFs {
         new_parent_ino: u64,
         new_name: &str,
     ) -> io::Result<()> {
+        self.check_writable()?;
         let old_path = self.child_path(parent_ino, name).await?;
         let new_path = self.child_path(new_parent_ino, new_name).await?;
 

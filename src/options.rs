@@ -614,6 +614,10 @@ pub enum ClientSubcommand {
         #[clap(long, default_value = "1")]
         dir_ttl: f64,
 
+        /// File content read cache TTL in seconds
+        #[clap(long, default_value = "30")]
+        read_ttl: f64,
+
         /// Mount backend to use
         #[clap(
             long,

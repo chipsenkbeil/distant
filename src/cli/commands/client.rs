@@ -587,6 +587,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             readonly,
             attr_ttl,
             dir_ttl,
+            read_ttl,
             backend,
             foreground: _,
             mount_point,
@@ -638,6 +639,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 cache: distant_mount::CacheConfig {
                     attr_ttl: Duration::from_secs_f64(attr_ttl),
                     dir_ttl: Duration::from_secs_f64(dir_ttl),
+                    read_ttl: Duration::from_secs_f64(read_ttl),
                     ..Default::default()
                 },
                 extra,
