@@ -6,10 +6,8 @@
 //! bundles in tests. Also re-exports [`MountBackend`] for convenience
 //! and defines rstest-reuse templates for parameterized mount tests.
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[allow(unused_imports)]
@@ -35,21 +33,20 @@ const UNMOUNT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// A managed mount process for integration tests.
 ///
 /// Wraps a child process running `distant mount --foreground` and handles
-/// cleanup (unmount + kill + directory removal) on drop.
-///
-/// For macOS FileProvider mounts, the child process exits after printing
-/// "Mounted" (no foreground needed), and the mount point is discovered
-/// under `~/Library/CloudStorage/` rather than being specified by the caller.
+/// cleanup (unmount via manager + directory removal) on drop.
 pub struct MountProcess {
-    child: Child,
+    /// Mount ID returned by the manager.
+    mount_id: Option<u32>,
+    /// Socket path for sending unmount commands.
+    socket_or_pipe: String,
     mount_point: PathBuf,
 
     /// When true, this mount was created via the macOS FileProvider backend.
-    /// Cleanup uses `distant unmount --all` via the bundled binary instead of
-    /// `umount`/`diskutil`.
+    #[allow(dead_code)]
     is_file_provider: bool,
 
     /// Path to the `.app` bundle binary used for FileProvider mounts.
+    #[allow(dead_code)]
     /// Stored so that Drop can invoke `unmount --all` through the same binary.
     #[cfg(target_os = "macos")]
     bundled_bin: Option<PathBuf>,
@@ -86,7 +83,8 @@ impl MountProcess {
         Self::try_spawn_foreground(ctx, mount, mount_point, args)
     }
 
-    /// Spawns a foreground mount process for FUSE/NFS/WCF backends.
+    /// Mounts via the manager. The CLI sends a mount request to the manager,
+    /// prints the result, and exits immediately.
     fn try_spawn_foreground(
         ctx: &BackendCtx,
         mount: MountBackend,
@@ -101,64 +99,42 @@ impl MountProcess {
         }
 
         let mut cmd = ctx.new_std_cmd(["mount"]);
-        cmd.arg("--backend").arg(mount.as_str()).arg("--foreground");
+        cmd.arg("--backend").arg(mount.as_str());
 
         for arg in args {
             cmd.arg(arg);
         }
 
         cmd.arg(mount_point);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().expect("failed to spawn distant mount process");
+        let output = cmd
+            .output()
+            .map_err(|e| format!("failed to run distant mount: {e}"))?;
 
-        let stdout = child.stdout.take().expect("stdout was not piped");
-        let (tx, rx) = mpsc::channel();
-
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
-                if line.contains("Mounted") {
-                    let _ = tx.send(Ok(()));
-                    return;
-                }
-            }
-            let _ = tx.send(Err(
-                "mount process stdout closed without printing 'Mounted'".to_string(),
-            ));
-        });
-
-        match rx.recv_timeout(MOUNT_READY_TIMEOUT) {
-            Ok(Ok(())) => {}
-            Ok(Err(msg)) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(msg);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "mount process did not print 'Mounted' within {}s",
-                    MOUNT_READY_TIMEOUT.as_secs()
-                ));
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("mount failed: {stderr}"));
         }
 
-        let canonical = match std::fs::canonicalize(mount_point) {
-            Ok(p) => p,
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "failed to canonicalize mount point {}: {e}",
-                    mount_point.display()
-                ));
-            }
-        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Parse mount ID from output: "Mounted at /path (id: 123)"
+        let mount_id = stdout
+            .lines()
+            .find(|l| l.contains("Mounted"))
+            .and_then(|l| l.rsplit("id: ").next())
+            .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
+
+        let canonical = std::fs::canonicalize(mount_point).map_err(|e| {
+            format!(
+                "failed to canonicalize mount point {}: {e}",
+                mount_point.display()
+            )
+        })?;
 
         Ok(Self {
-            child,
+            mount_id,
+            socket_or_pipe: ctx.socket_or_pipe().to_string(),
             mount_point: canonical,
             is_file_provider: false,
             #[cfg(target_os = "macos")]
@@ -166,17 +142,15 @@ impl MountProcess {
         })
     }
 
-    /// Spawns a macOS FileProvider mount using the bundled `.app` binary.
+    /// Mounts via the FileProvider backend using the installed `.app` binary.
     ///
-    /// The bundled binary talks to the same manager via the context's unix
-    /// socket. The process prints "Mounted" and then exits. The mount point
-    /// is discovered by scanning `~/Library/CloudStorage/` for new entries.
+    /// The command sends a mount request through the FP singleton's manager,
+    /// prints the result, and exits immediately. The mount point is
+    /// discovered by scanning `~/Library/CloudStorage/` for new entries.
     #[cfg(target_os = "macos")]
     fn try_spawn_file_provider(_ctx: &BackendCtx, args: &[&str]) -> Result<Self, String> {
         use crate::{manager, singleton};
 
-        // Get or start the FileProvider singleton (installs app, starts manager
-        // on the App Group socket, connects a server).
         let fp_handle = singleton::get_or_start_file_provider();
 
         let bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
@@ -196,59 +170,30 @@ impl MountProcess {
             cmd.arg(arg);
         }
 
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = cmd
+            .output()
+            .map_err(|e| format!("failed to run distant mount (file-provider): {e}"))?;
 
-        let mut child = cmd
-            .spawn()
-            .expect("failed to spawn distant mount (file-provider) process");
-
-        let stdout = child.stdout.take().expect("stdout was not piped");
-        let (tx, rx) = mpsc::channel();
-
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
-                if line.contains("Mounted") {
-                    let _ = tx.send(Ok(()));
-                    return;
-                }
-            }
-            let _ = tx.send(Err(
-                "file-provider mount stdout closed without printing 'Mounted'".to_string(),
-            ));
-        });
-
-        match rx.recv_timeout(MOUNT_READY_TIMEOUT) {
-            Ok(Ok(())) => {}
-            Ok(Err(msg)) => {
-                let stderr = child
-                    .stderr
-                    .take()
-                    .and_then(|s| std::io::read_to_string(s).ok())
-                    .unwrap_or_default();
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{msg}\nstderr: {stderr}"));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "file-provider mount did not print 'Mounted' within {}s",
-                    MOUNT_READY_TIMEOUT.as_secs()
-                ));
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("file-provider mount failed:\nstderr: {stderr}"));
         }
 
-        // The child exits after printing "Mounted"; reap it now.
-        let _ = child.wait();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mount_id = stdout
+            .lines()
+            .find(|l| l.contains("Mounted"))
+            .and_then(|l| l.rsplit("id: ").next())
+            .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
 
         let mount_point = discover_cloud_storage_entry(&cloud_storage, &before)?;
 
         Ok(Self {
-            child,
+            mount_id,
+            socket_or_pipe: fp_handle.socket_or_pipe.clone(),
             mount_point,
             is_file_provider: true,
+            #[cfg(target_os = "macos")]
             bundled_bin: Some(bin),
         })
     }
@@ -272,30 +217,24 @@ impl MountProcess {
 
 impl Drop for MountProcess {
     fn drop(&mut self) {
-        #[cfg(target_os = "macos")]
-        if self.is_file_provider {
-            // Remove just this mount's domain (not --all which would kill
-            // other active FP mounts). The mount point path uniquely identifies
-            // the CloudStorage entry for this domain.
-            if let Some(ref bin) = self.bundled_bin {
-                let mp_str = self.mount_point.to_string_lossy();
-                let _ = Command::new(bin)
-                    .args(["unmount", &mp_str])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+        // Unmount via manager if we have a mount ID
+        if let Some(id) = self.mount_id {
+            let mut cmd = Command::new(crate::manager::bin_path());
+            cmd.arg("unmount").arg(id.to_string());
+
+            if cfg!(windows) {
+                cmd.arg("--windows-pipe").arg(&self.socket_or_pipe);
+            } else {
+                cmd.arg("--unix-socket").arg(&self.socket_or_pipe);
             }
 
-            // The child already exited after mounting; reap just in case.
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            return;
+            let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).status();
         }
 
-        let mp = self.mount_point.to_string_lossy();
-
+        // Safety net: force unmount via OS if the mount point is still active
         #[cfg(target_os = "macos")]
         {
+            let mp = self.mount_point.to_string_lossy();
             let _ = Command::new("diskutil")
                 .args(["unmount", "force", &mp])
                 .stdout(Stdio::null())
@@ -303,8 +242,9 @@ impl Drop for MountProcess {
                 .status();
         }
 
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
+            let mp = self.mount_point.to_string_lossy();
             let _ = Command::new("umount")
                 .arg("-f")
                 .arg(&*mp)
@@ -313,21 +253,7 @@ impl Drop for MountProcess {
                 .status();
         }
 
-        #[cfg(windows)]
-        {
-            let bin_path = crate::manager::bin_path();
-            let _ = Command::new(&bin_path)
-                .args(["unmount", &mp])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-
         wait_for_unmount(&self.mount_point);
-
         let _ = std::fs::remove_dir_all(&self.mount_point);
     }
 }
