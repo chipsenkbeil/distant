@@ -274,9 +274,13 @@ impl Drop for MountProcess {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
         if self.is_file_provider {
+            // Remove just this mount's domain (not --all which would kill
+            // other active FP mounts). The mount point path uniquely identifies
+            // the CloudStorage entry for this domain.
             if let Some(ref bin) = self.bundled_bin {
+                let mp_str = self.mount_point.to_string_lossy();
                 let _ = Command::new(bin)
-                    .args(["unmount", "--all"])
+                    .args(["unmount", &mp_str])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
@@ -285,9 +289,6 @@ impl Drop for MountProcess {
             // The child already exited after mounting; reap just in case.
             let _ = self.child.kill();
             let _ = self.child.wait();
-
-            // Don't restore production app here — the singleton manages the
-            // app lifecycle. Restore happens when the singleton shuts down.
             return;
         }
 

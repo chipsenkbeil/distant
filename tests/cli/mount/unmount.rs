@@ -66,19 +66,41 @@ fn spawn_raw_mount(
 }
 
 /// UMT-01: Unmounting a specific mount point by path should succeed.
-/// FileProvider uses domain IDs (not paths) — skip for FP.
+/// For FileProvider, unmount via the installed app binary since FP
+/// domains are managed by macOS, not the OS mount table.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn unmount_by_path_should_succeed(#[case] backend: Backend, #[case] mount_backend: MountBackend) {
-    if matches!(mount_backend, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping unmount-by-path for FileProvider (uses domain IDs, not paths)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-unmount-path");
     ctx.cli_mkdir(&dir);
     ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
+
+    // FileProvider doesn't use filesystem paths for unmount — use the
+    // installed app binary to unmount --all (domain-based).
+    if matches!(mount_backend, MountBackend::MacosFileProvider) {
+        let mount_dir = assert_fs::TempDir::new().unwrap();
+        let _mp = mount::MountProcess::spawn(
+            &ctx,
+            mount_backend,
+            mount_dir.path(),
+            &["--remote-root", &dir],
+        );
+
+        let bin = std::path::Path::new("/Applications/Distant.app/Contents/MacOS/distant");
+        let output = Command::new(bin)
+            .args(["unmount", "--all"])
+            .output()
+            .expect("failed to run unmount --all via installed binary");
+
+        assert!(
+            output.status.success(),
+            "[{backend:?}/{mount_backend}] unmount --all should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
 
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let (mut child, canonical) = spawn_raw_mount(
@@ -107,22 +129,41 @@ fn unmount_by_path_should_succeed(#[case] backend: Backend, #[case] mount_backen
 }
 
 /// UMT-02: `unmount --all` should remove all active mounts.
-/// FileProvider uses domain IDs — skip for FP.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn unmount_all_should_remove_everything(
     #[case] backend: Backend,
     #[case] mount_backend: MountBackend,
 ) {
-    if matches!(mount_backend, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping unmount-all for FileProvider (uses domain IDs, not paths)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-unmount-all");
     ctx.cli_mkdir(&dir);
     ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
+
+    // FileProvider: use MountProcess + installed binary for unmount
+    if matches!(mount_backend, MountBackend::MacosFileProvider) {
+        let mount_dir = assert_fs::TempDir::new().unwrap();
+        let _mp = mount::MountProcess::spawn(
+            &ctx,
+            mount_backend,
+            mount_dir.path(),
+            &["--remote-root", &dir],
+        );
+
+        let bin = std::path::Path::new("/Applications/Distant.app/Contents/MacOS/distant");
+        let output = Command::new(bin)
+            .args(["unmount", "--all"])
+            .output()
+            .expect("failed to run unmount --all via installed binary");
+
+        assert!(
+            output.status.success(),
+            "[{backend:?}/{mount_backend}] unmount --all should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
 
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let (mut child, canonical) = spawn_raw_mount(

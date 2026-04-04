@@ -14,11 +14,6 @@ use distant_test_harness::skip_if_no_backend;
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: MountBackend) {
-    // FP domains aren't visible via mount-status from non-bundle binaries yet
-    if matches!(mount, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping mount-status for FileProvider (requires app bundle context)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-status-active");
@@ -30,7 +25,14 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
 
     let mount_path_str = mp.mount_point().to_string_lossy().to_string();
 
-    let output = Command::new(manager::bin_path())
+    // FileProvider domains require app bundle context — use installed binary
+    let status_bin = if matches!(mount, MountBackend::MacosFileProvider) {
+        std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant")
+    } else {
+        manager::bin_path()
+    };
+
+    let output = Command::new(&status_bin)
         .arg("mount-status")
         .output()
         .expect("failed to run mount-status");
@@ -48,10 +50,6 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBackend) {
-    if matches!(mount, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping mount-status JSON for FileProvider (requires app bundle context)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-status-json");
@@ -61,7 +59,13 @@ fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBac
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let _mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    let output = Command::new(manager::bin_path())
+    let status_bin = if matches!(mount, MountBackend::MacosFileProvider) {
+        std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant")
+    } else {
+        manager::bin_path()
+    };
+
+    let output = Command::new(&status_bin)
         .args(["mount-status", "--format", "json"])
         .output()
         .expect("failed to run mount-status --format json");
