@@ -1,23 +1,34 @@
 # Mount Backends — Production Fixes & Full Test Coverage PRD
 
-## Status (2026-04-02)
+## Status (2026-04-03)
 
-**199/199 mount tests passing.** Major items completed:
+**221/234 mount tests passing.** Major items completed:
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
-- [ ] 2. FileProvider in template — deferred (needs .app bundle fixture)
+- [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
-- [ ] 4. TTL CLI exposure — not started
-- [ ] 5. Readonly on WCF/FP — not started
+- [x] 4. TTL CLI exposure — --read-ttl added
+- [x] 5. Readonly — enforced at RemoteFs level for all backends
 - [x] 6. TODO.md updated — deferred features documented
 - [x] 7. Docker in test matrix — works, offset writes added
-- [x] 8. All-green test matrix — 199/199 with zero skips
+- [-] 8. All-green test matrix — 221/234 (13 FP backend limitations)
 - [ ] 9. Windows VM script — not started
 - [x] 10. Fixed sleeps replaced — polling helpers implemented
 
+**Remaining for full green:**
+- 13 FileProvider tests fail due to backend limitations (not test issues):
+  - deleteItem, renameItem not implemented in FP extension
+  - readonly error propagation through FP extension
+  - mount-status/unmount CLI commands don't work outside app bundle
+  - mount-onto-file/nonexistent-root validation missing for FP
+  - multi_mount domain cleanup between tests
+
 Additional completed work not in original requirements:
 - Singleton test servers (file-lock coordination, lonely shutdown)
+- FileProvider singleton (installed app, App Group socket, backup/restore)
 - Process leak fixes (try_spawn, daemon test rewrite)
 - Docker offset write support
+- Provisioning profiles checked into repo
+- build-macos-app.sh with debug/release profile support
 
 ## Overview
 
