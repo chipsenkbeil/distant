@@ -385,16 +385,27 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
-            ManagerRequest::List { resources: _ } => {
-                // TODO(A7): Filter by resource kind. For now, return connections only
-                // (preserves existing behavior).
-                debug!("Attempting to retrieve the list of connections");
-                match self.list().await {
-                    Ok(list) => {
-                        info!("Retrieved list of connections");
-                        ManagerResponse::List(list)
+            ManagerRequest::List { ref resources } => {
+                if resources.contains(&crate::protocol::ResourceKind::Mount) {
+                    debug!("Attempting to retrieve the list of mounts");
+                    let mounts: Vec<MountInfo> = self
+                        .mounts
+                        .read()
+                        .await
+                        .values()
+                        .map(|m| m.info.clone())
+                        .collect();
+                    info!("Retrieved {} mount(s)", mounts.len());
+                    ManagerResponse::Mounts { mounts }
+                } else {
+                    debug!("Attempting to retrieve the list of connections");
+                    match self.list().await {
+                        Ok(list) => {
+                            info!("Retrieved list of connections");
+                            ManagerResponse::List(list)
+                        }
+                        Err(x) => ManagerResponse::from(x),
                     }
-                    Err(x) => ManagerResponse::from(x),
                 }
             }
             ManagerRequest::Kill { id } => {

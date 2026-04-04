@@ -112,6 +112,9 @@ pub enum ManagerResponse {
         /// IDs that were successfully unmounted.
         ids: Vec<u32>,
     },
+
+    /// List of active mounts.
+    Mounts { mounts: Vec<MountInfo> },
 }
 
 impl<T: std::error::Error> From<T> for ManagerResponse {

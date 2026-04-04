@@ -245,7 +245,9 @@ impl Options {
                         feature = "mount-windows-cloud-files",
                         feature = "mount-macos-file-provider",
                     ))]
-                    ClientSubcommand::Unmount { .. } => {}
+                    ClientSubcommand::Unmount { network, .. } => {
+                        network.merge(config.client.network);
+                    }
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
                     }
@@ -622,10 +624,6 @@ pub enum ClientSubcommand {
         )]
         backend: distant_mount::MountBackend,
 
-        /// Run mount in foreground (default: daemonize for NFS/FUSE backends)
-        #[clap(long)]
-        foreground: bool,
-
         /// Local mount point (optional for FileProvider backend)
         mount_point: Option<PathBuf>,
     },
@@ -638,12 +636,24 @@ pub enum ClientSubcommand {
         feature = "mount-macos-file-provider",
     ))]
     Unmount {
-        /// Remove all stale distant FileProvider domains
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Mount ID to unmount (interactive selection if omitted)
+        id: Option<u32>,
+
+        /// Unmount all active mounts
         #[clap(long)]
         all: bool,
-
-        /// Mount point path or destination URL (e.g. ssh://root@host) to unmount
-        mount_point: Option<String>,
     },
 
     /// Specialized treatment of running a remote shell process
@@ -938,7 +948,7 @@ impl ClientSubcommand {
                 feature = "mount-windows-cloud-files",
                 feature = "mount-macos-file-provider",
             ))]
-            Self::Unmount { .. } => constants::user::CACHE_FILE_PATH.as_path(),
+            Self::Unmount { cache, .. } => cache.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
@@ -972,10 +982,7 @@ impl ClientSubcommand {
                 feature = "mount-windows-cloud-files",
                 feature = "mount-macos-file-provider",
             ))]
-            Self::Unmount { .. } => {
-                static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
-                &DEFAULT
-            }
+            Self::Unmount { network, .. } => network,
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,

@@ -49,122 +49,6 @@ use super::common::RemoteProcessLink;
 const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 pub fn run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
-    // For mount commands that need a foreground process (NFS, FUSE),
-    // daemonize by default: re-exec with --foreground and exit.
-    #[cfg(any(
-        feature = "mount-fuse",
-        feature = "mount-nfs",
-        feature = "mount-windows-cloud-files",
-        feature = "mount-macos-file-provider",
-    ))]
-    if let ClientSubcommand::Mount {
-        foreground: false,
-        ref backend,
-        ref mount_point,
-        ..
-    } = cmd
-        && backend.needs_foreground_process()
-    {
-        // Create mount point in the parent so permission errors are visible.
-        if let Some(mp) = mount_point {
-            std::fs::create_dir_all(mp)
-                .with_context(|| format!("Failed to create mount point {}", mp.display()))?;
-        }
-        use std::ffi::OsString;
-        use std::process::{Command, Stdio};
-
-        // Build the child command: same binary + args + --foreground
-        let exe = std::env::current_exe().context("Failed to get current exe")?;
-        let mut args: Vec<OsString> = std::env::args_os().skip(1).collect();
-        args.push(OsString::from("--foreground"));
-
-        // Pass the resolved socket path so sudo doesn't break connectivity.
-        #[cfg(unix)]
-        if let ClientSubcommand::Mount { ref network, .. } = cmd
-            && network.unix_socket.is_none()
-        {
-            let socket = crate::constants::user::UNIX_SOCKET_PATH.as_os_str();
-            args.push(OsString::from("--unix-socket"));
-            args.push(socket.to_owned());
-        }
-
-        // Spawn child with piped stderr so we can report mount errors.
-        let mut cmd = Command::new(&exe);
-        cmd.args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        // On Windows, detach the child from the parent's console and
-        // put it in a new process group. Without this, the child
-        // receives CTRL_CLOSE_EVENT when the parent exits, which
-        // tokio::signal::ctrl_c() interprets as a shutdown signal.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-            const DETACHED_PROCESS: u32 = 0x00000008;
-            const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
-            cmd.creation_flags(
-                CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB,
-            );
-        }
-
-        let mut child = cmd.spawn().context("Failed to spawn mount process")?;
-
-        // Wait up to 10s for the child to print "Mounted" or exit with error.
-        let stdout = child.stdout.take().unwrap();
-        let mut stderr = child.stderr.take().unwrap();
-        let pid = child.id();
-
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(stdout);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let tx2 = tx.clone();
-        std::thread::spawn(move || {
-            for line in reader.lines().map_while(Result::ok) {
-                if line.contains("Mounted") {
-                    let _ = tx.send(Ok(line));
-                    return;
-                }
-            }
-            // stdout closed without "Mounted" — read stderr for the error
-            let mut err = String::new();
-            let _ = std::io::Read::read_to_string(&mut stderr, &mut err);
-            let _ = tx.send(Err(err));
-        });
-
-        // Also handle child exit
-        std::thread::spawn(move || {
-            if let Ok(status) = child.wait()
-                && !status.success()
-            {
-                let _ = tx2.send(Err(format!("mount process exited with {status}")));
-            }
-        });
-
-        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-            Ok(Ok(line)) => {
-                println!("{line}");
-                debug!("Daemonized mount process (pid {pid})");
-            }
-            Ok(Err(err)) => {
-                let err = err.trim();
-                return Err(anyhow::anyhow!("Mount failed: {err}").into());
-            }
-            Err(_) => {
-                // Timeout — process is still running, mount may still be in progress
-                debug!("Mount process (pid {pid}) still starting...");
-                println!("Mount process started (pid {pid})");
-            }
-        }
-
-        // Exit immediately. The child.wait() background thread holds a
-        // process handle that blocks until the daemon exits (never, by
-        // design). Using std::process::exit avoids waiting for it.
-        std::process::exit(0);
-    }
-
     let rt = tokio::runtime::Runtime::new().context("Failed to start up runtime")?;
     rt.block_on(async_run(cmd, quiet))
 }
@@ -589,7 +473,6 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             dir_ttl,
             read_ttl,
             backend,
-            foreground: _,
             mount_point,
         } => {
             debug!("Connecting to manager");
@@ -598,55 +481,6 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
-
-            debug!("Opening channel to connection {}", connection_id);
-            let channel = client
-                .open_raw_channel(connection_id)
-                .await
-                .with_context(|| format!("Failed to open channel to connection {connection_id}"))?;
-
-            let mut channel: Channel = channel.into_client().into_channel();
-
-            // Resolve the remote root now (while we're in an async context)
-            // so that RemoteFs::new() doesn't need to block_on(system_info).
-            let resolved_root = match remote_root {
-                Some(s) => s.into(),
-                None => {
-                    let info = channel
-                        .system_info()
-                        .await
-                        .context("Failed to get remote system info")?;
-                    debug!("remote root defaulting to server cwd: {}", info.current_dir);
-                    info.current_dir
-                }
-            };
-
-            let info = client
-                .info(connection_id)
-                .await
-                .context("Failed to get connection info")?;
-
-            let mut extra = distant_core::net::common::Map::new();
-            extra.insert("connection_id".to_string(), connection_id.to_string());
-            extra.insert("destination".to_string(), info.destination);
-            extra.insert("log_level".to_string(), log::max_level().to_string());
-            extra.insert("remote_root".to_string(), resolved_root.to_string());
-            if readonly {
-                extra.insert("readonly".to_string(), "true".to_string());
-            }
-
-            let config = distant_core::protocol::MountConfig {
-                mount_point: mount_point.clone(),
-                remote_root: Some(resolved_root),
-                readonly,
-                cache: distant_core::protocol::CacheConfig {
-                    attr_ttl: Duration::from_secs_f64(attr_ttl),
-                    dir_ttl: Duration::from_secs_f64(dir_ttl),
-                    read_ttl: Duration::from_secs_f64(read_ttl),
-                    ..Default::default()
-                },
-                extra,
-            };
 
             #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
             if matches!(backend, distant_mount::MountBackend::MacosFileProvider)
@@ -659,66 +493,25 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .into());
             }
 
-            let mut handle = mount_with_backend(channel, config, backend)
+            let config = distant_core::protocol::MountConfig {
+                mount_point: mount_point.clone(),
+                remote_root: remote_root.map(RemotePath::new),
+                readonly,
+                cache: distant_core::protocol::CacheConfig {
+                    attr_ttl: Duration::from_secs_f64(attr_ttl),
+                    dir_ttl: Duration::from_secs_f64(dir_ttl),
+                    read_ttl: Duration::from_secs_f64(read_ttl),
+                    ..Default::default()
+                },
+                extra: Map::new(),
+            };
+
+            let (id, mount_point, _backend) = client
+                .mount(connection_id, backend.as_str(), config)
                 .await
                 .context("Failed to mount filesystem")?;
 
-            // Use writeln + ignore errors instead of println to avoid
-            // panicking on broken pipe. In daemon mode, the parent closes
-            // the pipe's read end after reading "Mounted", which causes
-            // the next stdout write to fail with ERROR_BROKEN_PIPE.
-            {
-                use std::io::Write;
-                let msg = match mount_point {
-                    Some(ref p) => format!("Mounted at {}", p.display()),
-                    None => "Mounted (visible in Finder sidebar)".to_string(),
-                };
-                let _ = writeln!(std::io::stdout(), "{msg}");
-                let _ = std::io::stdout().flush();
-            }
-
-            // For backends that need a long-running process (NFS, FUSE,
-            // Cloud Files), wait for Ctrl+C to keep the server alive.
-            // For FileProvider, domain registration is persistent and
-            // macOS manages the .appex — no blocking needed.
-            if backend.needs_foreground_process() {
-                // Wait for Ctrl+C or SIGTERM to unmount cleanly.
-                // SIGTERM is sent when the daemonized process is killed or
-                // when macOS ejects the volume.
-                #[cfg(unix)]
-                {
-                    use tokio::signal::unix::{SignalKind, signal};
-                    let mut sigterm =
-                        signal(SignalKind::terminate()).context("Failed to listen for SIGTERM")?;
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => {}
-                        _ = sigterm.recv() => {}
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    // On Windows, the daemon process is created with
-                    // CREATE_NO_WINDOW and has no reliable console for
-                    // signal handling. Use ctrl_c() only when running
-                    // interactively (user typed --foreground). In daemon
-                    // mode (stdout is a pipe, not a terminal), block
-                    // indefinitely — the process is stopped by `taskkill`
-                    // or `distant unmount`, which triggers MountGuard::drop
-                    // for clean teardown.
-                    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-                        let _ = tokio::signal::ctrl_c().await;
-                    } else {
-                        // Daemon mode: stdout is a pipe, no console for
-                        // signal handling. Block until the process is
-                        // killed externally (taskkill, distant unmount).
-                        let () = std::future::pending().await;
-                    }
-                }
-                handle
-                    .unmount()
-                    .await
-                    .context("Failed to unmount filesystem")?;
-            }
+            println!("Mounted at {mount_point} (id: {id})");
         }
         #[cfg(any(
             feature = "mount-fuse",
@@ -726,117 +519,77 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             feature = "mount-windows-cloud-files",
             feature = "mount-macos-file-provider",
         ))]
-        ClientSubcommand::Unmount { all, mount_point } => {
+        ClientSubcommand::Unmount {
+            cache: _,
+            network,
+            id,
+            all,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
             if all {
-                #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-                {
-                    if distant_mount::macos::is_running_in_app_bundle() {
-                        distant_mount::macos::remove_all_file_provider_domains()
-                            .context("Failed to remove FileProvider domains")?;
-                        println!("Removed all distant FileProvider domains");
-                    }
+                let mounts = client
+                    .list_mounts()
+                    .await
+                    .context("Failed to list mounts")?;
+                if mounts.is_empty() {
+                    println!("No active mounts");
+                    return Ok(());
                 }
+                let ids: Vec<u32> = mounts.iter().map(|m| m.id).collect();
+                client
+                    .unmount(ids)
+                    .await
+                    .context("Failed to unmount all mounts")?;
+                println!("Unmounted all mounts");
+                return Ok(());
+            }
 
-                // Terminate all Cloud Files mount daemon processes and
-                // unregister their sync roots.
-                #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
-                {
-                    let mounts = detect_cloud_file_mounts();
-                    for (pid, mount_point) in &mounts {
-                        // Kill the daemon process — this triggers MountGuard::drop
-                        // which disconnects the sync root cleanly.
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/F", "/PID", &pid.to_string()])
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .status();
-
-                        // Give the process time to clean up, then unregister.
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let path = std::path::PathBuf::from(mount_point);
-                        let _ = distant_mount::windows_cloud_files::unmount_path(&path);
-                        println!("Unmounted {mount_point} (killed pid {pid})");
-                    }
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    let mounts = client
+                        .list_mounts()
+                        .await
+                        .context("Failed to list mounts")?;
                     if mounts.is_empty() {
-                        // Try the in-process unmount as fallback.
-                        let _ = distant_mount::windows_cloud_files::unmount();
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active mounts.\n\n\
+                             Mount a remote filesystem first:\n  \
+                             distant mount"
+                        )));
+                    }
+
+                    if !Term::stderr().is_term() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No mount ID specified. See active mounts:\n  \
+                             distant status"
+                        )));
+                    }
+
+                    let items: Vec<String> = mounts
+                        .iter()
+                        .map(|m| format!("{} — {} ({})", m.id, m.mount_point, m.backend))
+                        .collect();
+                    let selection = Select::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Select mount to unmount")
+                        .items(&items)
+                        .default(0)
+                        .interact_on_opt(&Term::stderr())
+                        .context("Failed to render prompt")?;
+                    match selection {
+                        Some(index) => mounts[index].id,
+                        None => return Ok(()),
                     }
                 }
+            };
 
-                // Also unmount any NFS/FUSE volume mounts.
-                #[cfg(unix)]
-                {
-                    let mounts = detect_distant_volume_mounts();
-                    for mp in &mounts {
-                        let path = std::path::Path::new(mp);
-                        let status = std::process::Command::new("umount").arg(path).status();
-                        match status {
-                            Ok(s) if s.success() => println!("Unmounted {mp}"),
-                            Ok(s) => eprintln!("Warning: umount {mp} failed ({s})"),
-                            Err(e) => eprintln!("Warning: umount {mp}: {e}"),
-                        }
-                    }
-                }
-            }
-
-            if let Some(ref arg) = mount_point {
-                if arg.contains("://") {
-                    // Treat as a destination URL (e.g. ssh://root@host).
-                    #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-                    {
-                        distant_mount::macos::remove_file_provider_domain_for_destination(arg)
-                            .context("Failed to remove FileProvider domain for destination")?;
-                        println!("Unmounted {arg}");
-                    }
-                    #[cfg(not(all(feature = "mount-macos-file-provider", target_os = "macos")))]
-                    {
-                        return Err(anyhow::anyhow!(
-                            "destination-based unmount requires macOS FileProvider support"
-                        )
-                        .into());
-                    }
-                } else {
-                    let path = std::path::PathBuf::from(arg);
-
-                    #[cfg(unix)]
-                    {
-                        let status = std::process::Command::new("umount")
-                            .arg(&path)
-                            .status()
-                            .context("Failed to run umount")?;
-                        if !status.success() {
-                            return Err(
-                                anyhow::anyhow!("umount failed with status {}", status).into()
-                            );
-                        }
-                        println!("Unmounted {}", path.display());
-                    }
-                    #[cfg(all(
-                        not(unix),
-                        feature = "mount-windows-cloud-files",
-                        target_os = "windows"
-                    ))]
-                    {
-                        distant_mount::windows_cloud_files::unmount_path(&path)
-                            .context("Failed to unregister Cloud Files sync root")?;
-                        println!("Unmounted {}", path.display());
-                    }
-                    #[cfg(not(any(
-                        unix,
-                        all(feature = "mount-windows-cloud-files", target_os = "windows")
-                    )))]
-                    {
-                        let _ = &path;
-                        return Err(
-                            anyhow::anyhow!("Unmount not supported on this platform").into()
-                        );
-                    }
-                }
-            } else if !all {
-                return Err(
-                    anyhow::anyhow!("mount_point is required unless --all is specified").into(),
-                );
-            }
+            client
+                .unmount(vec![id])
+                .await
+                .with_context(|| format!("Failed to unmount mount {id}"))?;
+            println!("Unmounted {id}");
         }
         ClientSubcommand::Shell {
             cache,
@@ -2455,137 +2208,6 @@ async fn use_or_lookup_connection_id(
             }
         }
     }
-}
-
-/// Mounts a remote filesystem using the plugin corresponding to `backend`.
-///
-/// Constructs the appropriate [`MountPlugin`](distant_core::plugin::MountPlugin) for
-/// the given backend and calls its `mount` method.
-#[cfg(any(
-    feature = "mount-fuse",
-    feature = "mount-nfs",
-    feature = "mount-windows-cloud-files",
-    feature = "mount-macos-file-provider",
-))]
-async fn mount_with_backend(
-    channel: Channel,
-    config: distant_core::protocol::MountConfig,
-    backend: distant_mount::MountBackend,
-) -> io::Result<Box<dyn distant_core::plugin::MountHandle>> {
-    use distant_core::plugin::MountPlugin;
-
-    match backend {
-        #[cfg(all(
-            feature = "mount-fuse",
-            any(target_os = "linux", target_os = "freebsd", target_os = "macos")
-        ))]
-        distant_mount::MountBackend::Fuse => {
-            distant_mount::plugin::FuseMountPlugin
-                .mount(channel, config)
-                .await
-        }
-        #[cfg(feature = "mount-nfs")]
-        distant_mount::MountBackend::Nfs => {
-            distant_mount::plugin::NfsMountPlugin
-                .mount(channel, config)
-                .await
-        }
-        #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
-        distant_mount::MountBackend::WindowsCloudFiles => {
-            distant_mount::plugin::CloudFilesMountPlugin
-                .mount(channel, config)
-                .await
-        }
-        #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-        distant_mount::MountBackend::MacosFileProvider => {
-            distant_mount::plugin::FileProviderMountPlugin
-                .mount(channel, config)
-                .await
-        }
-    }
-}
-
-/// Detects NFS and FUSE mounts created by distant.
-///
-/// NFS mounts come from `localhost` (embedded NFS server).
-/// FUSE mounts have `FSName=distant` in the mount options.
-#[cfg(unix)]
-fn detect_distant_volume_mounts() -> Vec<String> {
-    let output = match std::process::Command::new("mount")
-        .stdout(std::process::Stdio::piped())
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return Vec::new(),
-    };
-
-    output
-        .lines()
-        .filter(|line| {
-            // NFS: "localhost:/ on /path (nfs, ...)"
-            let is_nfs = line.contains("localhost:/") && line.contains("nfs");
-            // FUSE: "distant on /path (macfuse, ...)" or "(fuse..., FSName=distant)"
-            let is_fuse = (line.starts_with("distant ") && line.contains(" on "))
-                || line.contains("FSName=distant");
-            is_nfs || is_fuse
-        })
-        .filter_map(|line| {
-            line.split(" on ")
-                .nth(1)
-                .and_then(|rest| rest.split(" (").next().map(|p| p.to_string()))
-        })
-        .collect()
-}
-
-/// Detects running Cloud Files mount daemon processes by inspecting
-/// the command lines of all `distant.exe` processes. Returns a list of
-/// `(pid, mount_point)` pairs.
-#[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
-fn detect_cloud_file_mounts() -> Vec<(u32, String)> {
-    let output = match std::process::Command::new("wmic")
-        .args([
-            "process",
-            "where",
-            "name='distant.exe'",
-            "get",
-            "ProcessId,CommandLine",
-            "/format:csv",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return Vec::new(),
-    };
-
-    output
-        .lines()
-        .filter(|line| {
-            line.contains("mount")
-                && line.contains("windows-cloud-files")
-                && line.contains("--foreground")
-        })
-        .filter_map(|line| {
-            // CSV format: Node,CommandLine,ProcessId
-            let fields: Vec<&str> = line.split(',').collect();
-            if fields.len() < 3 {
-                return None;
-            }
-            let pid: u32 = fields.last()?.trim().parse().ok()?;
-            let cmd = fields[1..fields.len() - 1].join(",");
-
-            // Extract mount point: the last non-flag argument in the command
-            let args: Vec<&str> = cmd.split_whitespace().collect();
-            let mount_point = args
-                .iter()
-                .rev()
-                .find(|a| !a.starts_with('-') && !a.contains("distant"))?
-                .to_string();
-
-            Some((pid, mount_point))
-        })
-        .collect()
 }
 
 #[cfg(test)]
