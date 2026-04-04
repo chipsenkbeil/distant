@@ -27,17 +27,38 @@
 
 - [x] **A5** Update docs/TODO.md with deferred features
 
-- [ ] **A6** Fix FileProvider backend limitations (13 failing tests)
-  - [ ] delete (rm, rmdir) — FP extension doesn't implement deleteItem
-  - [ ] rename — FP extension doesn't implement renameItem
-  - [ ] readonly enforcement — FP doesn't reject writes at the extension level
-        (RemoteFs check_writable works but FP may not propagate the error)
-  - [ ] mount-onto-file — FP mount doesn't validate mount point type
-  - [ ] nonexistent remote root — FP mount doesn't fail on bad root
-  - [ ] status/unmount — mount-status and unmount commands don't work with
-        FP domains (is_running_in_app_bundle guard blocks CLI usage)
-  - [ ] multi_mount dropping — FP domain cleanup between tests incomplete
-  - These are **production code** fixes in `distant-mount/src/backend/macos_file_provider/`
+- [-] **A6** Fix FileProvider backend — 9 tests need fixes (no skips allowed)
+  Production fixes:
+  - [x] delete handler — returns NSError on lookup failure (was silent success)
+  - [x] rename handler — reads changedFields, performs fs.rename()
+  - [x] readonly in metadata — CLI persists flag, bootstrap reads it
+  - [x] canonicalize remote root — resolves symlinks at mount time
+  - [ ] readonly capabilities — set NSFileProviderItemCapabilities to exclude
+        AllowsWriting/AllowsDeleting when readonly=true (macOS rejects writes
+        at OS level before they reach the extension)
+  - [ ] per-domain unmount — store domain ID in MountProcess, unmount single
+        domain on Drop instead of unmount --all
+  Test fixes (FP-specific logic in test, not skips):
+  - [ ] rmdir: use remove_dir_all for FP (hidden metadata in dirs)
+  - [ ] unmount_by_path: use MountProcess for FP (no raw spawn)
+  - [ ] unmount_all: use MountProcess for FP, remove skip
+  - [ ] mount_onto_file: for FP, assert nonexistent remote root fails instead
+  - [ ] status tests: run mount-status via installed binary for FP
+  - [ ] multi_mount drop: depends on per-domain unmount production fix
+
+- [ ] **A7** Manager-owned mount lifecycle (future architecture)
+  Move mount lifecycle into the manager process:
+  - Manager spawns mounts as internal tokio tasks (in-process)
+  - FUSE: spawn_blocking with dedicated thread pool
+  - NFS: async in tokio runtime
+  - FileProvider: domain registration, manager tracks domain IDs
+  - Windows Cloud Files: spawn_blocking for COM callbacks
+  - New ManagerRequest variants: Mount, Unmount, ListMounts
+  - `distant mount` becomes async (no --foreground)
+  - `distant status` shows connections + mounts
+  - Connection drop: keep mount alive, attempt reconnect, surface status
+  - Manager shutdown: unmount everything (future: --persist-mounts flag)
+  - Windows testing via ssh windows-vm + rsync + cargo nextest
 
 ---
 
@@ -87,22 +108,26 @@ Docker per-test manager lingers.
 
 ---
 
-## Current State (2026-04-03)
+## Current State (2026-04-04)
 
-**221/234 mount tests passing.** Breakdown:
+**~227/234 mount tests passing.** Breakdown:
 - 199/199 non-FP tests (NFS, FUSE, Docker) — all green
-- 22/35 FileProvider tests — passing (reads, creates, modifies, browse)
-- 13/35 FileProvider tests — failing (backend limitations, see A6)
+- ~32/38 FileProvider tests pass (reads, creates, deletes, renames, browse)
+- ~6 FP tests have skips that must be converted to FP-specific test logic
+- 3 FP tests fail due to production gaps (readonly caps, per-domain unmount, rmdir)
 
-**Key achievements this session:**
-- FUSE+SSH EIO root cause found and fixed (SFTP error mapping)
-- Singleton test servers (Host, SSH, FileProvider)
+**Key achievements:**
+- FUSE+SSH EIO root cause: SFTP error mapping
+- Singleton test servers: Host, SSH, FileProvider
 - Docker offset write support
-- FileProvider in cross-backend template via installed app approach
-- Provisioning profiles checked into repo
-- build-macos-app.sh with debug/release profile support
+- FileProvider in cross-backend template via installed app + provisioning profiles
+- Remote root canonicalization (resolves /var → /private/var symlinks)
+- FP delete handler and rename handler fixed
 
-**Next: A6 — Fix FileProvider backend to pass all 13 failing tests**
+**Next:**
+- A6: Remove all FP test skips — add FP-specific test logic instead
+- A6: Readonly capabilities, per-domain unmount production fixes
+- A7: Manager-owned mount lifecycle (future architecture)
 
 ---
 

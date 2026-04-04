@@ -1,8 +1,8 @@
 # Mount Backends — Production Fixes & Full Test Coverage PRD
 
-## Status (2026-04-03)
+## Status (2026-04-04)
 
-**221/234 mount tests passing.** Major items completed:
+**~227/234 mount tests passing.** Major items completed:
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
 - [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
@@ -10,25 +10,33 @@
 - [x] 5. Readonly — enforced at RemoteFs level for all backends
 - [x] 6. TODO.md updated — deferred features documented
 - [x] 7. Docker in test matrix — works, offset writes added
-- [-] 8. All-green test matrix — 221/234 (13 FP backend limitations)
+- [-] 8. All-green test matrix — ~227/234 (6 FP tests need fixes, 9 skips
+         to revert)
 - [ ] 9. Windows VM script — not started
 - [x] 10. Fixed sleeps replaced — polling helpers implemented
 
-**Remaining for full green:**
-- 13 FileProvider tests fail due to backend limitations (not test issues):
-  - deleteItem, renameItem not implemented in FP extension
-  - readonly error propagation through FP extension
-  - mount-status/unmount CLI commands don't work outside app bundle
-  - mount-onto-file/nonexistent-root validation missing for FP
-  - multi_mount domain cleanup between tests
+**Remaining for full green (A6):**
+- 9 FP test skips must be reverted — add FP-specific test logic instead
+- 3 production fixes needed: readonly capabilities, per-domain unmount, rmdir
+- Delete/rename handlers already fixed
+- Remote root canonicalization already done
+
+**Future architecture (A7): Manager-owned mount lifecycle**
+- Manager spawns mounts as in-process tokio tasks
+- `distant mount` becomes async (no --foreground)
+- `distant status` shows connections + mounts
+- Connection drop resilience: keep mount, reconnect, surface status
+- All 4 backends: FUSE (spawn_blocking), NFS (async), FileProvider
+  (domain registration), Windows Cloud Files (spawn_blocking for COM)
+- Windows testing via ssh windows-vm + rsync + cargo nextest
 
 Additional completed work not in original requirements:
-- Singleton test servers (file-lock coordination, lonely shutdown)
-- FileProvider singleton (installed app, App Group socket, backup/restore)
+- Singleton test servers (Host, SSH, FileProvider)
 - Process leak fixes (try_spawn, daemon test rewrite)
 - Docker offset write support
 - Provisioning profiles checked into repo
 - build-macos-app.sh with debug/release profile support
+- Remote root canonicalization (symlink resolution at mount time)
 
 ## Overview
 
