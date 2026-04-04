@@ -2,8 +2,8 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{AnyThread, DefinedClass, Message, define_class, msg_send};
 use objc2_file_provider::{
-    NSFileProviderItemCapabilities, NSFileProviderItemIdentifier, NSFileProviderItemProtocol,
-    NSFileProviderItemVersion,
+    NSFileProviderFileSystemFlags, NSFileProviderItemCapabilities, NSFileProviderItemIdentifier,
+    NSFileProviderItemProtocol, NSFileProviderItemVersion,
 };
 use objc2_foundation::{NSData, NSNumber, NSObject, NSString};
 use objc2_uniform_type_identifiers::{UTType, UTTypeData, UTTypeFolder};
@@ -67,6 +67,11 @@ define_class!(
             } else {
                 Some(NSNumber::new_u64(self.ivars().size))
             }
+        }
+
+        #[unsafe(method(fileSystemFlags))]
+        fn file_system_flags(&self) -> NSFileProviderFileSystemFlags {
+            self.compute_file_system_flags()
         }
     }
 );
@@ -137,6 +142,21 @@ impl DistantFileProviderItem {
 
     /// Computes the capabilities for this item based on whether it is a
     /// directory or a file.
+    /// Computes the POSIX-level filesystem flags for this item.
+    ///
+    /// When the mount is readonly, excludes `UserWritable` so macOS rejects
+    /// writes at the filesystem level (EACCES) before they reach the extension.
+    fn compute_file_system_flags(&self) -> NSFileProviderFileSystemFlags {
+        let mut flags = NSFileProviderFileSystemFlags::UserReadable;
+        if !self.ivars().readonly {
+            flags |= NSFileProviderFileSystemFlags::UserWritable;
+        }
+        if self.ivars().is_directory {
+            flags |= NSFileProviderFileSystemFlags::UserExecutable;
+        }
+        flags
+    }
+
     fn compute_capabilities(&self) -> NSFileProviderItemCapabilities {
         if self.ivars().readonly {
             // Readonly mount: only allow reading and enumeration.

@@ -23,13 +23,18 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    let mount_path_str = mp.mount_point().to_string_lossy().to_string();
-
-    // FileProvider domains require app bundle context — use installed binary
-    let status_bin = if matches!(mount, MountBackend::MacosFileProvider) {
-        std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant")
+    // FileProvider domains require app bundle context — use installed binary.
+    // FP status shows the remote root in the destination, not the CloudStorage path.
+    let (status_bin, search_str) = if matches!(mount, MountBackend::MacosFileProvider) {
+        (
+            std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant"),
+            dir.clone(), // remote root appears in the FP domain destination
+        )
     } else {
-        manager::bin_path()
+        (
+            manager::bin_path(),
+            mp.mount_point().to_string_lossy().to_string(),
+        )
     };
 
     let output = Command::new(&status_bin)
@@ -40,8 +45,8 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
-        stdout.contains(&mount_path_str),
-        "[{backend:?}/{mount}] mount-status should include mount point '{mount_path_str}', got:\n{stdout}"
+        stdout.contains(&search_str),
+        "[{backend:?}/{mount}] mount-status should include '{search_str}', got:\n{stdout}"
     );
 }
 
