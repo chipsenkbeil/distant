@@ -84,6 +84,22 @@ pub enum ManagerResponse {
 
     /// List of managed tunnels
     ManagedTunnels { tunnels: Vec<ManagedTunnelInfo> },
+
+    /// Confirmation that a mount was created.
+    Mounted {
+        /// Unique mount identifier.
+        id: u32,
+        /// Local mount point path.
+        mount_point: String,
+        /// Backend name.
+        backend: String,
+    },
+
+    /// Acknowledgement that mounts were removed.
+    Unmounted {
+        /// IDs that were successfully unmounted.
+        ids: Vec<u32>,
+    },
 }
 
 impl<T: std::error::Error> From<T> for ManagerResponse {

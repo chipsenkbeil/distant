@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId};
 use crate::net::common::{ConnectionId, Map, UntypedRequest};
+use crate::protocol::{MountConfig, ResourceKind};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,8 +67,13 @@ pub enum ManagerRequest {
     /// Kill a specific connection
     Kill { id: ConnectionId },
 
-    /// Retrieve list of connections being managed
-    List,
+    /// Retrieve list of managed resources.
+    ///
+    /// When `resources` is empty, all resource types are returned.
+    List {
+        #[serde(default)]
+        resources: Vec<ResourceKind>,
+    },
 
     /// Start a forward tunnel (local listener -> remote target) in the manager
     ForwardTunnel {
@@ -90,6 +96,24 @@ pub enum ManagerRequest {
 
     /// List all managed tunnels
     ListManagedTunnels,
+
+    /// Mount a remote filesystem via a mount plugin.
+    Mount {
+        /// Connection to use for the mount.
+        connection_id: ConnectionId,
+
+        /// Backend name (e.g., "nfs", "fuse", "macos-file-provider", "windows-cloud-files").
+        backend: String,
+
+        /// Mount configuration.
+        config: MountConfig,
+    },
+
+    /// Unmount one or more mounted filesystems.
+    Unmount {
+        /// Mount IDs to unmount.
+        ids: Vec<u32>,
+    },
 }
 
 #[cfg(test)]

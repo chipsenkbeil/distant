@@ -285,7 +285,11 @@ impl ManagerClient {
     /// Retrieves a list of active connections
     pub async fn list(&mut self) -> io::Result<ConnectionList> {
         trace!("list()");
-        let res = self.send(ManagerRequest::List).await?;
+        let res = self
+            .send(ManagerRequest::List {
+                resources: Vec::new(),
+            })
+            .await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),

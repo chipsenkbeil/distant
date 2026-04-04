@@ -372,7 +372,9 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
-            ManagerRequest::List => {
+            ManagerRequest::List { resources: _ } => {
+                // TODO(A7): Filter by resource kind. For now, return connections only
+                // (preserves existing behavior).
                 debug!("Attempting to retrieve the list of connections");
                 match self.list().await {
                     Ok(list) => {
@@ -501,6 +503,24 @@ impl ServerHandler for ManagerServer {
                     .map(|t| t.info.clone())
                     .collect();
                 ManagerResponse::ManagedTunnels { tunnels }
+            }
+            ManagerRequest::Mount {
+                connection_id: _,
+                backend: _,
+                config: _,
+            } => {
+                // TODO(A7 Phase 3): Implement mount via mount plugin
+                ManagerResponse::from(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "mount not yet implemented in manager",
+                ))
+            }
+            ManagerRequest::Unmount { ids: _ } => {
+                // TODO(A7 Phase 3): Implement unmount
+                ManagerResponse::from(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "unmount not yet implemented in manager",
+                ))
             }
         };
 
