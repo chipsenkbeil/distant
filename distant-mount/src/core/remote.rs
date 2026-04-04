@@ -58,6 +58,35 @@ impl RemoteFs {
             }
         };
 
+        // Canonicalize the root path via the remote server, resolving
+        // symlinks (e.g., /var → /private/var on macOS). This also
+        // validates the path exists at mount time.
+        let root_path = {
+            let mut ch = channel.clone();
+            let meta = ch
+                .metadata(root_path.clone(), true, false)
+                .await
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("remote root '{}' is not accessible: {e}", root_path),
+                    )
+                })?;
+            match meta.canonicalized_path {
+                Some(canonical) => {
+                    debug!("remote root canonicalized: {} -> {}", root_path, canonical);
+                    canonical
+                }
+                None => {
+                    warn!(
+                        "remote root '{}': server did not return canonical path",
+                        root_path
+                    );
+                    root_path
+                }
+            }
+        };
+
         let cache = &config.cache;
 
         let attr_cache = Arc::new(Mutex::new(AttrCache::new(
