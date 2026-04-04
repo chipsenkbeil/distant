@@ -172,21 +172,24 @@ impl MountProcess {
     /// socket. The process prints "Mounted" and then exits. The mount point
     /// is discovered by scanning `~/Library/CloudStorage/` for new entries.
     #[cfg(target_os = "macos")]
-    fn try_spawn_file_provider(ctx: &BackendCtx, args: &[&str]) -> Result<Self, String> {
-        use crate::manager;
+    fn try_spawn_file_provider(_ctx: &BackendCtx, args: &[&str]) -> Result<Self, String> {
+        use crate::{manager, singleton};
 
-        let app_dir = build_test_app_bundle();
-        let bundled_binary = app_dir.join("Contents").join("MacOS").join("distant");
+        // Get or start the FileProvider singleton (installs app, starts manager
+        // on the App Group socket, connects a server).
+        let fp_handle = singleton::get_or_start_file_provider();
+
+        let bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
 
         let cloud_storage = dirs_cloud_storage();
         let before: std::collections::HashSet<_> = list_cloud_storage_entries(&cloud_storage);
 
-        let mut cmd = Command::new(&bundled_binary);
+        let mut cmd = Command::new(&bin);
         cmd.arg("mount");
         cmd.arg("--log-file")
             .arg(manager::random_log_file("mount-fp"));
         cmd.arg("--log-level").arg("trace");
-        cmd.arg("--unix-socket").arg(ctx.socket_or_pipe());
+        cmd.arg("--unix-socket").arg(&fp_handle.socket_or_pipe);
         cmd.arg("--backend").arg("macos-file-provider");
 
         for arg in args {
@@ -246,7 +249,7 @@ impl MountProcess {
             child,
             mount_point,
             is_file_provider: true,
-            bundled_bin: Some(bundled_binary),
+            bundled_bin: Some(bin),
         })
     }
 
@@ -282,6 +285,9 @@ impl Drop for MountProcess {
             // The child already exited after mounting; reap just in case.
             let _ = self.child.kill();
             let _ = self.child.wait();
+
+            // Don't restore production app here — the singleton manages the
+            // app lifecycle. Restore happens when the singleton shuts down.
             return;
         }
 
@@ -465,251 +471,83 @@ pub fn cleanup_all_stale_mounts() {
     }
 }
 
-/// Builds a test `.app` bundle for the macOS FileProvider backend.
+/// Installs the test `.app` bundle to `/Applications/Distant.app`.
 ///
-/// Creates the directory structure under `target/test-Distant.app/`, copies
-/// the distant binary and Info.plist files, signs the bundle with ad-hoc
-/// codesign, and registers the FileProvider extension via `pluginkit`.
+/// Backs up any existing production install to `/Applications/Distant.app.bak`.
+/// Uses `scripts/build-macos-app.sh --skip-build` to bundle, sign, and install.
+/// Requires an Apple Development signing identity in the keychain.
 ///
-/// Skips the rebuild if the binary modification time has not changed since
-/// the last build.
+/// # Errors
 ///
-/// Returns the path to the `.app` bundle.
-///
-/// # Panics
-///
-/// Panics if any filesystem operation, codesign, or pluginkit command fails.
+/// Returns `Err` if signing identity is missing, the script fails, or
+/// `/Applications/` is not writable.
 #[cfg(target_os = "macos")]
-pub fn build_test_app_bundle() -> PathBuf {
-    let workspace_root = find_workspace_root();
-    let bin = crate::manager::bin_path();
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| workspace_root.join("target"));
+pub fn install_test_app() -> Result<(), String> {
+    let workspace = find_workspace_root();
+    let app = PathBuf::from("/Applications/Distant.app");
+    let backup = PathBuf::from("/Applications/Distant.app.bak");
 
-    let app_dir = target_dir.join("test-Distant.app");
-    let contents = app_dir.join("Contents");
-    let app_macos = contents.join("MacOS");
-    let app_binary = app_macos.join("distant");
-
-    let appex_dir = contents
-        .join("PlugIns")
-        .join("DistantFileProvider.appex")
-        .join("Contents");
-    let appex_macos = appex_dir.join("MacOS");
-    let appex_binary = appex_macos.join("distant");
-
-    if should_skip_rebuild(&bin, &app_binary) {
-        // Even when skipping rebuild, ensure the extension is registered
-        // (pluginkit registrations are volatile and may not persist).
-        ensure_pluginkit_registered(&contents);
-        return app_dir;
+    // Back up existing production install (only if not already backed up)
+    if app.exists() && !backup.exists() {
+        std::fs::rename(&app, &backup)
+            .map_err(|e| format!("failed to back up /Applications/Distant.app: {e}"))?;
     }
 
-    std::fs::create_dir_all(&app_macos).expect("failed to create app MacOS dir");
-    std::fs::create_dir_all(&appex_macos).expect("failed to create appex MacOS dir");
-
-    std::fs::copy(&bin, &app_binary).expect("failed to copy binary to app bundle");
-    std::fs::copy(&bin, &appex_binary).expect("failed to copy binary to appex bundle");
-
-    let resources = workspace_root.join("resources").join("macos");
-
-    // Use Apple Development identity if available; fall back to ad-hoc.
-    let identity = find_apple_dev_identity().unwrap_or_else(|| "-".to_string());
-
-    // Use production identifiers — the checked-in provisioning profiles
-    // authorize dev.distant and dev.distant.file-provider. Test data is
-    // isolated via a unique app group (39C6AGD73Z.group.dev.distant.test).
-    std::fs::copy(resources.join("Info.plist"), contents.join("Info.plist"))
-        .expect("failed to copy Info.plist");
-
-    // Appex: keep ALL production values including app group. macOS always
-    // uses /Applications/Distant.app's extension (can't be overridden via
-    // pluginkit), so the extension must read from the production app group.
-    // Test domains use unique IDs and don't collide with production domains.
-    std::fs::copy(
-        resources.join("Extension-Info.plist"),
-        appex_dir.join("Info.plist"),
-    )
-    .expect("failed to copy Extension-Info.plist");
-
-    // Embed provisioning profiles (required for restricted entitlements)
-    let profiles = resources.join("profiles");
-    let app_profile = profiles.join("Distant_Dev.provisionprofile");
-    let appex_profile = profiles.join("Distant_FileProvider_Dev.provisionprofile");
-
-    if app_profile.exists() {
-        std::fs::copy(&app_profile, contents.join("embedded.provisionprofile"))
-            .expect("failed to embed app provisioning profile");
-    }
-    if appex_profile.exists() {
-        std::fs::copy(&appex_profile, appex_dir.join("embedded.provisionprofile"))
-            .expect("failed to embed appex provisioning profile");
-    }
-
-    let entitlements = resources.join("distant.entitlements");
-    let appex_entitlements = resources.join("distant-appex.entitlements");
-
-    let appex_path = contents.join("PlugIns").join("DistantFileProvider.appex");
-    codesign(&appex_path, &appex_entitlements, &identity);
-    codesign(&app_dir, &entitlements, &identity);
-
-    ensure_pluginkit_registered(&contents);
-
-    app_dir
-}
-
-/// Checks whether the app bundle binary is up-to-date with the source binary.
-#[cfg(target_os = "macos")]
-fn should_skip_rebuild(source: &Path, dest: &Path) -> bool {
-    let src_meta = match std::fs::metadata(source) {
-        Ok(m) => m,
-        Err(_) => return false,
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
     };
-    let dst_meta = match std::fs::metadata(dest) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-    let src_mtime = src_meta.modified().ok();
-    let dst_mtime = dst_meta.modified().ok();
-    match (src_mtime, dst_mtime) {
-        (Some(s), Some(d)) => s <= d,
-        _ => false,
-    }
-}
 
-/// Writes test entitlements plists for the host app and appex.
-///
-/// The host app runs unsandboxed so it can access unix sockets freely.
-/// The appex must be sandboxed (pluginkit requires it for extensions).
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-fn write_test_entitlements(target_dir: &Path, app_group: &str) -> (PathBuf, PathBuf) {
-    let app_path = target_dir.join("test-app-entitlements.plist");
-    let app_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>{app_group}</string>
-    </array>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.get-task-allow</key>
-    <true/>
-</dict>
-</plist>
-"#
-    );
-    std::fs::write(&app_path, app_content).expect("failed to write app entitlements");
-
-    let appex_path = target_dir.join("test-appex-entitlements.plist");
-    let appex_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>{app_group}</string>
-    </array>
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.get-task-allow</key>
-    <true/>
-</dict>
-</plist>
-"#
-    );
-    std::fs::write(&appex_path, appex_content).expect("failed to write appex entitlements");
-
-    (app_path, appex_path)
-}
-
-/// Ensures the test FileProvider extension is registered with pluginkit.
-///
-/// Registrations are volatile and may not persist across reboots, so this
-/// is called on every test run (even when the bundle rebuild is skipped).
-#[cfg(target_os = "macos")]
-fn ensure_pluginkit_registered(contents: &Path) {
-    let appex_path = contents.join("PlugIns").join("DistantFileProvider.appex");
-    let _ = Command::new("pluginkit")
-        .args(["-a", &appex_path.to_string_lossy()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    let _ = Command::new("pluginkit")
-        .args(["-e", "use", "-i", "dev.distant.file-provider"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-/// Finds an Apple Development signing identity in the keychain.
-///
-/// Returns the identity hash string if found, or `None` if no Apple
-/// Development certificate is available (ad-hoc signing will be used
-/// as a fallback, but pluginkit may reject the extension).
-#[cfg(target_os = "macos")]
-fn find_apple_dev_identity() -> Option<String> {
-    let output = Command::new("security")
-        .args(["find-identity", "-v", "-p", "codesigning"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        if line.contains("Apple Development:") {
-            return line.split_whitespace().nth(1).map(String::from);
-        }
-    }
-    None
-}
-
-/// Extracts the Team ID from a signed binary.
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-fn extract_team_id(binary: &Path, identity: &str) -> Option<String> {
-    // Sign the binary temporarily to extract team ID
-    let _ = Command::new("codesign")
-        .args(["-s", identity, "-f"])
-        .arg(binary)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    let output = Command::new("codesign")
-        .args(["-dv"])
-        .arg(binary)
-        .output()
-        .ok()?;
-    // codesign -dv writes to stderr
-    let text = String::from_utf8_lossy(&output.stderr);
-    for line in text.lines() {
-        if let Some(id) = line.strip_prefix("TeamIdentifier=")
-            && id != "not set"
-        {
-            return Some(id.to_string());
-        }
-    }
-    None
-}
-
-/// Signs a bundle or appex with the given identity (or ad-hoc if `None`).
-#[cfg(target_os = "macos")]
-fn codesign(path: &Path, entitlements: &Path, identity: &str) {
-    let status = Command::new("codesign")
-        .args(["-s", identity, "-f", "--entitlements"])
-        .arg(entitlements)
-        .arg(path)
+    let status = Command::new("bash")
+        .arg(workspace.join("scripts/build-macos-app.sh"))
+        .arg("--skip-build")
+        .env("CARGO_PROFILE", profile)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .status()
-        .expect("failed to run codesign");
-    assert!(status.success(), "codesign failed for {}", path.display());
+        .map_err(|e| format!("failed to run build-macos-app.sh: {e}"))?;
+
+    if !status.success() {
+        // Restore backup on failure
+        restore_production_app();
+        return Err(
+            "build-macos-app.sh failed (missing Apple Development signing identity?)".into(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Restores the production `/Applications/Distant.app` from backup.
+///
+/// Called after tests complete or if install fails. Re-registers the
+/// restored extension with pluginkit.
+#[cfg(target_os = "macos")]
+pub fn restore_production_app() {
+    let app = PathBuf::from("/Applications/Distant.app");
+    let backup = PathBuf::from("/Applications/Distant.app.bak");
+
+    let _ = std::fs::remove_dir_all(&app);
+
+    if backup.exists() {
+        let _ = std::fs::rename(&backup, &app);
+        // Re-register the restored extension
+        let appex = app
+            .join("Contents")
+            .join("PlugIns")
+            .join("DistantFileProvider.appex");
+        let _ = Command::new("pluginkit")
+            .args(["-a", &appex.to_string_lossy()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("pluginkit")
+            .args(["-e", "use", "-i", "dev.distant.file-provider"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 /// Finds the workspace root by walking up from `CARGO_MANIFEST_DIR` until

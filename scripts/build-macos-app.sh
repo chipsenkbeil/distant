@@ -58,14 +58,22 @@ for arg in "$@"; do
     esac
 done
 
+# ── Profile (debug or release) ──────────────────────────────────────
+PROFILE="${CARGO_PROFILE:-release}"
+BINARY="target/$PROFILE/distant"
+
 # ── Step 1: Build ────────────────────────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
-    echo "==> Building (release, features: $CARGO_FEATURES)"
-    cargo build --release --features "$CARGO_FEATURES"
+    BUILD_FLAGS="--features $CARGO_FEATURES"
+    if [ "$PROFILE" = "release" ]; then
+        BUILD_FLAGS="--release $BUILD_FLAGS"
+    fi
+    echo "==> Building ($PROFILE, features: $CARGO_FEATURES)"
+    cargo build $BUILD_FLAGS
 else
-    echo "==> Skipping build (--skip-build)"
-    if [ ! -f target/release/distant ]; then
-        echo "error: target/release/distant not found — run without --skip-build first" >&2
+    echo "==> Skipping build (--skip-build, profile: $PROFILE)"
+    if [ ! -f "$BINARY" ]; then
+        echo "error: $BINARY not found — run without --skip-build first" >&2
         exit 1
     fi
 fi
@@ -75,7 +83,7 @@ echo "==> Bundling and signing"
 CODESIGN_IDENTITY="$CODESIGN_IDENTITY" \
     APP_PROFILE="$APP_PROFILE" \
     APPEX_PROFILE="$APPEX_PROFILE" \
-    bash scripts/build-macos-bundle.sh
+    bash scripts/build-macos-bundle.sh "$BINARY"
 
 # ── Step 3: Install to /Applications ─────────────────────────────────
 echo "==> Installing to $INSTALL_DIR/$APP_NAME"

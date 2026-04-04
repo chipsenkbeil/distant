@@ -403,6 +403,97 @@ fn start_ssh(socket_path: &Path) -> ServerMeta {
     }
 }
 
+/// Starts a singleton FileProvider backend.
+///
+/// Installs the test app to `/Applications/Distant.app`, then starts a
+/// manager + server using the installed binary. The manager listens on the
+/// App Group container socket so the FileProvider extension can find it.
+#[cfg(target_os = "macos")]
+fn start_file_provider(_socket_path: &Path) -> ServerMeta {
+    // Install the test app (idempotent — skips rebuild if mtime matches)
+    crate::mount::install_test_app().expect("failed to install test app for FileProvider");
+
+    let app_bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
+    let home = std::env::var("HOME").expect("HOME not set");
+    let group_dir = format!("{home}/Library/Group Containers/39C6AGD73Z.group.dev.distant");
+    let app_group_socket = format!("{group_dir}/distant.sock");
+
+    // Remove stale socket from previous runs
+    let _ = fs::remove_file(&app_group_socket);
+    let _ = fs::create_dir_all(&group_dir);
+
+    // Start manager using the INSTALLED binary (so it detects the app bundle
+    // and creates the socket in the App Group container).
+    let mut manager_cmd = Command::new(&app_bin);
+    manager_cmd
+        .arg("manager")
+        .arg("listen")
+        .arg("--log-file")
+        .arg(manager::random_log_file("singleton-fp-manager"))
+        .arg("--log-level")
+        .arg("trace")
+        .arg("--shutdown")
+        .arg(format!("lonely={LONELY_TIMEOUT_SECS}"))
+        .arg("--unix-socket")
+        .arg(&app_group_socket);
+
+    manager_cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    process::set_process_group(&mut manager_cmd);
+
+    eprintln!("[singleton] starting file-provider manager: {manager_cmd:?}");
+    let mut mgr = manager_cmd
+        .spawn()
+        .expect("failed to spawn file-provider singleton manager");
+    let manager_pid = mgr.id();
+
+    manager::wait_for_manager_ready(&app_group_socket, &mut mgr);
+
+    let _ = mgr.stdout.take();
+    let _ = mgr.stderr.take();
+
+    // Start server (using the installed binary so it's consistent)
+    let mut server_cmd = Command::new(&app_bin);
+    server_cmd
+        .arg("server")
+        .arg("listen")
+        .arg("--log-file")
+        .arg(manager::random_log_file("singleton-fp-server"))
+        .arg("--log-level")
+        .arg("trace")
+        .arg("--shutdown")
+        .arg(format!("lonely={LONELY_TIMEOUT_SECS}"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    process::set_process_group(&mut server_cmd);
+
+    eprintln!("[singleton] starting file-provider server: {server_cmd:?}");
+    let mut server = server_cmd
+        .spawn()
+        .expect("failed to spawn file-provider singleton server");
+    let server_pid = server.id();
+
+    let credentials = read_server_credentials(&mut server);
+    connect_manager_to_server(&app_group_socket, &credentials);
+
+    // Leak processes so they outlive the test process
+    std::mem::forget(mgr);
+    std::mem::forget(server);
+
+    ServerMeta {
+        manager_pid,
+        server_pid: Some(server_pid),
+        sshd_pid: None,
+        sshd_port: None,
+        sshd_dir: None,
+        socket_path: app_group_socket,
+        container_id: None,
+    }
+}
+
 /// Reads [`Credentials`] from a server's stdout.
 ///
 /// Spawns a background thread to read from the child's stdout, looking for
@@ -496,6 +587,17 @@ pub fn get_or_start_host() -> SingletonHandle {
 /// of the test to maintain the shared lock.
 pub fn get_or_start_ssh() -> SingletonHandle {
     get_or_start("ssh", start_ssh)
+}
+
+/// Gets or starts a singleton FileProvider backend.
+///
+/// Installs the test app to `/Applications/Distant.app`, starts a manager
+/// that listens on the App Group container socket, and connects a local
+/// server. The FileProvider extension connects to this manager via the
+/// standard App Group socket path.
+#[cfg(target_os = "macos")]
+pub fn get_or_start_file_provider() -> SingletonHandle {
+    get_or_start("file-provider", start_file_provider)
 }
 
 /// Core get-or-start logic shared between backends.
