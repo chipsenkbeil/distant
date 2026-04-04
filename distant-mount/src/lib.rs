@@ -1,5 +1,6 @@
 mod backend;
 mod core;
+pub mod plugin;
 
 use std::io;
 use std::sync::Arc;
