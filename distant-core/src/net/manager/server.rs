@@ -613,6 +613,7 @@ mod tests {
             connection_buffer_size: 100,
             user: false,
             plugins: HashMap::new(),
+            mount_plugins: HashMap::new(),
         }
     }
 
