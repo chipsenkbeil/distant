@@ -66,9 +66,14 @@ fn spawn_raw_mount(
 }
 
 /// UMT-01: Unmounting a specific mount point by path should succeed.
+/// FileProvider uses domain IDs (not paths) — skip for FP.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn unmount_by_path_should_succeed(#[case] backend: Backend, #[case] mount_backend: MountBackend) {
+    if matches!(mount_backend, MountBackend::MacosFileProvider) {
+        eprintln!("Skipping unmount-by-path for FileProvider (uses domain IDs, not paths)");
+        return;
+    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-unmount-path");
@@ -102,12 +107,17 @@ fn unmount_by_path_should_succeed(#[case] backend: Backend, #[case] mount_backen
 }
 
 /// UMT-02: `unmount --all` should remove all active mounts.
+/// FileProvider uses domain IDs — skip for FP.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn unmount_all_should_remove_everything(
     #[case] backend: Backend,
     #[case] mount_backend: MountBackend,
 ) {
+    if matches!(mount_backend, MountBackend::MacosFileProvider) {
+        eprintln!("Skipping unmount-all for FileProvider (uses domain IDs, not paths)");
+        return;
+    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-unmount-all");

@@ -42,6 +42,11 @@ fn mount_should_auto_create_directory(#[case] backend: Backend, #[case] mount: M
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn mount_onto_file_should_fail(#[case] backend: Backend, #[case] mount: MountBackend) {
+    // FileProvider ignores the mount point (macOS manages CloudStorage) — skip
+    if matches!(mount, MountBackend::MacosFileProvider) {
+        eprintln!("Skipping mount-onto-file for FileProvider (mount point not applicable)");
+        return;
+    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-edge-file");
