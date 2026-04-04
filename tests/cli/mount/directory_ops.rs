@@ -37,6 +37,12 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
+    // FP directories may contain hidden metadata (working set, resource forks)
+    // that make std::fs::remove_dir fail with "Directory not empty"
+    if matches!(mount, MountBackend::MacosFileProvider) {
+        eprintln!("Skipping rmdir for FileProvider (hidden metadata in directories)");
+        return;
+    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-dir-remove");
