@@ -83,7 +83,7 @@ pub mod user {
     /// On macOS, checks if the current binary is running inside a `.app` or
     /// `.appex` bundle and returns a socket path inside the App Group container.
     ///
-    /// Uses `NSFileManager` (via `distant_mount::macos::app_group_container_path`)
+    /// Uses `NSFileManager` (via `distant_mount::macos::fp::appex::app_group_container_path`)
     /// to resolve the App Group container, which works correctly regardless of
     /// sandbox state.
     #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
@@ -94,7 +94,7 @@ pub mod user {
             return None;
         }
 
-        let group_container = distant_mount::macos::app_group_container_path()?;
+        let group_container = distant_mount::macos::fp::appex::app_group_container_path()?;
         let _ = std::fs::create_dir_all(&group_container);
         Some(group_container.join(SOCKET_FILE_STR))
     }

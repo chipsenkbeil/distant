@@ -9,12 +9,11 @@ use log::{debug, warn};
 use tokio::sync::{Mutex, RwLock};
 
 use distant_core::protocol::{
-    Change, ChangeKind, Metadata, ReadFileOptions, RemotePath, WriteFileOptions,
+    Change, ChangeKind, Metadata, MountConfig, ReadFileOptions, RemotePath, WriteFileOptions,
 };
 use distant_core::{Channel, ChannelExt};
 use typed_path::Utf8TypedPath;
 
-use crate::core::MountConfig;
 use buffer::WriteBuffers;
 use cache::{AttrCache, CachedAttr, DirCache, DirCacheEntry, ReadCache};
 use inode::InodeTable;

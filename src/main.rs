@@ -245,7 +245,7 @@ fn main() -> MainResult {
     // classes immediately (before XPC looks them up) and enter the run loop.
     #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
     if macos_appex::is_appex() {
-        distant_mount::macos::register_file_provider_classes();
+        distant_mount::macos::fp::appex::register_file_provider_classes();
         macos_appex::main();
     }
 

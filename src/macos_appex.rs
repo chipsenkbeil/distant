@@ -17,7 +17,7 @@ use crate::constants;
 
 /// Returns `true` if this process is running as a `.appex` FileProvider extension.
 pub fn is_appex() -> bool {
-    distant_mount::macos::is_file_provider_extension()
+    distant_mount::macos::fp::appex::is_file_provider_extension()
 }
 
 /// Runs the FileProvider extension process.
@@ -39,7 +39,7 @@ pub fn main() -> ! {
         .expect("failed to create tokio runtime for .appex");
 
     let handle = rt.handle().clone();
-    distant_mount::macos::init_file_provider(
+    distant_mount::macos::fp::appex::init_file_provider(
         rt.handle().clone(),
         Box::new(move |connection_id, destination| {
             handle.block_on(resolve_connection(connection_id, destination))
@@ -130,7 +130,7 @@ async fn find_connection_by_destination(
 /// Uses `NSFileManager.containerURL` to resolve the real group container
 /// path, which works correctly from inside the sandbox.
 async fn connect_headless() -> std::io::Result<distant_core::net::manager::ManagerClient> {
-    let socket_path = distant_mount::macos::app_group_container_path()
+    let socket_path = distant_mount::macos::fp::appex::app_group_container_path()
         .map(|p| p.join("distant.sock"))
         .unwrap_or_else(|| constants::user::UNIX_SOCKET_PATH.clone());
 
@@ -172,7 +172,7 @@ fn init_appex_logging() {
     let pid = std::process::id();
     let log_filename = format!("distant-appex-{pid}.log");
 
-    let log_path = distant_mount::macos::app_group_container_path()
+    let log_path = distant_mount::macos::fp::appex::app_group_container_path()
         .and_then(|container| {
             let log_dir = container.join("logs");
             std::fs::create_dir_all(&log_dir).ok()?;

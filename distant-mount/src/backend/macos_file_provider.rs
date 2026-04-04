@@ -36,11 +36,11 @@ use objc2::{AnyThread, Message};
 use objc2_file_provider::*;
 use objc2_foundation::*;
 
-use crate::core::{CacheConfig, MountConfig, Runtime};
+use crate::core::Runtime;
 
 use distant_core::Channel;
 use distant_core::net::common::Map;
-use distant_core::protocol::FileType;
+use distant_core::protocol::{CacheConfig, FileType, MountConfig};
 
 use provider::{DistantFileProvider, DistantFileProviderEnumerator, DistantFileProviderItem};
 

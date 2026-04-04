@@ -39,28 +39,13 @@ impl MountHandle {
     }
 
     /// Detaches the handle, meaning that dropping it will no longer unmount.
-    pub fn detach(mut self) -> Self {
+    pub(crate) fn detach(mut self) -> Self {
         self.unmount_on_drop = false;
         self
     }
 
-    /// Returns true if the handle is considered detached, meaning that it will not unmount when
-    /// dropped.
-    pub fn is_detached(&self) -> bool {
-        !self.unmount_on_drop
-    }
-
-    /// Returns `true` when the caller should keep the process alive (e.g.
-    /// block on Ctrl+C) for the mount to continue working.
-    ///
-    /// Backends like FUSE and NFS require a foreground process; FileProvider
-    /// is detached and returns `false`.
-    pub fn needs_foreground(&self) -> bool {
-        self.unmount_on_drop
-    }
-
     /// Attempts to unmount the filesystem, waiting until complete.
-    pub async fn unmount(mut self) -> io::Result<()> {
+    pub(crate) async fn unmount(mut self) -> io::Result<()> {
         if let Some(tx) = self.shutdown_tx.take() {
             // The receiver may already be dropped if the mount exited on its
             // own; that is not an error.
@@ -71,7 +56,7 @@ impl MountHandle {
     }
 
     /// Waits until the filesystem is unmounted.
-    pub async fn wait(mut self) -> io::Result<()> {
+    pub(crate) async fn wait(mut self) -> io::Result<()> {
         match self.join_handle.take() {
             Some(handle) => handle
                 .await

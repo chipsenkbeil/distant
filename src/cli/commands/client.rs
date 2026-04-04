@@ -635,11 +635,11 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 extra.insert("readonly".to_string(), "true".to_string());
             }
 
-            let config = distant_mount::MountConfig {
+            let config = distant_core::protocol::MountConfig {
                 mount_point: mount_point.clone(),
                 remote_root: Some(resolved_root),
                 readonly,
-                cache: distant_mount::CacheConfig {
+                cache: distant_core::protocol::CacheConfig {
                     attr_ttl: Duration::from_secs_f64(attr_ttl),
                     dir_ttl: Duration::from_secs_f64(dir_ttl),
                     read_ttl: Duration::from_secs_f64(read_ttl),
@@ -659,10 +659,9 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .into());
             }
 
-            let handle =
-                distant_mount::mount(tokio::runtime::Handle::current(), channel, config, backend)
-                    .await
-                    .context("Failed to mount filesystem")?;
+            let mut handle = mount_with_backend(channel, config, backend)
+                .await
+                .context("Failed to mount filesystem")?;
 
             // Use writeln + ignore errors instead of println to avoid
             // panicking on broken pipe. In daemon mode, the parent closes
@@ -682,7 +681,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             // Cloud Files), wait for Ctrl+C to keep the server alive.
             // For FileProvider, domain registration is persistent and
             // macOS manages the .appex — no blocking needed.
-            if handle.needs_foreground() {
+            if backend.needs_foreground_process() {
                 // Wait for Ctrl+C or SIGTERM to unmount cleanly.
                 // SIGTERM is sent when the daemonized process is killed or
                 // when macOS ejects the volume.
@@ -2454,6 +2453,54 @@ async fn use_or_lookup_connection_id(
                 cache.write_to_disk().await?;
                 Ok(*cache.data.selected)
             }
+        }
+    }
+}
+
+/// Mounts a remote filesystem using the plugin corresponding to `backend`.
+///
+/// Constructs the appropriate [`MountPlugin`](distant_core::plugin::MountPlugin) for
+/// the given backend and calls its `mount` method.
+#[cfg(any(
+    feature = "mount-fuse",
+    feature = "mount-nfs",
+    feature = "mount-windows-cloud-files",
+    feature = "mount-macos-file-provider",
+))]
+async fn mount_with_backend(
+    channel: Channel,
+    config: distant_core::protocol::MountConfig,
+    backend: distant_mount::MountBackend,
+) -> io::Result<Box<dyn distant_core::plugin::MountHandle>> {
+    use distant_core::plugin::MountPlugin;
+
+    match backend {
+        #[cfg(all(
+            feature = "mount-fuse",
+            any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+        ))]
+        distant_mount::MountBackend::Fuse => {
+            distant_mount::plugin::FuseMountPlugin
+                .mount(channel, config)
+                .await
+        }
+        #[cfg(feature = "mount-nfs")]
+        distant_mount::MountBackend::Nfs => {
+            distant_mount::plugin::NfsMountPlugin
+                .mount(channel, config)
+                .await
+        }
+        #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
+        distant_mount::MountBackend::WindowsCloudFiles => {
+            distant_mount::plugin::CloudFilesMountPlugin
+                .mount(channel, config)
+                .await
+        }
+        #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+        distant_mount::MountBackend::MacosFileProvider => {
+            distant_mount::plugin::FileProviderMountPlugin
+                .mount(channel, config)
+                .await
         }
     }
 }

@@ -5,9 +5,10 @@ use log::error;
 use tokio::runtime::Handle;
 use tokio::sync::{OnceCell, watch};
 
-use super::config::MountConfig;
-use super::remote::RemoteFs;
 use distant_core::Channel;
+use distant_core::protocol::MountConfig;
+
+use super::remote::RemoteFs;
 
 /// Async-to-sync bridge for mount backends.
 ///
