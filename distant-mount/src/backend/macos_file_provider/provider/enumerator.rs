@@ -191,6 +191,7 @@ define_class!(
                         }
 
                         // Build ObjC items from collected metadata (no .await).
+                        let readonly = fs.is_readonly();
                         let items: Vec<Retained<ProtocolObject<dyn NSFileProviderItemProtocol>>> =
                             metadata
                                 .iter()
@@ -200,6 +201,7 @@ define_class!(
                                         &parent_id_str,
                                         name,
                                         *is_dir,
+                                        readonly,
                                         *size,
                                         *mtime_secs,
                                     );

@@ -37,12 +37,6 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
-    // FP directories may contain hidden metadata (working set, resource forks)
-    // that make std::fs::remove_dir fail with "Directory not empty"
-    if matches!(mount, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping rmdir for FileProvider (hidden metadata in directories)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-dir-remove");
@@ -52,8 +46,15 @@ fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: Moun
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    std::fs::remove_dir(mp.mount_point().join("empty-dir"))
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
+    // FileProvider directories may contain hidden metadata (resource forks),
+    // so use remove_dir_all. Other backends use remove_dir for a true empty check.
+    if matches!(mount, MountBackend::MacosFileProvider) {
+        std::fs::remove_dir_all(mp.mount_point().join("empty-dir"))
+            .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
+    } else {
+        std::fs::remove_dir(mp.mount_point().join("empty-dir"))
+            .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
+    }
 
     let remote_path = ctx.child_path(&dir, "empty-dir");
     mount::wait_until_gone(&ctx, &remote_path);

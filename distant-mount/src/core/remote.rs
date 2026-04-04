@@ -306,6 +306,11 @@ impl RemoteFs {
     ///
     /// Data is accumulated in an in-memory [`WriteBuffer`](crate::write_buffer::WriteBuffer)
     /// and flushed to the remote on [`flush`](Self::flush), [`fsync`](Self::fsync),
+    /// Returns whether the mount is configured as read-only.
+    pub fn is_readonly(&self) -> bool {
+        self.config.readonly
+    }
+
     /// Returns a read-only error if the mount is configured as readonly.
     fn check_writable(&self) -> io::Result<()> {
         if self.config.readonly {

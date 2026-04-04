@@ -14,6 +14,7 @@ pub struct ItemIvars {
     parent_identifier: Retained<NSString>,
     filename: Retained<NSString>,
     is_directory: bool,
+    readonly: bool,
     size: u64,
     mtime_secs: u64,
 }
@@ -77,6 +78,7 @@ impl DistantFileProviderItem {
         parent_identifier: &str,
         filename: &str,
         is_directory: bool,
+        readonly: bool,
         size: u64,
         mtime_secs: u64,
     ) -> Retained<Self> {
@@ -85,6 +87,7 @@ impl DistantFileProviderItem {
             parent_identifier: NSString::from_str(parent_identifier),
             filename: NSString::from_str(filename),
             is_directory,
+            readonly,
             size,
             mtime_secs,
         });
@@ -135,6 +138,16 @@ impl DistantFileProviderItem {
     /// Computes the capabilities for this item based on whether it is a
     /// directory or a file.
     fn compute_capabilities(&self) -> NSFileProviderItemCapabilities {
+        if self.ivars().readonly {
+            // Readonly mount: only allow reading and enumeration.
+            // macOS rejects writes at the OS level before they reach the extension.
+            let mut caps = NSFileProviderItemCapabilities::AllowsReading;
+            if self.ivars().is_directory {
+                caps |= NSFileProviderItemCapabilities::AllowsContentEnumerating;
+            }
+            return caps;
+        }
+
         if self.ivars().is_directory {
             NSFileProviderItemCapabilities::AllowsReading
                 | NSFileProviderItemCapabilities::AllowsContentEnumerating

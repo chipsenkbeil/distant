@@ -39,13 +39,6 @@ fn readonly_read_should_succeed(#[case] backend: Backend, #[case] mount: MountBa
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn readonly_write_should_fail(#[case] backend: Backend, #[case] mount: MountBackend) {
-    // FP uses async create-local-then-sync — writes succeed locally even
-    // when the remote is readonly. Readonly enforcement needs FP-level
-    // read-only domain support.
-    if matches!(mount, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping readonly write for FileProvider (async write model)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-readonly-write");
@@ -71,10 +64,6 @@ fn readonly_write_should_fail(#[case] backend: Backend, #[case] mount: MountBack
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn readonly_delete_should_fail(#[case] backend: Backend, #[case] mount: MountBackend) {
-    if matches!(mount, MountBackend::MacosFileProvider) {
-        eprintln!("Skipping readonly delete for FileProvider (async write model)");
-        return;
-    }
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-readonly-delete");

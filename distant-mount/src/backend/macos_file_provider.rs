@@ -345,6 +345,7 @@ pub(crate) fn handle_item_for_identifier(
                     &parent_str,
                     &filename,
                     is_dir,
+                    fs.is_readonly(),
                     attr.size,
                     mtime_secs,
                 );
@@ -441,6 +442,7 @@ pub(crate) fn handle_fetch_contents(
             &parent_str,
             filename,
             is_dir,
+            fs.is_readonly(),
             size,
             mtime_secs,
         );
@@ -530,6 +532,7 @@ pub(crate) fn handle_create_item(
                     &parent_id_str,
                     &name,
                     attr.kind == FileType::Dir,
+                    fs.is_readonly(),
                     attr.size,
                     mtime_secs,
                 );
@@ -695,6 +698,7 @@ pub(crate) fn handle_modify_item(
             &parent_str,
             filename,
             is_dir,
+            fs.is_readonly(),
             size,
             mtime_secs,
         );
