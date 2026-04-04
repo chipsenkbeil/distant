@@ -1,5 +1,5 @@
 //! Integration tests for `distant mount`, `distant unmount`, and
-//! `distant mount-status`.
+//! `distant status --show mount`.
 //!
 //! Tests exercise every combination of plugin backend (Host, SSH, Docker) x
 //! mount backend (NFS, FUSE, Windows Cloud Files, macOS FileProvider) that

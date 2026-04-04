@@ -1,4 +1,4 @@
-//! Integration tests for `distant mount-status`.
+//! Integration tests for `distant status --show mount`.
 
 use assert_cmd::Command;
 use rstest::rstest;
@@ -9,8 +9,8 @@ use distant_test_harness::manager;
 use distant_test_harness::mount::{MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
-/// MST-01: With an active mount, `mount-status` output should contain the
-/// mount point path.
+/// MST-01: With an active mount, `status --show mount` output should contain
+/// the mount point path.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: MountBackend) {
@@ -38,20 +38,20 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
     };
 
     let output = Command::new(&status_bin)
-        .arg("mount-status")
+        .args(["status", "--show", "mount"])
         .output()
-        .expect("failed to run mount-status");
+        .expect("failed to run status --show mount");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
         stdout.contains(&search_str),
-        "[{backend:?}/{mount}] mount-status should include '{search_str}', got:\n{stdout}"
+        "[{backend:?}/{mount}] status --show mount should include '{search_str}', got:\n{stdout}"
     );
 }
 
-/// MST-02: `mount-status --format json` should produce valid JSON output
-/// containing mount information.
+/// MST-02: `status --show mount --format json` should produce valid JSON
+/// output containing mount information.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBackend) {
@@ -71,41 +71,42 @@ fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBac
     };
 
     let output = Command::new(&status_bin)
-        .args(["mount-status", "--format", "json"])
+        .args(["status", "--show", "mount", "--format", "json"])
         .output()
-        .expect("failed to run mount-status --format json");
+        .expect("failed to run status --show mount --format json");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
         panic!(
-            "[{backend:?}/{mount}] mount-status JSON should be valid, got error: {e}\nraw: {stdout}"
+            "[{backend:?}/{mount}] status --show mount JSON should be valid, got error: {e}\nraw: {stdout}"
         )
     });
 
     assert!(
         parsed.is_array(),
-        "[{backend:?}/{mount}] mount-status JSON should be an array, got: {parsed}"
+        "[{backend:?}/{mount}] status --show mount JSON should be an array, got: {parsed}"
     );
 }
 
-/// MST-03: With no active mounts, `mount-status` should print "No mounts found".
-/// This test does not need the plugin_x_mount template — it tests a single
-/// global condition. Using a plain #[test] avoids running it N times.
+/// MST-03: With no active mounts, `status --show mount` should print
+/// "No mounts found". This test does not need the plugin_x_mount template
+/// — it tests a single global condition. Using a plain #[test] avoids
+/// running it N times.
 #[test_log::test]
 fn status_no_mounts_should_say_none() {
     // Clean up any stale mounts left by prior tests.
     distant_test_harness::mount::cleanup_all_stale_mounts();
 
     let output = Command::new(manager::bin_path())
-        .arg("mount-status")
+        .args(["status", "--show", "mount"])
         .output()
-        .expect("failed to run mount-status");
+        .expect("failed to run status --show mount");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
         stdout.contains("No mounts found") || stdout.trim().is_empty(),
-        "mount-status with no mounts should indicate none, got:\n{stdout}"
+        "status --show mount with no mounts should indicate none, got:\n{stdout}"
     );
 }

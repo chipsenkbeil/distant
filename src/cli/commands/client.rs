@@ -839,124 +839,6 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 );
             }
         }
-        #[cfg(any(
-            feature = "mount-fuse",
-            feature = "mount-nfs",
-            feature = "mount-windows-cloud-files",
-            feature = "mount-macos-file-provider",
-        ))]
-        ClientSubcommand::MountStatus { format } => {
-            let _ = &format; // used conditionally per platform
-            #[allow(unused_mut)]
-            let mut has_output = false;
-
-            // NFS/FUSE mounts: detect via OS mount table
-            #[cfg(unix)]
-            {
-                let nfs_mounts = detect_distant_volume_mounts();
-                if !nfs_mounts.is_empty() {
-                    match format {
-                        Format::Shell => {
-                            println!("=== NFS/Volume Mounts ===");
-                            for mp in &nfs_mounts {
-                                println!("  {mp}");
-                            }
-                            println!();
-                        }
-                        Format::Json => {
-                            let entries: Vec<serde_json::Value> = nfs_mounts
-                                .iter()
-                                .map(|mp| {
-                                    serde_json::json!({
-                                        "type": "nfs",
-                                        "mount_point": mp,
-                                    })
-                                })
-                                .collect();
-                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
-                        }
-                    }
-                    has_output = true;
-                }
-            }
-
-            // FileProvider domains (requires app bundle context)
-            #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
-            if distant_mount::macos::is_running_in_app_bundle() {
-                let domains = distant_mount::macos::list_file_provider_domains()
-                    .context("Failed to list FileProvider domains")?;
-
-                if !domains.is_empty() {
-                    match format {
-                        Format::Shell => {
-                            println!("=== FileProvider Domains ===");
-                            let header = format!(
-                                "  {:<40} {:<30} {}",
-                                "DOMAIN ID", "DISPLAY NAME", "DESTINATION"
-                            );
-                            println!("{header}");
-                            for d in &domains {
-                                let dest = d.destination.as_deref().unwrap_or("-");
-                                println!("  {:<40} {:<30} {dest}", d.identifier, d.display_name,);
-                            }
-                            println!();
-                        }
-                        Format::Json => {
-                            let entries: Vec<serde_json::Value> = domains
-                                .iter()
-                                .map(|d| {
-                                    serde_json::json!({
-                                        "type": "file-provider",
-                                        "identifier": d.identifier,
-                                        "display_name": d.display_name,
-                                        "connection_id": d.connection_id,
-                                        "destination": d.destination,
-                                        "has_metadata": d.has_metadata,
-                                    })
-                                })
-                                .collect();
-                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
-                        }
-                    }
-                    has_output = true;
-                }
-            }
-
-            // Windows Cloud Files mounts: detect running daemon processes.
-            #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
-            {
-                let cloud_mounts = detect_cloud_file_mounts();
-                if !cloud_mounts.is_empty() {
-                    match format {
-                        Format::Shell => {
-                            println!("=== Cloud Files Mounts ===");
-                            for (pid, mount_point) in &cloud_mounts {
-                                println!("  {mount_point}  (pid {pid})");
-                            }
-                            println!();
-                        }
-                        Format::Json => {
-                            let entries: Vec<serde_json::Value> = cloud_mounts
-                                .iter()
-                                .map(|(pid, mp)| {
-                                    serde_json::json!({
-                                        "type": "cloud-files",
-                                        "mount_point": mp,
-                                        "pid": pid,
-                                    })
-                                })
-                                .collect();
-                            println!("{}", serde_json::to_string_pretty(&entries).unwrap());
-                        }
-                    }
-                    has_output = true;
-                }
-            }
-
-            if !has_output {
-                println!("No mounts found");
-            }
-        }
         ClientSubcommand::Shell {
             cache,
             cmd,
@@ -1735,10 +1617,12 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         }
         ClientSubcommand::Status {
             id,
+            show,
             format,
             network,
             cache,
         } => {
+            let _ = &show; // TODO: filter by resource type once mount/tunnel status is integrated
             match id {
                 Some(id) => {
                     // Detail mode: show info about a specific connection

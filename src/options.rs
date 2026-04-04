@@ -246,13 +246,6 @@ impl Options {
                         feature = "mount-macos-file-provider",
                     ))]
                     ClientSubcommand::Unmount { .. } => {}
-                    #[cfg(any(
-                        feature = "mount-fuse",
-                        feature = "mount-nfs",
-                        feature = "mount-windows-cloud-files",
-                        feature = "mount-macos-file-provider",
-                    ))]
-                    ClientSubcommand::MountStatus { .. } => {}
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
                     }
@@ -653,19 +646,6 @@ pub enum ClientSubcommand {
         mount_point: Option<String>,
     },
 
-    /// Show status of registered FileProvider mount domains
-    #[cfg(any(
-        feature = "mount-fuse",
-        feature = "mount-nfs",
-        feature = "mount-windows-cloud-files",
-        feature = "mount-macos-file-provider",
-    ))]
-    MountStatus {
-        /// Output format (shell or json)
-        #[clap(short, long, default_value_t, value_enum)]
-        format: Format,
-    },
-
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -863,13 +843,20 @@ pub enum ClientSubcommand {
         cmd: Option<Vec<String>>,
     },
 
-    /// Show the current status of the manager and active connections.
+    /// Show the current status of the manager and managed resources.
     ///
-    /// With no arguments, shows an overview of the manager and all connections.
-    /// With a connection ID, shows detailed info about that specific connection.
+    /// With no arguments, shows an overview of all connections, mounts, and tunnels.
+    /// With `--show`, filters to specific resource types (comma-separated).
+    /// With `--id`, shows detailed info about a specific resource.
     Status {
-        /// Connection ID to inspect (shows overview if omitted)
-        id: Option<ConnectionId>,
+        /// Resource ID to inspect (shows overview if omitted).
+        /// Works for connection, tunnel, or mount IDs.
+        id: Option<u32>,
+
+        /// Which resource types to show (comma-separated).
+        /// Values: connection, tunnel, mount. Default: all.
+        #[clap(long, value_delimiter = ',')]
+        show: Vec<String>,
 
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
@@ -952,13 +939,6 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => constants::user::CACHE_FILE_PATH.as_path(),
-            #[cfg(any(
-                feature = "mount-fuse",
-                feature = "mount-nfs",
-                feature = "mount-windows-cloud-files",
-                feature = "mount-macos-file-provider",
-            ))]
-            Self::MountStatus { .. } => constants::user::CACHE_FILE_PATH.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
@@ -993,16 +973,6 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => {
-                static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
-                &DEFAULT
-            }
-            #[cfg(any(
-                feature = "mount-fuse",
-                feature = "mount-nfs",
-                feature = "mount-windows-cloud-files",
-                feature = "mount-macos-file-provider",
-            ))]
-            Self::MountStatus { .. } => {
                 static DEFAULT: LazyLock<NetworkSettings> = LazyLock::new(NetworkSettings::default);
                 &DEFAULT
             }
@@ -1043,13 +1013,6 @@ impl ClientSubcommand {
                 feature = "mount-macos-file-provider",
             ))]
             Self::Unmount { .. } => Format::Shell,
-            #[cfg(any(
-                feature = "mount-fuse",
-                feature = "mount-nfs",
-                feature = "mount-windows-cloud-files",
-                feature = "mount-macos-file-provider",
-            ))]
-            Self::MountStatus { format, .. } => *format,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
             #[cfg(feature = "ssh")]
@@ -4249,6 +4212,7 @@ mod tests {
             },
             command: DistantSubcommand::Client(ClientSubcommand::Status {
                 id: None,
+                show: vec![],
                 format: Format::Shell,
                 cache: PathBuf::new(),
                 network: NetworkSettings {
@@ -4284,6 +4248,7 @@ mod tests {
                 },
                 command: DistantSubcommand::Client(ClientSubcommand::Status {
                     id: None,
+                    show: vec![],
                     format: Format::Shell,
                     cache: PathBuf::new(),
                     network: NetworkSettings {
@@ -4306,6 +4271,7 @@ mod tests {
             },
             command: DistantSubcommand::Client(ClientSubcommand::Status {
                 id: Some(0),
+                show: vec![],
                 format: Format::Json,
                 cache: PathBuf::new(),
                 network: NetworkSettings {
@@ -4341,6 +4307,7 @@ mod tests {
                 },
                 command: DistantSubcommand::Client(ClientSubcommand::Status {
                     id: Some(0),
+                    show: vec![],
                     format: Format::Json,
                     cache: PathBuf::new(),
                     network: NetworkSettings {
@@ -5074,6 +5041,7 @@ mod tests {
     fn format_status_returns_specified_format() {
         let cmd = ClientSubcommand::Status {
             id: None,
+            show: vec![],
             format: Format::Json,
             network: NetworkSettings::default(),
             cache: PathBuf::new(),
@@ -5258,6 +5226,7 @@ mod tests {
             },
             ClientSubcommand::Status {
                 id: None,
+                show: vec![],
                 format: Format::Shell,
                 network: net.clone(),
                 cache: cache.clone(),
@@ -5437,6 +5406,7 @@ mod tests {
 
         let cmd = ClientSubcommand::Status {
             id: None,
+            show: vec![],
             format: Format::Shell,
             network: net.clone(),
             cache: PathBuf::new(),
