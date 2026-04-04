@@ -37,7 +37,7 @@ pub trait MountPlugin: Send + Sync {
 ///
 /// Returned by [`MountPlugin::mount`]. Implementations control the
 /// backend-specific unmount procedure and expose the local mount point.
-pub trait MountHandle: Send {
+pub trait MountHandle: Send + Sync {
     /// Gracefully unmount the filesystem.
     fn unmount(&mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>>;
 

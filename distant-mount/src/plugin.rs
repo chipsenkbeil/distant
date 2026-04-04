@@ -7,6 +7,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Mutex;
 
 use distant_core::Channel;
 use distant_core::plugin::{MountHandle as MountHandleTrait, MountPlugin};
@@ -17,15 +18,19 @@ use crate::core::MountHandle as ConcreteMountHandle;
 
 /// Wraps the concrete [`MountHandle`](crate::core::handle::MountHandle) to
 /// implement the [`MountHandle`](distant_core::plugin::MountHandle) trait.
+///
+/// Uses a `Mutex` around the inner handle to satisfy `Sync` (required by
+/// the trait for `RwLock` compatibility in the manager).
 struct MountHandleWrapper {
-    inner: Option<ConcreteMountHandle>,
+    inner: Mutex<Option<ConcreteMountHandle>>,
     mount_point: String,
 }
 
 impl MountHandleTrait for MountHandleWrapper {
     fn unmount(&mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
         Box::pin(async {
-            if let Some(handle) = self.inner.take() {
+            let handle = self.inner.lock().unwrap().take();
+            if let Some(handle) = handle {
                 handle.unmount().await
             } else {
                 Ok(())
@@ -66,7 +71,7 @@ impl MountPlugin for NfsMountPlugin {
             let handle =
                 crate::mount(Handle::current(), channel, config, crate::MountBackend::Nfs).await?;
             Ok(Box::new(MountHandleWrapper {
-                inner: Some(handle),
+                inner: Mutex::new(Some(handle)),
                 mount_point,
             }) as Box<dyn MountHandleTrait>)
         })
@@ -112,7 +117,7 @@ impl MountPlugin for FuseMountPlugin {
             )
             .await?;
             Ok(Box::new(MountHandleWrapper {
-                inner: Some(handle),
+                inner: Mutex::new(Some(handle)),
                 mount_point,
             }) as Box<dyn MountHandleTrait>)
         })
@@ -150,7 +155,7 @@ impl MountPlugin for FileProviderMountPlugin {
             )
             .await?;
             Ok(Box::new(MountHandleWrapper {
-                inner: Some(handle),
+                inner: Mutex::new(Some(handle)),
                 mount_point,
             }) as Box<dyn MountHandleTrait>)
         })
@@ -190,7 +195,7 @@ impl MountPlugin for CloudFilesMountPlugin {
             )
             .await?;
             Ok(Box::new(MountHandleWrapper {
-                inner: Some(handle),
+                inner: Mutex::new(Some(handle)),
                 mount_point,
             }) as Box<dyn MountHandleTrait>)
         })
