@@ -27,7 +27,7 @@ use std::io::BufReader;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// How long to wait for the server to become idle before auto-shutdown.
-const LONELY_TIMEOUT_SECS: u32 = 10;
+const LONELY_TIMEOUT_SECS: u32 = 30;
 
 /// Max retries for connecting manager to server.
 const MAX_CONNECT_RETRIES: usize = 3;
