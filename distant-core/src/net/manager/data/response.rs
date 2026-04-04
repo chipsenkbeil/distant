@@ -1,5 +1,5 @@
 use crate::auth::msg::Authentication;
-use crate::protocol::TunnelDirection;
+use crate::protocol::{MountInfo, TunnelDirection};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -7,6 +7,18 @@ use super::{
     SemVer,
 };
 use crate::net::common::{ConnectionId, Destination, UntypedResponse};
+
+/// Detailed information about any managed resource, returned by `Info { id }`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum ResourceInfo {
+    /// Connection details.
+    Connection(ConnectionInfo),
+    /// Tunnel details.
+    Tunnel(ManagedTunnelInfo),
+    /// Mount details.
+    Mount(MountInfo),
+}
 
 /// Information about a tunnel managed by the manager process.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

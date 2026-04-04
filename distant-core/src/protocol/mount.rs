@@ -102,12 +102,24 @@ impl Default for CacheConfig {
 /// Describes an active mount managed by the distant manager.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MountInfo {
+    /// Unique mount identifier.
+    pub id: u32,
+
+    /// Connection this mount uses.
+    pub connection_id: u32,
+
+    /// Backend name (e.g., "nfs", "fuse", "macos-file-provider", "windows-cloud-files").
+    pub backend: String,
+
     /// Local mount point path.
-    pub mount_point: PathBuf,
+    pub mount_point: String,
 
     /// Remote root directory that is mounted.
-    pub remote_root: RemotePath,
+    pub remote_root: String,
 
     /// Whether the mount is read-only.
     pub readonly: bool,
+
+    /// Current status: "active", "disconnected", or "failed".
+    pub status: String,
 }
