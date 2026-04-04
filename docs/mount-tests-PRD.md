@@ -2,7 +2,7 @@
 
 ## Status (2026-04-04)
 
-**~227/234 mount tests passing.** Major items completed:
+**234/234 mount tests passing.** All backends, zero skips. Major items:
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
 - [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
@@ -10,16 +10,13 @@
 - [x] 5. Readonly — enforced at RemoteFs level for all backends
 - [x] 6. TODO.md updated — deferred features documented
 - [x] 7. Docker in test matrix — works, offset writes added
-- [-] 8. All-green test matrix — ~227/234 (6 FP tests need fixes, 9 skips
-         to revert)
+- [x] 8. All-green test matrix — 234/234 with zero skips
 - [ ] 9. Windows VM script — not started
 - [x] 10. Fixed sleeps replaced — polling helpers implemented
 
-**Remaining for full green (A6):**
-- 9 FP test skips must be reverted — add FP-specific test logic instead
-- 3 production fixes needed: readonly capabilities, per-domain unmount, rmdir
-- Delete/rename handlers already fixed
-- Remote root canonicalization already done
+**A6 complete:** All 38 FP tests pass with zero skips. Fixes: readonly
+fileSystemFlags + capabilities, delete/rename handlers, per-mount unmount,
+remote root canonicalization, FP-specific test logic for rmdir/unmount/status.
 
 **Future architecture (A7): Manager-owned mount lifecycle**
 - Manager spawns mounts as in-process tokio tasks
