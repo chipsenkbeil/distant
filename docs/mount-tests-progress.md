@@ -45,26 +45,57 @@
   - [x] status tests: runs mount-status via installed binary for FP
   - [x] multi_mount drop: per-mount unmount via CloudStorage path
 
-- [ ] **A7** Manager-owned mount lifecycle
-  **Process count investigation**: During a full test run, ~30+ FileProvider
-  appex processes spawn from /Applications/Distant.app (one per domain
-  registration). macOS manages these XPC processes independently. With
-  manager-owned mounts, the manager would track and reuse FP domains,
-  reducing the process count. After implementing A7, audit the process
-  count during a full test run to verify improvement.
+- [ ] **A7** Manager-owned mount lifecycle (6 phases)
 
-  Move mount lifecycle into the manager process:
-  - Manager spawns mounts as internal tokio tasks (in-process)
-  - FUSE: spawn_blocking with dedicated thread pool
-  - NFS: async in tokio runtime
-  - FileProvider: domain registration, manager tracks domain IDs
-  - Windows Cloud Files: spawn_blocking for COM callbacks
-  - New ManagerRequest variants: Mount, Unmount, ListMounts
-  - `distant mount` becomes async (no --foreground)
-  - `distant status` shows connections + mounts
-  - Connection drop: keep mount alive, attempt reconnect, surface status
-  - Manager shutdown: unmount everything (future: --persist-mounts flag)
-  - Windows testing via ssh windows-vm + rsync + cargo nextest
+  **Architecture:** Manager owns mount lifecycle via mount plugins.
+  distant-core does NOT depend on distant-mount — uses generic types
+  (Map for config, String for backend). Mount plugins register backends
+  (NFS, FUSE, macOS FileProvider, Windows Cloud Files) similar to how
+  connection plugins register schemes (host, ssh, docker).
+
+  **Phase 1: Protocol + unified List**
+  - [ ] MountInfo struct in distant-core protocol (id, connection_id,
+        backend as String, mount_point, remote_root, readonly, status)
+  - [ ] ResourceInfo enum: Connection | Tunnel | Mount
+  - [ ] Unified List request with resource type filter (replaces separate
+        List, ListManagedTunnels, ListMounts)
+  - [ ] Mount/Unmount/Mounted/Unmounted request/response variants
+  - [ ] Info { id } expanded to look up any resource type
+  - [ ] CLI: `distant status --show connections,mounts,tunnels`
+  - [ ] CLI: Remove `distant mount-status` (clean break for 0.21.0)
+  - [ ] CLI: `distant status --id <id>` works for any resource type
+
+  **Phase 2: Mount plugin trait + registration**
+  - [ ] MountPlugin trait in distant-mount (name, mount method)
+  - [ ] MountHandleOps trait (unmount, mount_point, needs_foreground)
+  - [ ] NfsMountPlugin, FuseMountPlugin implementations
+  - [ ] FileProviderMountPlugin (macOS), CloudFilesMountPlugin (Windows)
+  - [ ] Config parsing: Map → backend-specific MountConfig per plugin
+  - [ ] Register mount plugins alongside connection plugins
+
+  **Phase 3: Manager mount/unmount handlers**
+  - [ ] Mount handler: look up plugin, open channel, call plugin.mount()
+  - [ ] Store Box<dyn MountHandleOps> in ManagedMount
+  - [ ] Unmount handler: remove from map, call handle.unmount()
+  - [ ] Mount IDs via AtomicU32 counter (same pattern as tunnels)
+
+  **Phase 4: CLI transition**
+  - [ ] `distant mount` sends Mount request to manager (no --foreground)
+  - [ ] `distant unmount` sends Unmount request (accepts multiple IDs)
+  - [ ] `distant unmount --all` is CLI sugar (queries list, sends all IDs)
+  - [ ] MountProcess test harness: spawn via manager request, poll status
+
+  **Phase 5: Health monitoring + connection resilience**
+  - [ ] Periodic health check per mount (FUSE task alive, NFS socket bound,
+        FP domain registered, WCF sync root registered)
+  - [ ] Connection drop → mount status = "disconnected"
+  - [ ] Reconnect → mount resumes
+  - [ ] Permanent failure → mount status = "failed"
+
+  **Phase 6: Process count audit**
+  - [ ] Audit during full test run: expect ~5 distant processes + FP appex
+  - [ ] Windows Cloud Files testing via ssh windows-vm + rsync
+  - [ ] ~30+ FP appex processes observed today — verify reduction
 
 ---
 

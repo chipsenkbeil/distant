@@ -18,14 +18,28 @@
 fileSystemFlags + capabilities, delete/rename handlers, per-mount unmount,
 remote root canonicalization, FP-specific test logic for rmdir/unmount/status.
 
-**Future architecture (A7): Manager-owned mount lifecycle**
-- Manager spawns mounts as in-process tokio tasks
-- `distant mount` becomes async (no --foreground)
-- `distant status` shows connections + mounts
-- Connection drop resilience: keep mount, reconnect, surface status
-- All 4 backends: FUSE (spawn_blocking), NFS (async), FileProvider
-  (domain registration), Windows Cloud Files (spawn_blocking for COM)
+**A7: Manager-owned mount lifecycle** (next major feature)
+
+Architecture: Manager owns mount lifecycle via mount plugins. distant-core
+uses generic types (Map/String) — no dependency on distant-mount. Mount
+plugins register backends like connection plugins register schemes.
+
+Key changes:
+- Unified `distant status --show connections,mounts,tunnels` replaces
+  `mount-status` (clean break for 0.21.0)
+- `distant status --id <id>` works for any resource type
+- `distant mount` sends Mount request to manager, returns immediately
+- `distant unmount <id>` sends Unmount request (accepts multiple IDs)
+- MountPlugin trait: NFS, FUSE, macOS FileProvider, Windows Cloud Files
+- MountHandleOps trait: generic lifecycle (unmount, mount_point, etc.)
+- Config flows as Map through protocol, parsed by each plugin
+- Health monitoring: periodic checks per backend type
+- Connection drop: mount → "disconnected" → reconnect → resume
+- Manager shutdown: unmount all
+- Process audit: expect ~5 distant processes (vs 30+ today)
 - Windows testing via ssh windows-vm + rsync + cargo nextest
+
+6 implementation phases — see progress.md for detailed checklist.
 
 Additional completed work not in original requirements:
 - Singleton test servers (Host, SSH, FileProvider)
