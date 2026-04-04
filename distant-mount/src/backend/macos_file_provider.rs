@@ -217,10 +217,12 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
         .get("remote_root")
         .map(distant_core::protocol::RemotePath::new);
 
+    let readonly = map.get("readonly").is_some_and(|v| v == "true");
+
     let config = MountConfig {
         mount_point: None,
         remote_root,
-        readonly: false,
+        readonly,
         cache: CacheConfig::default(),
         extra: Map::new(),
     };
@@ -553,18 +555,26 @@ pub(crate) fn handle_create_item(
 }
 
 /// Handles the `modifyItem:...` logic.
+///
+/// Supports content writes (when `local_data` is `Some`), renames (when
+/// `new_filename` is `Some`), moves (when `new_parent_id` is `Some`), and
+/// combined rename-and-move operations.
 pub(crate) fn handle_modify_item(
     domain_id: &str,
     item_id: &NSString,
+    new_filename: Option<String>,
+    new_parent_id: Option<String>,
     new_contents: Option<&NSURL>,
     completion_handler: &block2::DynBlock<
         dyn Fn(*mut NSFileProviderItem, NSFileProviderItemFields, Bool, *mut NSError),
     >,
 ) {
     trace!(
-        "file_provider: handle_modify_item id={:?} has_content={}",
+        "file_provider: handle_modify_item id={:?} has_content={} rename={} move={}",
         item_id.to_string(),
-        new_contents.is_some()
+        new_contents.is_some(),
+        new_filename.is_some(),
+        new_parent_id.is_some(),
     );
 
     let Some(rt) = get_runtime(domain_id) else {
@@ -583,12 +593,81 @@ pub(crate) fn handle_modify_item(
             .and_then(|local_path| std::fs::read(&local_path).ok())
     });
 
+    let root_id_str = unsafe { NSFileProviderRootContainerItemIdentifier }.to_string();
+
     rt.spawn(move |fs| async move {
+        // Write new content if provided.
         if let Some(data) = local_data {
-            let _ = fs.write(ino, 0, &data).await;
+            if let Err(e) = fs.write(ino, 0, &data).await {
+                let error = make_ns_error(&format!("write content failed: {e}"));
+                block.call((
+                    std::ptr::null_mut(),
+                    NSFileProviderItemFields::empty(),
+                    Bool::NO,
+                    Retained::into_raw(error),
+                ));
+                return;
+            }
             let _ = fs.flush(ino).await;
         }
 
+        // Perform rename/move if filename or parent changed.
+        if new_filename.is_some() || new_parent_id.is_some() {
+            let rename_result: Result<(), String> = async {
+                let current_path = fs
+                    .get_path(ino)
+                    .await
+                    .ok_or_else(|| format!("unknown inode {ino}"))?;
+                let current_str = current_path.as_str();
+                let (current_parent, current_name) = current_str
+                    .rsplit_once('/')
+                    .ok_or_else(|| format!("invalid path: {current_str}"))?;
+                let current_parent = if current_parent.is_empty() {
+                    "/"
+                } else {
+                    current_parent
+                };
+                let old_parent_ino = fs
+                    .get_ino_for_path(current_parent)
+                    .await
+                    .ok_or_else(|| format!("unknown parent path: {current_parent}"))?;
+
+                // Resolve the new parent inode: use the provided parent ID if
+                // the parent changed, otherwise keep the current parent.
+                let new_parent_ino = if let Some(ref pid) = new_parent_id {
+                    if *pid == root_id_str {
+                        1
+                    } else {
+                        pid.parse::<u64>()
+                            .map_err(|_| format!("invalid parent id: {pid}"))?
+                    }
+                } else {
+                    old_parent_ino
+                };
+
+                let rename_name = new_filename.as_deref().unwrap_or(current_name);
+
+                fs.rename(old_parent_ino, current_name, new_parent_ino, rename_name)
+                    .await
+                    .map_err(|e| format!("rename failed: {e}"))
+            }
+            .await;
+
+            if let Err(e) = rename_result {
+                debug!("file_provider: modify_item rename failed: {e}");
+                let error = make_ns_error(&e);
+                block.call((
+                    std::ptr::null_mut(),
+                    NSFileProviderItemFields::empty(),
+                    Bool::NO,
+                    Retained::into_raw(error),
+                ));
+                return;
+            }
+        }
+
+        // Re-fetch attributes and path after all mutations so the returned
+        // item reflects the final state.
         let attr = fs.getattr(ino).await.ok();
         let path = fs.get_path(ino).await;
         let filename = path
@@ -650,27 +729,40 @@ pub(crate) fn handle_delete_item(
     let ino: u64 = identifier.to_string().parse().unwrap_or(0);
 
     rt.spawn(move |fs| async move {
-        if let Some(path) = fs.get_path(ino).await {
+        let result: Result<(), String> = async {
+            let path = fs
+                .get_path(ino)
+                .await
+                .ok_or_else(|| format!("unknown inode {ino}"))?;
             let path_str = path.as_str();
-            if let Some((parent, name)) = path_str.rsplit_once('/') {
-                let parent_path = if parent.is_empty() { "/" } else { parent };
-                if let Some(parent_ino) = fs.get_ino_for_path(parent_path).await {
-                    let result = match fs.getattr(ino).await {
-                        Ok(attr) if attr.kind == FileType::Dir => fs.rmdir(parent_ino, name).await,
-                        _ => fs.unlink(parent_ino, name).await,
-                    };
+            let (parent, name) = path_str
+                .rsplit_once('/')
+                .ok_or_else(|| format!("invalid path: {path_str}"))?;
+            let parent_path = if parent.is_empty() { "/" } else { parent };
+            let parent_ino = fs
+                .get_ino_for_path(parent_path)
+                .await
+                .ok_or_else(|| format!("unknown parent path: {parent_path}"))?;
 
-                    if let Err(e) = result {
-                        let error = make_ns_error(&format!("delete failed: {e}"));
-                        block.call((Retained::into_raw(error),));
-                        return;
-                    }
-                }
+            let delete_result = match fs.getattr(ino).await {
+                Ok(attr) if attr.kind == FileType::Dir => fs.rmdir(parent_ino, name).await,
+                _ => fs.unlink(parent_ino, name).await,
+            };
+            delete_result.map_err(|e| format!("delete failed: {e}"))
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                trace!("file_provider: delete_item succeeded for ino={ino}");
+                block.call((std::ptr::null_mut(),));
+            }
+            Err(e) => {
+                debug!("file_provider: delete_item failed: {e}");
+                let error = make_ns_error(&e);
+                block.call((Retained::into_raw(error),));
             }
         }
-
-        trace!("file_provider: delete_item succeeded for ino={ino}");
-        block.call((std::ptr::null_mut(),));
     });
 }
 

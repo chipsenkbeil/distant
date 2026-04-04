@@ -154,7 +154,7 @@ define_class!(
             &self,
             item: &NSFileProviderItem,
             _version: &NSFileProviderItemVersion,
-            _changed_fields: NSFileProviderItemFields,
+            changed_fields: NSFileProviderItemFields,
             new_contents: Option<&NSURL>,
             _options: NSFileProviderModifyItemOptions,
             _request: &NSFileProviderRequest,
@@ -164,8 +164,35 @@ define_class!(
         ) -> Retained<NSProgress> {
             let item_id = unsafe { item.itemIdentifier() };
             let domain_id = &self.ivars().domain_id;
-            debug!("file_provider: modifyItem {:?}", item_id.to_string());
-            handle_modify_item(domain_id, &item_id, new_contents, completion_handler);
+
+            // Extract filename and parent before spawning — ObjC objects are
+            // not Send, so we convert to owned Strings on the calling thread.
+            let new_filename = if changed_fields.contains(NSFileProviderItemFields::Filename) {
+                Some(unsafe { item.filename() }.to_string())
+            } else {
+                None
+            };
+            let new_parent_id =
+                if changed_fields.contains(NSFileProviderItemFields::ParentItemIdentifier) {
+                    Some(unsafe { item.parentItemIdentifier() }.to_string())
+                } else {
+                    None
+                };
+
+            debug!(
+                "file_provider: modifyItem {:?} new_filename={:?} new_parent={:?}",
+                item_id.to_string(),
+                new_filename,
+                new_parent_id,
+            );
+            handle_modify_item(
+                domain_id,
+                &item_id,
+                new_filename,
+                new_parent_id,
+                new_contents,
+                completion_handler,
+            );
             new_progress()
         }
 
