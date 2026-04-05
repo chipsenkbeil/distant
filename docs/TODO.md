@@ -335,32 +335,34 @@ methods as features (static-key always available, password as opt-in).
 - **Type:** Enhancement
 - **URL:** https://github.com/chipsenkbeil/distant/issues/145
 
-**Status:** Core mount feature is implemented in `distant-mount` with four
-backends: NFS, FUSE (`fuser`), macOS FileProvider, Windows Cloud Files.
-CLI commands `distant mount`, `distant unmount`, `distant mount-status`
-are functional. 192/199 integration tests pass.
+**Status:** Mount lifecycle is owned by the manager (A7 Phases 1-4 complete).
+Four backends: NFS, FUSE (`fuser`), macOS FileProvider, Windows Cloud Files.
+CLI commands `distant mount` (sends to manager, exits), `distant unmount`
+(by ID or interactive), `distant status --show mount`. All mount tests
+passing for NFS and FUSE host backends.
+
+**Completed:**
+- FUSE+SSH EIO bug fixed (SFTP error mapping + flush lock + path normalize)
+- Readonly enforcement on all backends (RemoteFs + FP fileSystemFlags)
+- FileProvider in cross-backend template (singleton via installed app)
+- `--read-ttl` exposed, cache TTLs configurable
+- Manager-owned mount lifecycle (MountPlugin trait, async unmount)
 
 **Remaining work:**
-1. **(Bug)** FUSE+SSH write EIO: `std::fs::write` through a FUSE mount
-   backed by SSH intermittently returns EIO. The flush lock fix (release
-   `write_buffers` before network I/O) reduced frequency but didn't
-   eliminate it. Needs deeper investigation of the SFTP write path.
-2. **(Limitation)** `setattr` not implemented — requires distant protocol
+1. **(Limitation)** `setattr` not implemented — requires distant protocol
    changes to support `chmod`/`chown`/`utime` on remote files.
-3. **(Limitation)** Symlinks and hard links not implemented — needs protocol
+2. **(Limitation)** Symlinks and hard links not implemented — needs protocol
    support for `symlink`, `readlink`, `link`.
-4. **(Limitation)** File locking (POSIX `flock`/`fcntl`) not implemented.
-5. **(Limitation)** Extended attributes (`xattr`) not implemented.
-6. **(Limitation)** Large file streaming — files are fully buffered in
+3. **(Limitation)** File locking (POSIX `flock`/`fcntl`) not implemented.
+4. **(Limitation)** Extended attributes (`xattr`) not implemented.
+5. **(Limitation)** Large file streaming — files are fully buffered in
    memory. Need chunked read/write for files > RAM.
-7. **(Enhancement)** Readonly enforcement on Windows Cloud Files and macOS
-   FileProvider backends — currently only NFS and FUSE support `--readonly`.
-8. **(Enhancement)** Expose `--read-ttl`, `--fuse-entry-ttl`, and
-   `--mount-option KEY=VALUE` CLI options for cache and backend tuning.
-9. **(Enhancement)** Add FileProvider back to cross-backend test template
-   with proper MountProcess fixture for .app bundle lifecycle.
-10. **(Enhancement)** Windows Cloud Files automated testing via SSH to
-    windows-vm (currently manual only).
+6. **(Enhancement)** Health monitoring: periodic checks per mount, connection
+   drop → "disconnected" → reconnect → resume (A7 Phase 5).
+7. **(Enhancement)** Process count audit: verify ~5 distant processes during
+   full test run (A7 Phase 6).
+8. **(Enhancement)** Windows Cloud Files automated testing via SSH to
+   windows-vm (currently manual only).
 
 ---
 
