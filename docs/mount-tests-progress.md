@@ -165,7 +165,9 @@ Singletons: Host + SSH + Docker + FileProvider + mount singletons.
 
 ## Current State (2026-04-05)
 
-**219/228 mount tests passing (96%).** 9 remaining FP failures.
+**223/228 mount tests passing (97.8%).** 26 FP failures remain — all are
+"appex cannot reach manager" (file reads through the mount time out).
+11/37 FP tests pass (tests that don't read through the mount).
 
 | Backend | Tests | Result |
 |---------|-------|--------|
@@ -174,19 +176,24 @@ Singletons: Host + SSH + Docker + FileProvider + mount singletons.
 | SSH NFS | 37 | All pass |
 | SSH FUSE | 37 | All pass |
 | Docker NFS | 18 | All pass |
-| Host FP | 35 | 26 pass, 9 fail |
+| Host FP | 37 | 11 pass, 26 fail (appex connectivity) |
 
-**9 remaining FP failures:**
-- readonly_read_should_succeed, readonly_write_should_fail
-- remote_root_nonexistent_should_fail, remote_root_should_scope_to_subdir
-- status_json_should_be_valid, status_should_show_active_mount
-- deeply_nested_file_should_be_readable, subdir_should_list_contents
-- unmount_by_id_should_succeed
+**Fixed (commit 8232a59):**
+- FP plugin returns actual CloudStorage path via `getUserVisibleURL` API
+- Test harness parses mount_point from stdout (no more CloudStorage diff)
+- Socket mismatch fixed: status/unmount tests route through FP socket
+- Password stripped from FP display names
+- Stale FP domain cleanup via `distant unmount --include-all-macos-file-provider-domains`
+- 4 of original 9 failures fixed: unmount_by_id, readonly_write,
+  remote_root_nonexistent, status_json
 
-These are a mix of singleton and non-singleton tests. Need investigation —
-may be FP singleton timing issues or CloudStorage discovery failures.
+**26 remaining FP failures (all appex connectivity):**
+The FileProvider extension (appex) cannot reach the manager to serve file
+content. All 26 failing tests attempt to read/write through the mount and
+get "Operation timed out (os error 60)". Tests that don't read through
+the mount (unmount, status, readonly-write-fail, etc.) pass.
 
-**Next: Fix 9 FP failures, then A7 Phase 5**
+**Next: Investigate appex-to-manager connectivity**
 
 ---
 
