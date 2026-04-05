@@ -593,9 +593,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             if unmounted.contains(&id) {
                 println!("Unmounted {id}");
             } else {
-                return Err(CliError::Error(anyhow::anyhow!(
-                    "No mount with id {id}"
-                )));
+                return Err(CliError::Error(anyhow::anyhow!("No mount with id {id}")));
             }
         }
         ClientSubcommand::Shell {
