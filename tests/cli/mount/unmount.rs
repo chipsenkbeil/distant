@@ -28,11 +28,19 @@ fn unmount_by_id_should_succeed(#[case] backend: Backend, #[case] mount_backend:
 
     let mount_id = mp.mount_id().expect("mount should have returned an ID");
 
-    let output = ctx
-        .new_std_cmd(["unmount"])
+    let mut cmd = std::process::Command::new(manager::bin_path());
+    cmd.arg("unmount")
         .arg(mount_id.to_string())
-        .output()
-        .expect("failed to run unmount");
+        .arg("--log-file")
+        .arg(manager::random_log_file("unmount"))
+        .arg("--log-level")
+        .arg("trace")
+        .arg("--unix-socket")
+        .arg(mp.socket_or_pipe());
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = cmd.output().expect("failed to run unmount");
 
     assert!(
         output.status.success(),

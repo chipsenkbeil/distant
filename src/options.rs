@@ -654,6 +654,11 @@ pub enum ClientSubcommand {
         /// Unmount all active mounts
         #[clap(long)]
         all: bool,
+
+        /// Also remove all registered macOS FileProvider domains.
+        /// Hidden flag used by test infrastructure for cleanup.
+        #[clap(long, hide = true)]
+        include_all_macos_file_provider_domains: bool,
     },
 
     /// Specialized treatment of running a remote shell process

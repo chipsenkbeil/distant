@@ -524,7 +524,24 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             network,
             id,
             all,
+            include_all_macos_file_provider_domains,
         } => {
+            // Clean up FileProvider domains if requested. Runs before
+            // manager connection since stale domains may not have
+            // corresponding active mounts in any running manager.
+            #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+            if include_all_macos_file_provider_domains {
+                match distant_mount::macos::remove_all_file_provider_domains() {
+                    Ok(()) => println!("All FileProvider domains removed"),
+                    Err(e) => eprintln!("warning: failed to clean up FileProvider domains: {e}"),
+                }
+
+                // If only cleaning up domains (no --all and no id), exit early
+                if !all && id.is_none() {
+                    return Ok(());
+                }
+            }
+
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
 

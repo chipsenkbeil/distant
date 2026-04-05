@@ -27,9 +27,6 @@ pub use distant_mount::MountBackend;
 use crate::backend::Backend;
 use crate::backend::BackendCtx;
 
-/// Timeout for waiting for the mount process to emit "Mounted" on stdout.
-const MOUNT_READY_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Timeout for polling `mount` command output until the mount point disappears.
 const UNMOUNT_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -157,8 +154,8 @@ impl MountProcess {
     /// Mounts via the FileProvider backend using the installed `.app` binary.
     ///
     /// The command sends a mount request through the FP singleton's manager,
-    /// prints the result, and exits immediately. The mount point is
-    /// discovered by scanning `~/Library/CloudStorage/` for new entries.
+    /// prints the result, and exits immediately. The mount point is parsed
+    /// from the CLI stdout.
     #[cfg(target_os = "macos")]
     fn try_spawn_file_provider(_ctx: &BackendCtx, args: &[&str]) -> Result<Self, String> {
         use crate::{manager, singleton};
@@ -166,9 +163,6 @@ impl MountProcess {
         let fp_handle = singleton::get_or_start_file_provider();
 
         let bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
-
-        let cloud_storage = dirs_cloud_storage();
-        let before: std::collections::HashSet<_> = list_cloud_storage_entries(&cloud_storage);
 
         let mut cmd = Command::new(&bin);
         cmd.arg("mount");
@@ -198,7 +192,14 @@ impl MountProcess {
             .and_then(|l| l.rsplit("id: ").next())
             .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
 
-        let mount_point = discover_cloud_storage_entry(&cloud_storage, &before)?;
+        // Parse mount point from "Mounted at /path (id: 123)"
+        let mount_point_str = stdout
+            .lines()
+            .find(|l| l.starts_with("Mounted at "))
+            .and_then(|l| l.strip_prefix("Mounted at "))
+            .and_then(|l| l.rsplit_once(" (id: ").map(|(path, _)| path))
+            .ok_or("mount output did not contain mount point")?;
+        let mount_point = PathBuf::from(mount_point_str);
 
         Ok(Self {
             mount_id,
@@ -396,9 +397,50 @@ pub fn wait_for_sync() {
     std::thread::sleep(Duration::from_secs(2));
 }
 
+/// Removes all registered FileProvider domains by shelling out to the
+/// installed `.app` binary. FileProvider APIs require bundle context,
+/// so this cannot be called directly from the test process.
+#[cfg(target_os = "macos")]
+fn cleanup_stale_fp_domains() {
+    let bin = std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
+    if !bin.exists() {
+        return;
+    }
+    eprintln!("[cleanup] removing stale FileProvider domains via .app binary");
+    match Command::new(&bin)
+        .args(["unmount", "--include-all-macos-file-provider-domains"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.trim().is_empty() {
+                eprintln!("[cleanup] {}", stdout.trim());
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "[cleanup] warning: FP domain cleanup failed: {}",
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            eprintln!("[cleanup] warning: failed to run FP domain cleanup: {e}");
+        }
+    }
+}
+
 /// Force-unmount all stale distant mounts (NFS + FUSE) and poll until
 /// the OS mount table is clear. Call before asserting "no mounts found".
 pub fn cleanup_all_stale_mounts() {
+    // Clean up stale FileProvider domains on macOS. Each domain creates a
+    // CloudStorage entry that persists across process restarts. Without
+    // cleanup, stale domains accumulate and can overwhelm fileproviderd.
+    #[cfg(target_os = "macos")]
+    cleanup_stale_fp_domains();
+
     #[cfg(unix)]
     {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -553,58 +595,6 @@ pub fn restore_production_app() {
     }
 }
 
-/// Returns the `~/Library/CloudStorage/` directory path.
-#[cfg(target_os = "macos")]
-fn dirs_cloud_storage() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").expect("HOME not set"))
-        .join("Library")
-        .join("CloudStorage")
-}
-
-/// Lists the current entries in the CloudStorage directory.
-#[cfg(target_os = "macos")]
-fn list_cloud_storage_entries(dir: &Path) -> std::collections::HashSet<PathBuf> {
-    match std::fs::read_dir(dir) {
-        Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
-        Err(_) => std::collections::HashSet::new(),
-    }
-}
-
-/// Discovers a newly-appeared entry in `~/Library/CloudStorage/` by comparing
-/// the current listing against a snapshot taken before the mount.
-///
-/// Polls for up to [`MOUNT_READY_TIMEOUT`] to handle potential delay between
-/// the process printing "Mounted" and the directory appearing on disk.
-#[cfg(target_os = "macos")]
-fn discover_cloud_storage_entry(
-    cloud_storage: &Path,
-    before: &std::collections::HashSet<PathBuf>,
-) -> Result<PathBuf, String> {
-    let start = Instant::now();
-    let poll_interval = Duration::from_millis(200);
-
-    while start.elapsed() < MOUNT_READY_TIMEOUT {
-        let current = list_cloud_storage_entries(cloud_storage);
-        let new_entries: Vec<_> = current.difference(before).collect();
-
-        if let Some(entry) = new_entries.into_iter().find(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.contains("Distant"))
-        }) {
-            return Ok(entry.clone());
-        }
-
-        std::thread::sleep(poll_interval);
-    }
-
-    Err(format!(
-        "no new Distant entry appeared in {} within {}s",
-        cloud_storage.display(),
-        MOUNT_READY_TIMEOUT.as_secs()
-    ))
-}
-
 /// Template for testing all plugin backends (host, ssh, docker).
 #[template]
 #[export]
@@ -684,6 +674,38 @@ pub struct MountSingletonHandle {
     #[cfg(target_os = "macos")]
     #[allow(dead_code)]
     fp_handle: Option<crate::singleton::SingletonHandle>,
+}
+
+impl MountSingletonHandle {
+    /// Builds a command routed through the correct manager for this mount.
+    ///
+    /// For FileProvider mounts, uses the FP App Group socket. For all other
+    /// backends, delegates to `ctx.new_std_cmd`.
+    pub fn new_std_cmd(
+        &self,
+        ctx: &BackendCtx,
+        subcommands: impl IntoIterator<Item = &'static str>,
+    ) -> Command {
+        #[cfg(target_os = "macos")]
+        if let Some(ref fp) = self.fp_handle {
+            let mut cmd = Command::new(crate::manager::bin_path());
+            for sub in subcommands {
+                cmd.arg(sub);
+            }
+            cmd.arg("--log-file")
+                .arg(crate::manager::random_log_file("client-fp"))
+                .arg("--log-level")
+                .arg("trace")
+                .arg("--unix-socket")
+                .arg(&fp.socket_or_pipe);
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            return cmd;
+        }
+
+        ctx.new_std_cmd(subcommands)
+    }
 }
 
 /// Returns a truncated hash of the workspace root for namespacing temp files.
@@ -855,17 +877,17 @@ fn start_foreground_mount(
 /// Creates a mount via the macOS FileProvider backend.
 ///
 /// Uses the installed `.app` binary and the FP singleton's socket to send
-/// the mount request. Discovers the mount point under `~/Library/CloudStorage/`.
+/// the mount request. The mount point is parsed from the CLI stdout.
 #[cfg(target_os = "macos")]
 fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMeta {
     use crate::{manager, singleton};
 
+    // Clean up stale FP domains before registering a new one.
+    cleanup_stale_fp_domains();
+
     let fp_handle = singleton::get_or_start_file_provider();
 
     let bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
-
-    let cloud_storage = dirs_cloud_storage();
-    let before: std::collections::HashSet<_> = list_cloud_storage_entries(&cloud_storage);
 
     let mut cmd = Command::new(&bin);
     cmd.arg("mount");
@@ -893,10 +915,14 @@ fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMet
         .and_then(|l| l.rsplit("id: ").next())
         .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
 
-    // The actual mount point for FP is discovered under CloudStorage,
-    // not the passed-in mount_point.
-    let discovered = discover_cloud_storage_entry(&cloud_storage, &before)
-        .expect("[mount-singleton] failed to discover file-provider mount point");
+    // Parse mount point from "Mounted at /path (id: 123)"
+    let mount_point_str = stdout
+        .lines()
+        .find(|l| l.starts_with("Mounted at "))
+        .and_then(|l| l.strip_prefix("Mounted at "))
+        .and_then(|l| l.rsplit_once(" (id: ").map(|(path, _)| path))
+        .expect("[mount-singleton] mount output did not contain mount point");
+    let mount_point = PathBuf::from(mount_point_str);
 
     // Keep the FP handle alive so the lock is not released. Since this
     // is a singleton mount, leak it — the manager will self-terminate
@@ -905,7 +931,7 @@ fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMet
 
     MountMeta {
         mount_id,
-        mount_point: discovered,
+        mount_point,
         remote_root: remote_root.to_string(),
     }
 }

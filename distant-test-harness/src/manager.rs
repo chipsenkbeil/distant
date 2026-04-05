@@ -480,7 +480,11 @@ pub(crate) fn wait_for_manager_ready(socket_or_pipe: &str, manager: &mut Child) 
     }
 }
 
-pub(crate) fn random_log_file(prefix: &str) -> PathBuf {
+/// Returns a unique log file path under the session's log directory.
+///
+/// Each call produces a path like `<prefix>.<session>.<random>.log` to
+/// avoid collisions when multiple commands run in the same test.
+pub fn random_log_file(prefix: &str) -> PathBuf {
     ROOT_LOG_DIR.join(format!(
         "{}.{}.{}.log",
         prefix,

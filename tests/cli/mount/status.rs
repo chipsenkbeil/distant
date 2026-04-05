@@ -15,10 +15,10 @@ use distant_test_harness::skip_if_no_backend;
 fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let _sm = mount::get_or_start_mount(&ctx, mount);
+    let sm = mount::get_or_start_mount(&ctx, mount);
 
-    let output = ctx
-        .new_std_cmd(["status"])
+    let output = sm
+        .new_std_cmd(&ctx, ["status"])
         .args(["--show", "mount"])
         .output()
         .expect("failed to run status --show mount");
@@ -39,10 +39,10 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
 fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let _sm = mount::get_or_start_mount(&ctx, mount);
+    let sm = mount::get_or_start_mount(&ctx, mount);
 
-    let output = ctx
-        .new_std_cmd(["status"])
+    let output = sm
+        .new_std_cmd(&ctx, ["status"])
         .args(["--show", "mount", "--format", "json"])
         .output()
         .expect("failed to run status --show mount --format json");

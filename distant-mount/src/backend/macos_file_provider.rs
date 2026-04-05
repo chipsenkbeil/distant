@@ -39,7 +39,7 @@ use objc2_foundation::*;
 use crate::core::Runtime;
 
 use distant_core::Channel;
-use distant_core::net::common::Map;
+use distant_core::net::common::{self, Map};
 use distant_core::protocol::{CacheConfig, FileType, MountConfig};
 
 use provider::{DistantFileProvider, DistantFileProviderEnumerator, DistantFileProviderItem};
@@ -70,6 +70,9 @@ impl<T> std::ops::Deref for UnsafeSendable<T> {
         &self.0
     }
 }
+
+/// Timeout for Objective-C completion handler callbacks.
+const OBJC_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Tokio runtime handle for the `.appex` extension process, set once by
 /// [`init`] before macOS instantiates the FileProvider extension class.
@@ -909,7 +912,21 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 
     let completion = block2::RcBlock::new(
         move |domains: std::ptr::NonNull<NSArray<NSFileProviderDomain>>, error: *mut NSError| {
-            let array = unsafe { domains.as_ref() };
+            // The ObjC runtime can pass nil despite the NonNull type
+            // annotation (e.g. when called from a process without .app
+            // bundle context). Convert to a raw pointer to check.
+            let ptr = domains.as_ptr() as *const NSArray<NSFileProviderDomain>;
+            if ptr.is_null() {
+                if error.is_null() {
+                    let _ = tx.send(Ok(Vec::new()));
+                } else {
+                    let desc = unsafe { (*error).localizedDescription() }.to_string();
+                    let _ = tx.send(Err(desc));
+                }
+                return;
+            }
+
+            let array = unsafe { &*ptr };
             let vec: Vec<_> = array.iter().map(|d| d.retain()).collect();
             if !vec.is_empty() || error.is_null() {
                 let _ = tx.send(Ok(vec));
@@ -924,7 +941,7 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
         NSFileProviderManager::getDomainsWithCompletionHandler(&completion);
     }
 
-    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+    match rx.recv_timeout(OBJC_CALLBACK_TIMEOUT) {
         Ok(Ok(domains)) => Ok(domains),
         Ok(Err(e)) => Err(io::Error::other(format!(
             "getDomainsWithCompletionHandler failed: {e}"
@@ -952,7 +969,7 @@ fn get_all_domains() -> io::Result<Vec<Retained<NSFileProviderDomain>>> {
 ///
 /// Returns an error if `connection_id` or `destination` are missing from
 /// `extra`, or if the domain registration fails.
-pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<String> {
+pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<(String, String)> {
     let connection_id = extra
         .get("connection_id")
         .ok_or_else(|| io::Error::other("FileProvider requires connection_id in extra map"))?;
@@ -1020,7 +1037,7 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
     match rx.recv() {
         Ok(None) => {
             debug!("file_provider: domain {domain_id:?} registered successfully");
-            Ok(domain_id)
+            Ok((domain_id, display_name))
         }
         Ok(Some(err)) => {
             debug!("file_provider: domain registration failed: {err}");
@@ -1032,6 +1049,75 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<Strin
             "FileProvider domain registration: completion handler never called: {e}"
         ))),
     }
+}
+
+/// Returns the user-visible CloudStorage path for a registered FileProvider domain.
+///
+/// Queries macOS via `NSFileProviderManager.getUserVisibleURL(forItemIdentifier:)`
+/// to get the actual filesystem path where the domain's files appear in Finder.
+pub(crate) async fn cloud_storage_path_for_domain(domain_id: &str) -> io::Result<PathBuf> {
+    // All ObjC objects (NSString, NSFileProviderDomain, RcBlock, etc.) are
+    // !Send. Scope them so they drop before the .await — only the Send-safe
+    // oneshot::Receiver crosses the await point.
+    let rx = {
+        let identifier = NSString::from_str(domain_id);
+        let display = NSString::from_str("");
+        let domain = unsafe {
+            NSFileProviderDomain::initWithIdentifier_displayName(
+                NSFileProviderDomain::alloc(),
+                &identifier,
+                &display,
+            )
+        };
+
+        let manager =
+            unsafe { NSFileProviderManager::managerForDomain(&domain) }.ok_or_else(|| {
+                io::Error::other(format!("no NSFileProviderManager for domain {domain_id}"))
+            })?;
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<PathBuf, String>>();
+        // Wrap in Mutex<Option<>> so the closure is Fn (not FnOnce) --
+        // oneshot::Sender::send consumes self, but RcBlock requires Fn.
+        let tx = std::sync::Mutex::new(Some(tx));
+
+        let completion = block2::RcBlock::new(move |url: *mut NSURL, error: *mut NSError| {
+            let Some(tx) = tx.lock().unwrap().take() else {
+                return;
+            };
+            if !error.is_null() {
+                let desc = unsafe { (*error).localizedDescription() }.to_string();
+                let _ = tx.send(Err(desc));
+            } else if url.is_null() {
+                let _ = tx.send(Err("getUserVisibleURL returned null URL".into()));
+            } else {
+                let result = unsafe { (*url).path() }
+                    .map(|p| PathBuf::from(p.to_string()))
+                    .ok_or_else(|| "getUserVisibleURL: URL had no path component".to_string());
+                let _ = tx.send(result);
+            }
+        });
+
+        unsafe {
+            manager.getUserVisibleURLForItemIdentifier_completionHandler(
+                NSFileProviderRootContainerItemIdentifier,
+                &completion,
+            );
+        }
+
+        rx
+    };
+
+    let path = tokio::time::timeout(OBJC_CALLBACK_TIMEOUT, rx)
+        .await
+        .map_err(|_| io::Error::other("getUserVisibleURL timed out"))?
+        .map_err(|_| io::Error::other("getUserVisibleURL: completion handler dropped"))?
+        .map_err(io::Error::other)?;
+
+    debug!(
+        "file_provider: CloudStorage path for {domain_id}: {}",
+        path.display()
+    );
+    Ok(path)
 }
 
 /// Builds a domain identifier from connection ID and optional remote root.
@@ -1059,9 +1145,19 @@ fn make_domain_id(connection_id: &str, remote_root: Option<&String>) -> String {
 /// - `ssh://root@host`
 /// - `ssh://root@host:/var/data`
 fn sanitize_display_name(destination: &str, remote_root: Option<&String>) -> String {
+    // Strip password from the destination to avoid leaking credentials
+    // in the CloudStorage directory name visible in Finder.
+    let clean_dest = match destination.parse::<common::Destination>() {
+        Ok(mut dest) => {
+            dest.password = None;
+            dest.to_string()
+        }
+        Err(_) => destination.to_owned(),
+    };
+
     match remote_root {
-        Some(root) => format!("{destination}:{root}"),
-        None => destination.to_owned(),
+        Some(root) => format!("{clean_dest}:{root}"),
+        None => clean_dest,
     }
 }
 

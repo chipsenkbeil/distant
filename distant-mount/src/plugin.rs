@@ -282,10 +282,7 @@ impl MountPlugin for FileProviderMountPlugin {
         config: MountConfig,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn MountHandleTrait>>> + Send + 'a>> {
         Box::pin(async move {
-            let handle = mount_file_provider(channel, config).await?;
-            // FileProvider doesn't have a traditional mount point -- macOS
-            // manages the CloudStorage directory.
-            let mount_point = String::new();
+            let (handle, mount_point) = mount_file_provider(channel, config).await?;
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
@@ -298,7 +295,7 @@ impl MountPlugin for FileProviderMountPlugin {
 async fn mount_file_provider(
     channel: Channel,
     config: MountConfig,
-) -> io::Result<ConcreteMountHandle> {
+) -> io::Result<(ConcreteMountHandle, String)> {
     use std::sync::Arc;
 
     use tokio::runtime::Handle;
@@ -320,7 +317,12 @@ async fn mount_file_provider(
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(Handle::current(), fs));
 
-    let _domain_id = backend::macos_file_provider::register_domain(rt, &domain_meta)?;
+    let (domain_id, _display_name) =
+        backend::macos_file_provider::register_domain(rt, &domain_meta)?;
+    let mount_point = backend::macos_file_provider::cloud_storage_path_for_domain(&domain_id)
+        .await?
+        .to_string_lossy()
+        .into_owned();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
@@ -328,7 +330,10 @@ async fn mount_file_provider(
         Ok(())
     });
 
-    Ok(ConcreteMountHandle::new(shutdown_tx, join_handle).detach())
+    Ok((
+        ConcreteMountHandle::new(shutdown_tx, join_handle).detach(),
+        mount_point,
+    ))
 }
 
 // Windows Cloud Files
