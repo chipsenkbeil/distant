@@ -22,13 +22,22 @@ All operations from cold start (no manager running):
 | Manager start | <1s | |
 | Connect | <1s | |
 
-**FP root cause:** The FP appex connects to the manager via the App Group
-container socket (`~/Library/Group Containers/.../distant.sock`), NOT via
-a custom `--unix-socket`. When the test uses a regular manager (started from
-`target/debug/distant`), the appex can't reach it. FP tests must use a
-manager started from `/Applications/Distant.app/Contents/MacOS/distant`
-which creates the App Group socket that the appex knows about. This is
-what the FP singleton (`singleton::get_or_start_file_provider`) does.
+**FP confirmed working:** Manual test with app binary shows FP mount in
+109ms, `ls` shows correct entries. File reads require the manager to stay
+alive (appex proxies through it). The FP singleton setup is correct.
+
+**FP test failure root cause (2 issues):**
+
+1. **20 stale FP domains** in `~/Library/CloudStorage/` from prior test
+   runs that were never properly unregistered. `rm -rf` doesn't work —
+   macOS recreates CloudStorage dirs from registered domains. The test's
+   `discover_cloud_storage_entry` (which diffs before/after) can't find
+   the new mount among 20 stale entries. Fix: bulk-unregister stale FP
+   domains in `cleanup_all_stale_mounts()` using the FileProvider API.
+
+2. **FP singleton lonely timeout** — each test must hold the FP singleton
+   handle to prevent the manager from shutting down between tests. Already
+   fixed in commit `8f6620c` but needs the stale domain cleanup to verify.
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
 - [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
