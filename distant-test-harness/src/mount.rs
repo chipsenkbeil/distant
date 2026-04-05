@@ -678,6 +678,12 @@ pub struct MountSingletonHandle {
     /// Shared lock file handle — held (not read) so the lock is released on drop.
     #[allow(dead_code)]
     lock_file: File,
+    /// Holds the FP server singleton alive for FileProvider mounts.
+    /// Each test must hold this to prevent the FP manager's lonely
+    /// timeout from firing between tests.
+    #[cfg(target_os = "macos")]
+    #[allow(dead_code)]
+    fp_handle: Option<crate::singleton::SingletonHandle>,
 }
 
 /// Returns a truncated hash of the workspace root for namespacing temp files.
@@ -967,10 +973,22 @@ pub fn get_or_start_mount(ctx: &BackendCtx, mount: MountBackend) -> MountSinglet
         .lock_shared()
         .expect("failed to downgrade to shared lock");
 
+    // For FileProvider mounts, each test must hold the FP server singleton
+    // handle to keep the FP manager alive. Without this, the lonely timeout
+    // fires between tests and the FP manager shuts down.
+    #[cfg(target_os = "macos")]
+    let fp_handle = if matches!(mount, MountBackend::MacosFileProvider) {
+        Some(crate::singleton::get_or_start_file_provider())
+    } else {
+        None
+    };
+
     MountSingletonHandle {
         mount_point: meta.mount_point,
         remote_root: meta.remote_root,
         lock_file,
+        #[cfg(target_os = "macos")]
+        fp_handle,
     }
 }
 
