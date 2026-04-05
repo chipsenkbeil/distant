@@ -355,7 +355,7 @@ pub(crate) fn os_mount(port: u16, mount_point: &Path, readonly: bool) -> io::Res
     let output = std::process::Command::new("mount_nfs")
         .args([
             "-o",
-            &format!("port={port},mountport={port},nfsvers=3,tcp,nolocks{ro_suffix}"),
+            &format!("port={port},mountport={port},nfsvers=3,tcp,nolocks,nobrowse{ro_suffix}"),
             "localhost:/",
             mount_point_str,
         ])
