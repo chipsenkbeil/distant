@@ -50,7 +50,7 @@ use distant_test_harness::mount::MountBackend;
     all(feature = "mount-macos-file-provider", target_os = "macos"),
     case::host_fp(Backend::Host, MountBackend::MacosFileProvider)
 )]
-fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
+pub fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
 mod backend;
 mod browse;
