@@ -101,19 +101,20 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<Concrete
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mp = mount_point.clone();
     let join_handle = tokio::spawn(async move {
-        // Unmount BEFORE dropping the listener — diskutil needs the NFS
-        // server alive for a clean unmount, otherwise macOS shows a
-        // "Server connections interrupted" dialog.
-        tokio::select! {
-            result = listener.handle_forever() => {
-                unmount_path(&mp).await;
-                result
-            },
-            _ = shutdown_rx => {
-                unmount_path(&mp).await;
-                Ok(())
-            },
-        }
+        // Spawn the NFS accept loop as a child task so the listener stays
+        // alive while we unmount. tokio::select! would drop the listener
+        // future BEFORE running the winning branch body, killing the NFS
+        // server before diskutil can do a clean unmount.
+        let server_task = tokio::spawn(async move { listener.handle_forever().await });
+
+        let _ = shutdown_rx.await;
+
+        // Unmount while the NFS server is still accepting connections.
+        unmount_path(&mp).await;
+
+        // Now kill the server.
+        server_task.abort();
+        Ok(())
     });
 
     // Mount now that the NFS server is accepting connections.
@@ -133,40 +134,50 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<Concrete
     Ok(ConcreteMountHandle::new(shutdown_tx, join_handle))
 }
 
+/// Maximum time to wait for the OS unmount command before giving up.
+#[cfg(feature = "nfs")]
+const UNMOUNT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Best-effort unmount of a filesystem path via OS utilities.
 ///
 /// Uses `tokio::process::Command` so the call is non-blocking on the
-/// tokio runtime (avoids tying up a worker thread during unmount).
+/// tokio runtime. Times out after [`UNMOUNT_TIMEOUT`] to prevent hangs
+/// if the OS unmount command blocks (e.g. kernel retrying against a
+/// dead NFS server).
 #[cfg(feature = "nfs")]
 async fn unmount_path(path: &std::path::Path) {
     #[cfg(target_os = "macos")]
-    let result = tokio::process::Command::new("diskutil")
+    let cmd = tokio::process::Command::new("diskutil")
         .args(["unmount", "force", path.to_str().unwrap_or("")])
-        .output()
-        .await;
+        .output();
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    let result = tokio::process::Command::new("umount")
+    let cmd = tokio::process::Command::new("umount")
         .args(["-f", &*path.to_string_lossy()])
-        .output()
-        .await;
+        .output();
 
     #[cfg(windows)]
-    let result = tokio::process::Command::new("cmd")
+    let cmd = tokio::process::Command::new("cmd")
         .args(["/c", "net", "use", path.to_str().unwrap_or(""), "/delete"])
-        .output()
-        .await;
+        .output();
 
-    match result {
-        Ok(output) if output.status.success() => {
+    match tokio::time::timeout(UNMOUNT_TIMEOUT, cmd).await {
+        Ok(Ok(output)) if output.status.success() => {
             log::debug!("unmounted {}", path.display());
         }
-        Ok(output) => {
+        Ok(Ok(output)) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::warn!("unmount {} failed: {}", path.display(), stderr.trim());
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::warn!("unmount {} failed: {e}", path.display());
+        }
+        Err(_) => {
+            log::warn!(
+                "unmount {} timed out after {:?}",
+                path.display(),
+                UNMOUNT_TIMEOUT
+            );
         }
     }
 }

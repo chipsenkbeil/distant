@@ -36,6 +36,12 @@ const UNMOUNT_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Interval between `mount` command polls in [`wait_for_unmount`].
 const UNMOUNT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Maximum time to wait for `distant unmount` CLI during test cleanup.
+const DROP_UNMOUNT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Interval for polling `distant unmount` CLI exit status.
+const DROP_UNMOUNT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// A managed mount process for integration tests.
 ///
 /// Wraps a child process running `distant mount --foreground` and handles
@@ -246,11 +252,28 @@ impl Drop for MountProcess {
                 cmd.arg("--unix-socket").arg(&self.socket_or_pipe);
             }
 
-            cmd.stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+            // Use spawn + poll instead of blocking .status() so we can
+            // time out if the manager hangs.
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    let start = Instant::now();
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => break status.success(),
+                            Ok(None) if start.elapsed() > DROP_UNMOUNT_TIMEOUT => {
+                                eprintln!("[MountProcess::drop] unmount {id} timed out, killing");
+                                let _ = child.kill();
+                                break false;
+                            }
+                            Ok(None) => std::thread::sleep(DROP_UNMOUNT_POLL_INTERVAL),
+                            Err(_) => break false,
+                        }
+                    }
+                }
+                Err(_) => false,
+            }
         } else {
             false
         };
