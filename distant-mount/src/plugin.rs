@@ -63,8 +63,12 @@ impl MountPlugin for NfsMountPlugin {
         config: MountConfig,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn MountHandleTrait>>> + Send + 'a>> {
         Box::pin(async move {
+            let mount_point = config
+                .mount_point
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let handle = mount_nfs(channel, config).await?;
-            let mount_point = String::new();
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
@@ -97,17 +101,31 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<Concrete
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mp = mount_point.clone();
     let join_handle = tokio::spawn(async move {
-        let result = tokio::select! {
-            result = listener.handle_forever() => result,
-            _ = shutdown_rx => Ok(()),
-        };
-        unmount_path(&mp);
-        result
+        // Unmount BEFORE dropping the listener — diskutil needs the NFS
+        // server alive for a clean unmount, otherwise macOS shows a
+        // "Server connections interrupted" dialog.
+        tokio::select! {
+            result = listener.handle_forever() => {
+                unmount_path(&mp).await;
+                result
+            },
+            _ = shutdown_rx => {
+                unmount_path(&mp).await;
+                Ok(())
+            },
+        }
     });
 
     // Mount now that the NFS server is accepting connections.
-    // (The TCP socket is listening at the kernel level after bind().)
-    if let Err(e) = backend::nfs::os_mount(port, &mount_point, readonly) {
+    // os_mount() runs a blocking OS command — use spawn_blocking to avoid
+    // blocking the manager's tokio runtime.
+    let mp_clone = mount_point.clone();
+    let mount_result =
+        tokio::task::spawn_blocking(move || backend::nfs::os_mount(port, &mp_clone, readonly))
+            .await
+            .map_err(|e| io::Error::other(format!("mount task panicked: {e}")))?;
+
+    if let Err(e) = mount_result {
         let _ = shutdown_tx.send(());
         return Err(e);
     }
@@ -116,20 +134,28 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<Concrete
 }
 
 /// Best-effort unmount of a filesystem path via OS utilities.
+///
+/// Uses `tokio::process::Command` so the call is non-blocking on the
+/// tokio runtime (avoids tying up a worker thread during unmount).
 #[cfg(feature = "nfs")]
-fn unmount_path(path: &std::path::Path) {
+async fn unmount_path(path: &std::path::Path) {
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("diskutil")
+    let result = tokio::process::Command::new("diskutil")
         .args(["unmount", path.to_str().unwrap_or("")])
-        .output();
+        .output()
+        .await;
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    let result = std::process::Command::new("umount").arg(path).output();
+    let result = tokio::process::Command::new("umount")
+        .arg(path)
+        .output()
+        .await;
 
     #[cfg(windows)]
-    let result = std::process::Command::new("cmd")
+    let result = tokio::process::Command::new("cmd")
         .args(["/c", "net", "use", path.to_str().unwrap_or(""), "/delete"])
-        .output();
+        .output()
+        .await;
 
     match result {
         Ok(output) if output.status.success() => {
@@ -172,8 +198,12 @@ impl MountPlugin for FuseMountPlugin {
         config: MountConfig,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn MountHandleTrait>>> + Send + 'a>> {
         Box::pin(async move {
+            let mount_point = config
+                .mount_point
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let handle = mount_fuse(channel, config).await?;
-            let mount_point = String::new();
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
@@ -202,7 +232,11 @@ async fn mount_fuse(channel: Channel, config: MountConfig) -> io::Result<Concret
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(Handle::current(), fs));
 
-    let session = backend::fuse::mount(rt, &mount_point, readonly)?;
+    // fuser::spawn_mount2 is blocking — use spawn_blocking
+    let session =
+        tokio::task::spawn_blocking(move || backend::fuse::mount(rt, &mount_point, readonly))
+            .await
+            .map_err(|e| io::Error::other(format!("fuse mount task panicked: {e}")))??;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {
@@ -296,8 +330,12 @@ impl MountPlugin for CloudFilesMountPlugin {
         config: MountConfig,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn MountHandleTrait>>> + Send + 'a>> {
         Box::pin(async move {
+            let mount_point = config
+                .mount_point
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let handle = mount_cloud_files(channel, config).await?;
-            let mount_point = String::new();
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,

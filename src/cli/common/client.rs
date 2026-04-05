@@ -377,10 +377,13 @@ impl AuthMethodHandler for PromptAuthHandler {
 
 /// Attempt to start the manager daemon by spawning `distant manager listen --daemon`.
 /// Returns Ok(()) if the process was spawned successfully, Err otherwise.
-fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
+///
+/// Uses `tokio::process::Command` so the call is non-blocking on the
+/// tokio runtime.
+async fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
     let exe = std::env::current_exe().context("Failed to determine distant executable path")?;
 
-    let mut cmd = std::process::Command::new(exe);
+    let mut cmd = tokio::process::Command::new(exe);
     cmd.args(["manager", "listen", "--daemon", "--user"]);
 
     // Forward custom socket/pipe settings so the new manager listens on the same address
@@ -398,6 +401,7 @@ fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
+        .await
         .context("Failed to spawn distant manager")?;
 
     if status.success() {
@@ -432,7 +436,7 @@ pub async fn connect_to_manager(
     // Connection failed — try to auto-start the manager
     sp.set_message("Starting manager...");
     ui.warning("Manager not running, starting it...");
-    if let Err(err) = start_manager_daemon(&network) {
+    if let Err(err) = start_manager_daemon(&network).await {
         warn!("Failed to auto-start manager: {err}");
         sp.fail("Could not start manager");
         return Err(first_err.context(

@@ -372,6 +372,17 @@ pub(crate) fn mount(
         fuser::MountOption::FSName("distant".to_string()),
         fuser::MountOption::AutoUnmount,
     ];
+    // Suppress macOS system services (Spotlight, Finder) from scanning
+    // the FUSE volume, which otherwise causes sustained 100% CPU.
+    #[cfg(target_os = "macos")]
+    {
+        config
+            .mount_options
+            .push(fuser::MountOption::CUSTOM("noappledouble".to_string()));
+        config
+            .mount_options
+            .push(fuser::MountOption::CUSTOM("noapplexattr".to_string()));
+    }
     if readonly {
         config.mount_options.push(fuser::MountOption::RO);
     }

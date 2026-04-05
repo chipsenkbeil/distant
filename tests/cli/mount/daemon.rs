@@ -1,9 +1,7 @@
 //! Integration tests for running mount in background mode.
 //!
-//! Uses `MountProcess::spawn()` (which runs `--foreground`) for clean
-//! process lifecycle management. The daemon-mode re-exec path is a CLI UX
-//! feature tested separately — these tests verify that a background mount
-//! serves filesystem content correctly.
+//! Uses `MountProcess::spawn()` to mount via the manager and verify that
+//! the mounted filesystem serves content correctly.
 
 use rstest::rstest;
 use rstest_reuse::{self, *};

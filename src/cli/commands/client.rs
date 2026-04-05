@@ -1374,7 +1374,10 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             network,
             cache,
         } => {
-            let _ = &show; // TODO: filter by resource type once mount/tunnel status is integrated
+            let show_mount = show.iter().any(|s| s.eq_ignore_ascii_case("mount"));
+            let show_connection = show.iter().any(|s| s.eq_ignore_ascii_case("connection"));
+            let show_all = show.is_empty() && !show_mount && !show_connection;
+
             match id {
                 Some(id) => {
                     // Detail mode: show info about a specific connection
@@ -1409,50 +1412,95 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         }
                     }
                 }
-                None => {
-                    // Overview mode: show manager status + connection list
+                None if show_mount => {
+                    // Mount-only mode: show active mounts.
+                    // No auto-start — if the manager isn't running, there
+                    // are no mounts to show.
                     match try_connect_no_autostart(Format::Shell, &network).await {
                         Ok(mut client) => {
-                            let list = client
-                                .list()
+                            let mounts = client
+                                .list_mounts()
                                 .await
-                                .context("Failed to get list of connections")?;
-
-                            let selected = read_cache(&cache).await.data.selected;
+                                .context("Failed to list mounts")?;
 
                             match format {
                                 Format::Json => {
                                     println!(
                                         "{}",
-                                        serde_json::to_string(&list)
-                                            .context("Failed to format connection list as json")?
+                                        serde_json::to_string(&mounts)
+                                            .context("Failed to format mounts as json")?
                                     );
                                 }
                                 Format::Shell => {
-                                    ui.status(
-                                        "Manager",
-                                        "running",
-                                        crate::cli::common::StatusColor::Green,
-                                    );
-
-                                    if list.is_empty() {
-                                        ui.dim("\nNo active connections.");
+                                    if mounts.is_empty() {
+                                        println!("No mounts found");
                                     } else {
-                                        ui.header("\nConnections:");
-                                        for (id, dest) in list {
-                                            if *selected == id {
-                                                ui.write_line(&format!(
-                                                    "  {} {} -> {}",
-                                                    style("*").green(),
-                                                    style(id).bold(),
-                                                    dest
-                                                ));
-                                            } else {
-                                                ui.write_line(&format!(
-                                                    "    {} -> {}",
-                                                    style(id).dim(),
-                                                    dest
-                                                ));
+                                        for m in &mounts {
+                                            println!(
+                                                "{} — {} ({}) [{}]",
+                                                style(m.id).bold(),
+                                                m.mount_point,
+                                                m.backend,
+                                                m.status
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => match format {
+                            Format::Shell => println!("No mounts found"),
+                            Format::Json => println!("[]"),
+                        },
+                    }
+                }
+                None => {
+                    // Overview mode: show manager status + connection list
+                    match try_connect_no_autostart(Format::Shell, &network).await {
+                        Ok(mut client) => {
+                            if show_all || show_connection {
+                                let list = client
+                                    .list()
+                                    .await
+                                    .context("Failed to get list of connections")?;
+
+                                let selected = read_cache(&cache).await.data.selected;
+
+                                match format {
+                                    Format::Json => {
+                                        println!(
+                                            "{}",
+                                            serde_json::to_string(&list).context(
+                                                "Failed to format connection list as json"
+                                            )?
+                                        );
+                                    }
+                                    Format::Shell => {
+                                        ui.status(
+                                            "Manager",
+                                            "running",
+                                            crate::cli::common::StatusColor::Green,
+                                        );
+
+                                        if list.is_empty() {
+                                            ui.dim("\nNo active connections.");
+                                        } else {
+                                            ui.header("\nConnections:");
+                                            for (id, dest) in list {
+                                                if *selected == id {
+                                                    ui.write_line(&format!(
+                                                        "  {} {} -> {}",
+                                                        style("*").green(),
+                                                        style(id).bold(),
+                                                        dest
+                                                    ));
+                                                } else {
+                                                    ui.write_line(&format!(
+                                                        "    {} -> {}",
+                                                        style(id).dim(),
+                                                        dest
+                                                    ));
+                                                }
                                             }
                                         }
                                     }

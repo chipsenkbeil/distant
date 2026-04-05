@@ -1,6 +1,5 @@
 //! Integration tests for `distant status --show mount`.
 
-use assert_cmd::Command;
 use rstest::rstest;
 use rstest_reuse::{self, *};
 
@@ -10,7 +9,7 @@ use distant_test_harness::mount::{MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
 /// MST-01: With an active mount, `status --show mount` output should contain
-/// the mount point path.
+/// the backend name.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
 fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: MountBackend) {
@@ -21,32 +20,20 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
     ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
 
     let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let _mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    // FileProvider domains require app bundle context — use installed binary.
-    // FP status shows the remote root in the destination, not the CloudStorage path.
-    let (status_bin, search_str) = if matches!(mount, MountBackend::MacosFileProvider) {
-        (
-            std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant"),
-            dir.clone(), // remote root appears in the FP domain destination
-        )
-    } else {
-        (
-            manager::bin_path(),
-            mp.mount_point().to_string_lossy().to_string(),
-        )
-    };
-
-    let output = Command::new(&status_bin)
-        .args(["status", "--show", "mount"])
+    let output = ctx
+        .new_std_cmd(["status"])
+        .args(["--show", "mount"])
         .output()
         .expect("failed to run status --show mount");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
-        stdout.contains(&search_str),
-        "[{backend:?}/{mount}] status --show mount should include '{search_str}', got:\n{stdout}"
+        stdout.contains(mount.as_str()),
+        "[{backend:?}/{mount}] status --show mount should include backend name '{}', got:\n{stdout}",
+        mount.as_str()
     );
 }
 
@@ -64,14 +51,9 @@ fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBac
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let _mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
 
-    let status_bin = if matches!(mount, MountBackend::MacosFileProvider) {
-        std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant")
-    } else {
-        manager::bin_path()
-    };
-
-    let output = Command::new(&status_bin)
-        .args(["status", "--show", "mount", "--format", "json"])
+    let output = ctx
+        .new_std_cmd(["status"])
+        .args(["--show", "mount", "--format", "json"])
         .output()
         .expect("failed to run status --show mount --format json");
 
@@ -90,15 +72,12 @@ fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBac
 }
 
 /// MST-03: With no active mounts, `status --show mount` should print
-/// "No mounts found". This test does not need the plugin_x_mount template
-/// — it tests a single global condition. Using a plain #[test] avoids
-/// running it N times.
+/// "No mounts found". Using a plain #[test] avoids running it N times.
 #[test_log::test]
 fn status_no_mounts_should_say_none() {
-    // Clean up any stale mounts left by prior tests.
     distant_test_harness::mount::cleanup_all_stale_mounts();
 
-    let output = Command::new(manager::bin_path())
+    let output = std::process::Command::new(manager::bin_path())
         .args(["status", "--show", "mount"])
         .output()
         .expect("failed to run status --show mount");

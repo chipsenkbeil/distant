@@ -213,12 +213,24 @@ impl MountProcess {
     pub fn mount_point(&self) -> &Path {
         &self.mount_point
     }
+
+    /// Returns the mount ID assigned by the manager, if available.
+    pub fn mount_id(&self) -> Option<u32> {
+        self.mount_id
+    }
+
+    /// Returns the manager socket (Unix) or pipe (Windows) path.
+    pub fn socket_or_pipe(&self) -> &str {
+        &self.socket_or_pipe
+    }
 }
 
 impl Drop for MountProcess {
     fn drop(&mut self) {
-        // Unmount via manager if we have a mount ID
-        if let Some(id) = self.mount_id {
+        // Unmount via manager if we have a mount ID.
+        // The CLI waits for the manager's Unmounted response, so by the
+        // time this returns the mount should already be fully removed.
+        let unmount_ok = if let Some(id) = self.mount_id {
             let mut cmd = Command::new(crate::manager::bin_path());
             cmd.arg("unmount").arg(id.to_string());
 
@@ -228,32 +240,41 @@ impl Drop for MountProcess {
                 cmd.arg("--unix-socket").arg(&self.socket_or_pipe);
             }
 
-            let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).status();
-        }
-
-        // Safety net: force unmount via OS if the mount point is still active
-        #[cfg(target_os = "macos")]
-        {
-            let mp = self.mount_point.to_string_lossy();
-            let _ = Command::new("diskutil")
-                .args(["unmount", "force", &mp])
-                .stdout(Stdio::null())
+            cmd.stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if !unmount_ok {
+            // Safety net: force unmount via OS if the manager unmount failed
+            #[cfg(target_os = "macos")]
+            {
+                let mp = self.mount_point.to_string_lossy();
+                let _ = Command::new("diskutil")
+                    .args(["unmount", "force", &mp])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let mp = self.mount_point.to_string_lossy();
+                let _ = Command::new("umount")
+                    .arg("-f")
+                    .arg(&*mp)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+
+            wait_for_unmount(&self.mount_point);
         }
 
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            let mp = self.mount_point.to_string_lossy();
-            let _ = Command::new("umount")
-                .arg("-f")
-                .arg(&*mp)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-
-        wait_for_unmount(&self.mount_point);
         let _ = std::fs::remove_dir_all(&self.mount_point);
     }
 }
