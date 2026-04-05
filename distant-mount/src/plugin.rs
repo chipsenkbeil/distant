@@ -141,13 +141,13 @@ async fn mount_nfs(channel: Channel, config: MountConfig) -> io::Result<Concrete
 async fn unmount_path(path: &std::path::Path) {
     #[cfg(target_os = "macos")]
     let result = tokio::process::Command::new("diskutil")
-        .args(["unmount", path.to_str().unwrap_or("")])
+        .args(["unmount", "force", path.to_str().unwrap_or("")])
         .output()
         .await;
 
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = tokio::process::Command::new("umount")
-        .arg(path)
+        .args(["-f", &*path.to_string_lossy()])
         .output()
         .await;
 

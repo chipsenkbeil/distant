@@ -585,11 +585,18 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
             };
 
-            client
+            let unmounted = client
                 .unmount(vec![id])
                 .await
                 .with_context(|| format!("Failed to unmount mount {id}"))?;
-            println!("Unmounted {id}");
+
+            if unmounted.contains(&id) {
+                println!("Unmounted {id}");
+            } else {
+                return Err(CliError::Error(anyhow::anyhow!(
+                    "No mount with id {id}"
+                )));
+            }
         }
         ClientSubcommand::Shell {
             cache,
