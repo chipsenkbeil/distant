@@ -747,7 +747,16 @@ fn read_live_mount_meta(backend: &str, mount: &str) -> Option<MountMeta> {
     let content = fs::read_to_string(&path).ok()?;
     let meta: MountMeta = serde_json::from_str(&content).ok()?;
 
-    if is_mount_active(&meta.mount_point) {
+    // FileProvider mounts appear under ~/Library/CloudStorage/, not in
+    // the OS `mount` table. Check directory existence instead.
+    let is_fp = mount == MountBackend::MacosFileProvider.as_str();
+    let alive = if is_fp {
+        meta.mount_point.is_dir()
+    } else {
+        is_mount_active(&meta.mount_point)
+    };
+
+    if alive {
         Some(meta)
     } else {
         eprintln!(
