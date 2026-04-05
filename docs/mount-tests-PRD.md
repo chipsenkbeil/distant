@@ -3,6 +3,32 @@
 ## Status (2026-04-05)
 
 **219/228 mount tests passing (96%).** 9 FP failures remain. Major items:
+
+### Manual CLI Benchmarks (2026-04-05)
+
+All operations from cold start (no manager running):
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| NFS mount | 93ms | Includes NFS server start + OS mount |
+| NFS unmount | 186ms | diskutil unmount force + listener shutdown |
+| NFS read/write | instant | Files visible immediately |
+| FUSE mount | 561ms | Includes fuser::spawn_mount2 |
+| FUSE unmount | 49ms | |
+| FUSE read/write | instant | Files visible immediately |
+| FP mount | 117ms | Domain registered, "visible in Finder" |
+| FP read/cat | **timeout** | appex can't reach manager — see FP root cause below |
+| Server start | <1s | |
+| Manager start | <1s | |
+| Connect | <1s | |
+
+**FP root cause:** The FP appex connects to the manager via the App Group
+container socket (`~/Library/Group Containers/.../distant.sock`), NOT via
+a custom `--unix-socket`. When the test uses a regular manager (started from
+`target/debug/distant`), the appex can't reach it. FP tests must use a
+manager started from `/Applications/Distant.app/Contents/MacOS/distant`
+which creates the App Group socket that the appex knows about. This is
+what the FP singleton (`singleton::get_or_start_file_provider`) does.
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
 - [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
