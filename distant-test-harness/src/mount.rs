@@ -465,16 +465,24 @@ pub fn install_test_app() -> Result<(), String> {
     let app_bin = app.join("Contents").join("MacOS").join("distant");
     let backup = PathBuf::from("/Applications/Distant.app.bak");
 
-    // Skip if the installed app binary is newer than the build output.
+    // Skip if the installed app binary matches the build output (same size
+    // and not older). Mtime alone is insufficient because cargo build and
+    // the install script can run in the same second, producing equal mtimes
+    // for different binaries.
     let build_bin = crate::manager::build_dir().join("distant");
     if app_bin.exists() && build_bin.exists() {
-        let app_mtime = app_bin.metadata().and_then(|m| m.modified());
-        let build_mtime = build_bin.metadata().and_then(|m| m.modified());
-        if let (Ok(app_t), Ok(build_t)) = (app_mtime, build_mtime)
-            && app_t >= build_t
-        {
-            eprintln!("[install_test_app] app is up-to-date, skipping install");
-            return Ok(());
+        let app_meta = app_bin.metadata().ok();
+        let build_meta = build_bin.metadata().ok();
+        if let (Some(app_m), Some(build_m)) = (app_meta, build_meta) {
+            let same_size = app_m.len() == build_m.len();
+            let app_newer = app_m
+                .modified()
+                .and_then(|a| build_m.modified().map(|b| a >= b))
+                .unwrap_or(false);
+            if same_size && app_newer {
+                eprintln!("[install_test_app] app is up-to-date, skipping install");
+                return Ok(());
+            }
         }
     }
 
