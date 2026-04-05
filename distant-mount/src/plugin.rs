@@ -305,11 +305,22 @@ async fn mount_file_provider(
 
     use crate::{backend, core};
 
-    let extra = config.extra.clone();
+    // Build domain metadata by flattening config fields into the extra
+    // map. The extra map already has connection_id, destination, and
+    // log_level (injected by the manager). Add remote_root and readonly
+    // from the config so register_domain has everything it needs.
+    let mut domain_meta = config.extra.clone();
+    if let Some(ref root) = config.remote_root {
+        domain_meta.insert("remote_root".into(), root.to_string());
+    }
+    if config.readonly {
+        domain_meta.insert("readonly".into(), "true".into());
+    }
+
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(Handle::current(), fs));
 
-    let _domain_id = backend::macos_file_provider::register_domain(rt, &extra)?;
+    let _domain_id = backend::macos_file_provider::register_domain(rt, &domain_meta)?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let join_handle = tokio::spawn(async move {

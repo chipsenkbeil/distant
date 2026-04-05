@@ -185,7 +185,8 @@ fn read_live_meta(backend: &str) -> Option<ServerMeta> {
     }
 }
 
-/// Kills all processes referenced by a meta and removes the socket file.
+/// Kills all processes referenced by a meta, removes the socket file,
+/// and force-removes any Docker container.
 fn cleanup_meta(meta: &ServerMeta) {
     kill_pid(meta.manager_pid);
     if let Some(pid) = meta.server_pid {
@@ -193,6 +194,13 @@ fn cleanup_meta(meta: &ServerMeta) {
     }
     if let Some(pid) = meta.sshd_pid {
         kill_pid(pid);
+    }
+    if let Some(ref name) = meta.container_id {
+        let _ = Command::new("docker")
+            .args(["rm", "-f", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     let _ = fs::remove_file(&meta.socket_path);
 }
@@ -494,6 +502,141 @@ fn start_file_provider(_socket_path: &Path) -> ServerMeta {
     }
 }
 
+/// Starts a singleton Docker backend.
+///
+/// Creates a Docker container, spawns a manager, and connects the manager
+/// to the container via `distant connect docker://`. Returns `None` if
+/// Docker is not available.
+#[cfg(feature = "docker")]
+fn start_docker(socket_path: &Path) -> Option<ServerMeta> {
+    use crate::docker;
+
+    // Create the container on a background thread with its own Tokio runtime
+    // to avoid nesting runtimes.
+    let container = std::thread::spawn(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create runtime for Docker container");
+        rt.block_on(docker::DockerContainer::new())
+    })
+    .join()
+    .expect("Docker container creation thread panicked")?;
+
+    let container_name = container.name.clone();
+    let socket_str = socket_path.to_string_lossy().to_string();
+
+    // Start manager
+    let mut manager_cmd = Command::new(manager::bin_path());
+    manager_cmd
+        .arg("manager")
+        .arg("listen")
+        .arg("--log-file")
+        .arg(manager::random_log_file("singleton-docker-manager"))
+        .arg("--log-level")
+        .arg("trace")
+        .arg("--shutdown")
+        .arg(format!("lonely={LONELY_TIMEOUT_SECS}"));
+
+    if cfg!(windows) {
+        manager_cmd.arg("--windows-pipe").arg(&socket_str);
+    } else {
+        manager_cmd.arg("--unix-socket").arg(&socket_str);
+    }
+
+    manager_cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    process::set_process_group(&mut manager_cmd);
+
+    eprintln!("[singleton] starting docker manager: {manager_cmd:?}");
+    let mut mgr = manager_cmd
+        .spawn()
+        .expect("failed to spawn docker singleton manager");
+    let manager_pid = mgr.id();
+    manager::wait_for_manager_ready(&socket_str, &mut mgr);
+    let _ = mgr.stdout.take();
+    let _ = mgr.stderr.take();
+
+    // Connect manager to the Docker container
+    let destination = format!("docker://{container_name}");
+    let mut connected = false;
+    for i in 1..=MAX_CONNECT_RETRIES {
+        let mut connect_cmd = Command::new(manager::bin_path());
+        connect_cmd
+            .arg("connect")
+            .arg("--log-file")
+            .arg(manager::random_log_file("singleton-docker-connect"))
+            .arg("--log-level")
+            .arg("trace");
+
+        if cfg!(windows) {
+            connect_cmd.arg("--windows-pipe").arg(&socket_str);
+        } else {
+            connect_cmd.arg("--unix-socket").arg(&socket_str);
+        }
+
+        connect_cmd.arg(&destination);
+        connect_cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        eprintln!("[singleton] docker connect attempt {i}/{MAX_CONNECT_RETRIES}: {connect_cmd:?}");
+        let output = connect_cmd.output().expect("failed to run connect");
+
+        if output.status.success() {
+            connected = true;
+            break;
+        }
+
+        eprintln!(
+            "[singleton] docker connect attempt {i} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        thread::sleep(Duration::from_millis(500));
+    }
+
+    if !connected {
+        eprintln!(
+            "[singleton] failed to connect manager to Docker container after {MAX_CONNECT_RETRIES} attempts"
+        );
+        kill_pid(manager_pid);
+        // Drop the container to clean it up
+        drop(container);
+        return None;
+    }
+
+    // Leak both manager and container so they outlive this test process.
+    // The manager will self-terminate via --shutdown lonely=N.
+    // The container keeps running via `sleep infinity`.
+    std::mem::forget(mgr);
+    std::mem::forget(container);
+
+    Some(ServerMeta {
+        manager_pid,
+        server_pid: None,
+        sshd_pid: None,
+        sshd_port: None,
+        sshd_dir: None,
+        socket_path: socket_str,
+        container_id: Some(container_name),
+    })
+}
+
+/// Checks if a Docker container with the given name is running.
+#[cfg(feature = "docker")]
+fn is_container_alive(name: &str) -> bool {
+    Command::new("docker")
+        .args(["inspect", "--format", "{{.State.Running}}", name])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false)
+}
+
 /// Reads [`Credentials`] from a server's stdout.
 ///
 /// Spawns a background thread to read from the child's stdout, looking for
@@ -598,6 +741,106 @@ pub fn get_or_start_ssh() -> SingletonHandle {
 #[cfg(target_os = "macos")]
 pub fn get_or_start_file_provider() -> SingletonHandle {
     get_or_start("file-provider", start_file_provider)
+}
+
+/// Gets or starts a singleton Docker backend.
+///
+/// Returns `None` if Docker is not available (no daemon, not Linux engine,
+/// etc.). On success returns a handle and the container name, which the
+/// caller needs to address the container in Docker CLI commands.
+///
+/// The caller **must** keep the [`SingletonHandle`] alive for the duration
+/// of the test to maintain the shared lock.
+#[cfg(feature = "docker")]
+pub fn get_or_start_docker() -> Option<(SingletonHandle, String)> {
+    let backend = "docker";
+    let lp = lock_path(backend);
+    let mp = meta_path(backend);
+    let sp = sock_path(backend);
+
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lp)
+        .unwrap_or_else(|e| panic!("failed to open lock file {}: {e}", lp.display()));
+
+    lock_file
+        .lock_exclusive()
+        .expect("failed to acquire exclusive lock");
+
+    let (socket_or_pipe, container_name) = if let Some(meta) = read_live_meta(backend) {
+        // Verify the container is still running
+        let cid = meta.container_id.as_deref().unwrap_or("");
+        if cid.is_empty() || !is_container_alive(cid) {
+            eprintln!(
+                "[singleton] stale docker meta: container '{}' is gone, cleaning up",
+                cid
+            );
+            cleanup_meta(&meta);
+            let _ = fs::remove_file(meta_path(backend));
+
+            match start_docker(&sp) {
+                Some(meta) => {
+                    let socket = meta.socket_path.clone();
+                    let name = meta
+                        .container_id
+                        .clone()
+                        .expect("start_docker sets container_id");
+                    let content =
+                        serde_json::to_string_pretty(&meta).expect("failed to serialize meta");
+                    fs::write(&mp, content).expect("failed to write meta");
+                    (socket, name)
+                }
+                None => {
+                    lock_file
+                        .lock_shared()
+                        .expect("failed to downgrade to shared lock");
+                    return None;
+                }
+            }
+        } else {
+            eprintln!(
+                "[singleton] reusing existing docker server (manager PID {}, container '{}')",
+                meta.manager_pid, cid
+            );
+            (meta.socket_path, cid.to_string())
+        }
+    } else {
+        eprintln!("[singleton] starting new docker server");
+        match start_docker(&sp) {
+            Some(meta) => {
+                let socket = meta.socket_path.clone();
+                let name = meta
+                    .container_id
+                    .clone()
+                    .expect("start_docker sets container_id");
+                let content =
+                    serde_json::to_string_pretty(&meta).expect("failed to serialize meta");
+                fs::write(&mp, content).expect("failed to write meta");
+                (socket, name)
+            }
+            None => {
+                lock_file
+                    .lock_shared()
+                    .expect("failed to downgrade to shared lock");
+                return None;
+            }
+        }
+    };
+
+    lock_file
+        .lock_shared()
+        .expect("failed to downgrade to shared lock");
+
+    Some((
+        SingletonHandle {
+            socket_or_pipe,
+            lock_file,
+        },
+        container_name,
+    ))
 }
 
 /// Core get-or-start logic shared between backends.

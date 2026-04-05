@@ -140,14 +140,10 @@ impl DockerContainer {
     }
 
     /// Maps a `uname -m` value to a Rust target triple for cross-compilation.
+    ///
+    /// Delegates to the module-level [`target_triple_for_arch`] function.
     fn target_triple_for_arch(arch: &str) -> io::Result<&'static str> {
-        match arch {
-            "x86_64" => Ok("x86_64-unknown-linux-gnu"),
-            "aarch64" => Ok("aarch64-unknown-linux-gnu"),
-            other => Err(io::Error::other(format!(
-                "Unsupported container architecture: {other}"
-            ))),
-        }
+        target_triple_for_arch(arch)
     }
 
     /// Build a test harness binary for this container and upload it.
@@ -436,15 +432,95 @@ fn random_log_file(prefix: &str) -> PathBuf {
     log_dir.join(format!("docker-{}.{}.log", prefix, rand::random::<u16>()))
 }
 
+/// Maps a `uname -m` value to a Rust target triple for cross-compilation.
+fn target_triple_for_arch(arch: &str) -> io::Result<&'static str> {
+    match arch {
+        "x86_64" => Ok("x86_64-unknown-linux-gnu"),
+        "aarch64" => Ok("aarch64-unknown-linux-gnu"),
+        other => Err(io::Error::other(format!(
+            "Unsupported container architecture: {other}"
+        ))),
+    }
+}
+
+/// Prepares a test binary for an already-running container by name.
+///
+/// This is the standalone equivalent of [`DockerContainer::prepare_binary`],
+/// used in singleton mode where no [`DockerContainer`] handle is available.
+/// The container must already be running.
+pub async fn prepare_binary_for_container(
+    container_name: &str,
+    bin_name: &str,
+) -> io::Result<String> {
+    let output = TokioCommand::new("docker")
+        .args(["exec", container_name, "uname", "-m"])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(io::Error::other("Failed to detect container architecture"));
+    }
+
+    let arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let triple = target_triple_for_arch(&arch)?;
+
+    let local_path = match crate::exe::build_harness_bin(bin_name, Some(triple)).await {
+        Ok(path) => {
+            log::info!("Cross-compiled {bin_name} for {triple}");
+            path
+        }
+        Err(e) => {
+            log::info!("Cross-compile failed ({e}), falling back to Docker build");
+            build_in_docker(bin_name).await?
+        }
+    };
+
+    let remote_path = format!("/usr/local/bin/{bin_name}");
+    let dest = format!("{container_name}:{remote_path}");
+    let status = TokioCommand::new("docker")
+        .args(["cp", &local_path.to_string_lossy(), &dest])
+        .status()
+        .await?;
+
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "docker cp to {remote_path} failed"
+        )));
+    }
+
+    let chmod_status = TokioCommand::new("docker")
+        .args(["exec", container_name, "chmod", "+x", &remote_path])
+        .status()
+        .await?;
+
+    if !chmod_status.success() {
+        return Err(io::Error::other(format!(
+            "chmod +x {remote_path} failed in container {container_name}"
+        )));
+    }
+
+    Ok(remote_path)
+}
+
 /// CLI test context that starts a manager and connects to a Docker container.
 ///
 /// Spawns a `distant manager listen`, creates a Docker container, then runs
 /// `distant connect docker://{container}` to register the connection with the manager.
 /// Tests can then issue CLI commands against the Docker backend.
+///
+/// In singleton mode (created via [`from_singleton`](Self::from_singleton)),
+/// the struct holds only a socket path, container name, and file lock — the
+/// manager and container are owned by the singleton infrastructure.
 pub struct DockerManagerCtx {
-    manager: Child,
-    container: DockerContainer,
+    manager: Option<Child>,
+    container: Option<DockerContainer>,
+    /// Container name — always set (from the container or from singleton meta).
+    container_name: String,
     socket_or_pipe: String,
+    /// When false, Drop does not kill processes (singleton mode).
+    owns_processes: bool,
+    /// Holds the shared file lock alive for singleton contexts.
+    _lock_file: Option<std::fs::File>,
 }
 
 impl DockerManagerCtx {
@@ -528,21 +604,45 @@ impl DockerManagerCtx {
         }
         eprintln!("DockerManagerCtx: Connected. Proceeding with test...");
 
+        let container_name = container.name.clone();
         Some(Self {
-            manager,
-            container,
+            manager: Some(manager),
+            container: Some(container),
+            container_name,
             socket_or_pipe,
+            owns_processes: true,
+            _lock_file: None,
         })
+    }
+
+    /// Creates a non-owning context that reuses a singleton Docker server.
+    ///
+    /// Drop will NOT kill any processes or remove the container.
+    pub fn from_singleton(
+        handle: crate::singleton::SingletonHandle,
+        container_name: String,
+    ) -> Self {
+        Self {
+            manager: None,
+            container: None,
+            container_name,
+            socket_or_pipe: handle.socket_or_pipe,
+            owns_processes: false,
+            _lock_file: Some(handle.lock_file),
+        }
     }
 
     /// Returns the name of the Docker container.
     pub fn container_name(&self) -> &str {
-        &self.container.name
+        &self.container_name
     }
 
-    /// Returns a reference to the underlying [`DockerContainer`].
-    pub fn container(&self) -> &DockerContainer {
-        &self.container
+    /// Returns a reference to the underlying [`DockerContainer`], if owned.
+    ///
+    /// Returns `None` in singleton mode where the container is managed
+    /// externally.
+    pub fn container(&self) -> Option<&DockerContainer> {
+        self.container.as_ref()
     }
 
     /// Returns the socket/pipe path used by this manager.
@@ -626,9 +726,15 @@ impl DockerManagerCtx {
 }
 
 impl Drop for DockerManagerCtx {
+    /// Kills the manager process. In singleton mode (`owns_processes=false`),
+    /// this is a no-op.
     fn drop(&mut self) {
-        process::kill_process_tree(&mut self.manager);
-        // container cleanup handled by DockerContainer::drop
+        if self.owns_processes
+            && let Some(ref mut manager) = self.manager
+        {
+            process::kill_process_tree(manager);
+        }
+        // container cleanup handled by DockerContainer::drop (if owned)
     }
 }
 

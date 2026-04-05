@@ -531,7 +531,7 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::Mount {
                 connection_id,
                 backend,
-                config,
+                mut config,
             } => {
                 debug!("Mounting via plugin '{backend}' on connection {connection_id}");
 
@@ -549,24 +549,37 @@ impl ServerHandler for ManagerServer {
                     }
                 };
 
-                // Open an internal channel (same pattern as tunnel setup).
-                let internal = match self.connections.read().await.get(&connection_id) {
-                    Some(conn) => match InternalRawChannel::open(conn) {
-                        Ok(ic) => ic,
-                        Err(e) => return reply_err(reply, connection_id, e),
-                    },
-                    None => {
-                        return reply_err(
-                            reply,
-                            connection_id,
-                            io::Error::new(
-                                io::ErrorKind::NotConnected,
-                                "Connection does not exist",
-                            ),
-                        );
-                    }
-                };
+                // Open an internal channel and read the connection destination
+                // while holding the read lock.
+                let (internal, destination) =
+                    match self.connections.read().await.get(&connection_id) {
+                        Some(conn) => match InternalRawChannel::open(conn) {
+                            Ok(ic) => (ic, conn.destination.clone()),
+                            Err(e) => return reply_err(reply, connection_id, e),
+                        },
+                        None => {
+                            return reply_err(
+                                reply,
+                                connection_id,
+                                io::Error::new(
+                                    io::ErrorKind::NotConnected,
+                                    "Connection does not exist",
+                                ),
+                            );
+                        }
+                    };
                 // Lock dropped — async mount proceeds without blocking connections.
+
+                // Inject connection/runtime metadata into the config's extra
+                // map for plugins that need it (e.g. FileProvider persists
+                // this to a domain metadata file for the appex bootstrap).
+                config
+                    .extra
+                    .insert("connection_id".into(), connection_id.to_string());
+                config.extra.insert("destination".into(), destination);
+                config
+                    .extra
+                    .insert("log_level".into(), log::max_level().to_string());
 
                 let remote_root = config
                     .remote_root
