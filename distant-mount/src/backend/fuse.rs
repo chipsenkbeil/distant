@@ -382,6 +382,9 @@ pub(crate) fn mount(
         config
             .mount_options
             .push(fuser::MountOption::CUSTOM("noapplexattr".to_string()));
+        config
+            .mount_options
+            .push(fuser::MountOption::CUSTOM("nobrowse".to_string()));
     }
     if readonly {
         config.mount_options.push(fuser::MountOption::RO);
