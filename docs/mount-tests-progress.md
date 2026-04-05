@@ -88,9 +88,19 @@
   - [x] mount_point bug fixed (plugins return actual path, not empty string)
   - [x] unmount_path converted to async (tokio::process::Command)
   - [x] start_manager_daemon converted to async
-  - [x] macFUSE noappledouble/noapplexattr to suppress system scanning
-  - [x] NFS unmount ordering fix (unmount before dropping listener)
+  - [x] macFUSE noappledouble/noapplexattr/nobrowse to suppress system scanning
+  - [x] NFS nobrowse/noappledouble/soft/intr mount options (industry standard)
+  - [x] NFS shutdown restructured: unmount before dropping listener via child task
+  - [x] UNMOUNT_TIMEOUT (10s) on diskutil unmount force
+  - [x] DROP_UNMOUNT_TIMEOUT (15s) on MountProcess::drop CLI call
   - [x] Skip wait_for_unmount after successful manager unmount
+  - [x] Singleton mount: 22 tests share one mount per backend (16x NFS speedup)
+  - [x] Docker singleton: persistent container across tests (like Host/SSH)
+  - [x] FP extra metadata injection (connection_id, destination, log_level)
+  - [x] FP singleton liveness uses dir check (not mount table)
+  - [x] unmount_all test isolated with own HostManagerCtx
+  - [x] Mount test parallelism increased from 2 to 8 threads
+  - [x] Deleted redundant daemon.rs (identical to browse test)
 
   **Phase 5: Health monitoring + connection resilience**
   - [ ] Periodic health check per mount (FUSE task alive, NFS socket bound,
@@ -141,38 +151,42 @@
 
 ## Singleton Test Server Infrastructure (Completed)
 
-- [x] Host + SSH singletons (file-lock coordination, lonely shutdown)
+- [x] Host + SSH + Docker singletons (file-lock coordination, lonely shutdown)
 - [x] FileProvider singleton (installs app, App Group socket, backup/restore)
+- [x] Docker singleton (persistent container, manager with lonely timeout)
+- [x] Mount singletons: one shared mount per (backend, mount_backend) pair
 - [x] `--shutdown lonely=N` on distant manager listen
 - [x] Process leak fixes, daemon test rewrite
 
-**Result:** 221/234 tests pass. Run time ~515s with FP tests.
-Singletons: Host + SSH + FileProvider. After lonely timeout, only
-Docker per-test manager lingers.
+**Result:** 219/228 tests pass. Run time ~250s with 8 parallel threads.
+Singletons: Host + SSH + Docker + FileProvider + mount singletons.
 
 ---
 
-## Current State (2026-04-04)
+## Current State (2026-04-05)
 
-**A7 Phase 4 complete.** Mount lifecycle owned by manager. CLI sends
-mount/unmount requests to manager instead of spawning foreground processes.
+**219/228 mount tests passing (96%).** 9 remaining FP failures.
 
-**Key changes in A7 Phases 1-4:**
-- MountConfig, MountPlugin, MountHandle traits in distant-core
-- 4 mount plugin implementations (NFS, FUSE, FileProvider, CloudFiles)
-- Manager handles Mount/Unmount requests via InternalRawChannel
-- CLI mount exits immediately (no foreground, no daemonization)
-- CLI unmount by ID with interactive selection (follows Kill pattern)
-- `distant status --show mount` for mount listing
-- All blocking OS commands converted to async (tokio::process::Command)
-- macFUSE noappledouble/noapplexattr suppresses Spotlight CPU spike
-- Test harness updated: MountProcess parses mount ID, unmounts via manager
-- Status/unmount tests rewritten for new flow
+| Backend | Tests | Result |
+|---------|-------|--------|
+| Host NFS | 37 | All pass |
+| Host FUSE | 37 | All pass |
+| SSH NFS | 37 | All pass |
+| SSH FUSE | 37 | All pass |
+| Docker NFS | 18 | All pass |
+| Host FP | 35 | 26 pass, 9 fail |
 
-**Test results:** NFS host tests passing. FUSE host tests passing.
-Full cross-backend validation in progress.
+**9 remaining FP failures:**
+- readonly_read_should_succeed, readonly_write_should_fail
+- remote_root_nonexistent_should_fail, remote_root_should_scope_to_subdir
+- status_json_should_be_valid, status_should_show_active_mount
+- deeply_nested_file_should_be_readable, subdir_should_list_contents
+- unmount_by_id_should_succeed
 
-**Next: A7 Phase 5 — Health monitoring + connection resilience**
+These are a mix of singleton and non-singleton tests. Need investigation —
+may be FP singleton timing issues or CloudStorage discovery failures.
+
+**Next: Fix 9 FP failures, then A7 Phase 5**
 
 ---
 

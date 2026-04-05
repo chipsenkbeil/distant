@@ -1,8 +1,8 @@
 # Mount Backends — Production Fixes & Full Test Coverage PRD
 
-## Status (2026-04-04)
+## Status (2026-04-05)
 
-**234/234 mount tests passing.** All backends, zero skips. Major items:
+**219/228 mount tests passing (96%).** 9 FP failures remain. Major items:
 - [x] 1. FUSE+SSH EIO — fixed (SFTP error mapping + flush lock + path normalization)
 - [x] 2. FileProvider in template — done (singleton via installed app)
 - [x] 3. Test shortcuts removed — mount_op_or_skip gone, catch_unwind replaced
@@ -32,19 +32,26 @@ Completed (Phases 1-4):
 - [x] `distant unmount <id>` / `--all` / interactive selection
 - [x] `distant status --show mount` replaces `mount-status`
 - [x] Async unmount (tokio::process::Command, not blocking)
-- [x] macFUSE noappledouble/noapplexattr (Spotlight CPU fix)
+- [x] macFUSE noappledouble/noapplexattr/nobrowse (Spotlight CPU fix)
+- [x] NFS nobrowse/noappledouble/soft/intr (industry-standard options)
+- [x] NFS shutdown restructured (unmount before dropping listener)
+- [x] Singleton mount infrastructure (16x NFS speedup, 8 parallel threads)
+- [x] Docker singleton (persistent container like Host/SSH)
+- [x] FP extra metadata injection for manager-owned mounts
 - [x] Test harness + status/unmount tests rewritten
 
-Remaining (Phases 5-6):
-- [ ] Health monitoring: periodic checks per backend type
-- [ ] Connection drop → mount "disconnected" → reconnect → resume
-- [ ] Process audit: expect ~5 distant processes (vs 30+ today)
+Remaining:
+- [ ] Fix 9 FP test failures (readonly, remote_root, status, subdirectory, unmount)
+- [ ] Health monitoring: periodic checks per backend type (Phase 5)
+- [ ] Connection drop → mount "disconnected" → reconnect → resume (Phase 5)
+- [ ] Process audit: expect ~5 distant processes (vs 30+ today) (Phase 6)
 - [ ] Windows testing via ssh windows-vm + rsync + cargo nextest
 
 See progress.md for detailed checklist.
 
 Additional completed work not in original requirements:
-- Singleton test servers (Host, SSH, FileProvider)
+- Singleton test servers (Host, SSH, Docker, FileProvider)
+- Singleton mount infrastructure with file-lock coordination
 - Process leak fixes (try_spawn, daemon test rewrite)
 - Docker offset write support
 - Provisioning profiles checked into repo
