@@ -462,7 +462,21 @@ pub fn cleanup_all_stale_mounts() {
 pub fn install_test_app() -> Result<(), String> {
     let workspace = find_workspace_root();
     let app = PathBuf::from("/Applications/Distant.app");
+    let app_bin = app.join("Contents").join("MacOS").join("distant");
     let backup = PathBuf::from("/Applications/Distant.app.bak");
+
+    // Skip if the installed app binary is newer than the build output.
+    let build_bin = crate::manager::build_dir().join("distant");
+    if app_bin.exists() && build_bin.exists() {
+        let app_mtime = app_bin.metadata().and_then(|m| m.modified());
+        let build_mtime = build_bin.metadata().and_then(|m| m.modified());
+        if let (Ok(app_t), Ok(build_t)) = (app_mtime, build_mtime)
+            && app_t >= build_t
+        {
+            eprintln!("[install_test_app] app is up-to-date, skipping install");
+            return Ok(());
+        }
+    }
 
     // Back up existing production install (only if not already backed up)
     if app.exists() && !backup.exists() {
@@ -476,6 +490,10 @@ pub fn install_test_app() -> Result<(), String> {
         "release"
     };
 
+    eprintln!(
+        "[install_test_app] installing app from {}",
+        build_bin.display()
+    );
     let status = Command::new("bash")
         .arg(workspace.join("scripts/build-macos-app.sh"))
         .arg("--skip-build")
@@ -715,22 +733,35 @@ fn mount_meta_path(backend: &str, mount: &str) -> PathBuf {
 /// Reads and validates the meta file for a mount singleton.
 ///
 /// Returns `None` if the meta file is missing, unparseable, or the mount
-/// point directory is not readable (indicating the mount is stale).
+/// point is no longer an active mount (indicating a stale singleton).
 fn read_live_mount_meta(backend: &str, mount: &str) -> Option<MountMeta> {
     let path = mount_meta_path(backend, mount);
     let content = fs::read_to_string(&path).ok()?;
     let meta: MountMeta = serde_json::from_str(&content).ok()?;
 
-    if meta.mount_point.is_dir() && meta.mount_point.read_dir().is_ok() {
+    if is_mount_active(&meta.mount_point) {
         Some(meta)
     } else {
         eprintln!(
             "[mount-singleton] stale meta for {backend}/{mount}: \
-             mount point {} is not a readable directory, cleaning up",
+             mount point {} is not an active mount, cleaning up",
             meta.mount_point.display()
         );
         let _ = fs::remove_file(&path);
         None
+    }
+}
+
+/// Checks whether a path is an active mount point by looking for it in
+/// the OS `mount` command output.
+fn is_mount_active(path: &Path) -> bool {
+    let output = Command::new("mount").output().ok();
+    match output {
+        Some(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            text.contains(&*path.to_string_lossy())
+        }
+        None => false,
     }
 }
 
