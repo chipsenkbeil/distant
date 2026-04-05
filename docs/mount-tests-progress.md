@@ -45,7 +45,7 @@
   - [x] status tests: runs mount-status via installed binary for FP
   - [x] multi_mount drop: per-mount unmount via CloudStorage path
 
-- [ ] **A7** Manager-owned mount lifecycle (6 phases)
+- [-] **A7** Manager-owned mount lifecycle (6 phases)
 
   **Architecture:** Manager owns mount lifecycle via mount plugins.
   distant-core does NOT depend on distant-mount — uses generic types
@@ -53,37 +53,44 @@
   (NFS, FUSE, macOS FileProvider, Windows Cloud Files) similar to how
   connection plugins register schemes (host, ssh, docker).
 
-  **Phase 1: Protocol + unified List**
-  - [ ] MountInfo struct in distant-core protocol (id, connection_id,
-        backend as String, mount_point, remote_root, readonly, status)
-  - [ ] ResourceInfo enum: Connection | Tunnel | Mount
-  - [ ] Unified List request with resource type filter (replaces separate
-        List, ListManagedTunnels, ListMounts)
-  - [ ] Mount/Unmount/Mounted/Unmounted request/response variants
-  - [ ] Info { id } expanded to look up any resource type
-  - [ ] CLI: `distant status --show connections,mounts,tunnels`
-  - [ ] CLI: Remove `distant mount-status` (clean break for 0.21.0)
-  - [ ] CLI: `distant status --id <id>` works for any resource type
+  **Phase 1: Protocol + unified List** ✅
+  - [x] MountConfig, CacheConfig, MountInfo in distant-core protocol
+  - [x] ResourceKind enum (Connection, Tunnel, Mount) for List filtering
+  - [x] MountPlugin + MountHandle traits in distant-core::plugin
+  - [x] Mount/Unmount/Mounted/Unmounted request/response variants
+  - [x] Unified List with resources filter (replaces separate listing)
+  - [x] `distant mount-status` removed (clean break for 0.21.0)
+  - [x] `distant status --show mount` implemented
 
-  **Phase 2: Mount plugin trait + registration**
-  - [ ] MountPlugin trait in distant-mount (name, mount method)
-  - [ ] MountHandleOps trait (unmount, mount_point, needs_foreground)
-  - [ ] NfsMountPlugin, FuseMountPlugin implementations
-  - [ ] FileProviderMountPlugin (macOS), CloudFilesMountPlugin (Windows)
-  - [ ] Config parsing: Map → backend-specific MountConfig per plugin
-  - [ ] Register mount plugins alongside connection plugins
+  **Phase 2: Mount plugin implementations** ✅
+  - [x] NfsMountPlugin — in-process NFS server + os_mount via spawn_blocking
+  - [x] FuseMountPlugin — fuser::spawn_mount2 via spawn_blocking
+  - [x] FileProviderMountPlugin — register_domain + detached handle
+  - [x] CloudFilesMountPlugin — mount + connection guard
+  - [x] MountHandleWrapper bridges concrete handle to trait (Mutex for Sync)
+  - [x] All plugin exports top-level from distant-mount
 
-  **Phase 3: Manager mount/unmount handlers**
-  - [ ] Mount handler: look up plugin, open channel, call plugin.mount()
-  - [ ] Store Box<dyn MountHandleOps> in ManagedMount
-  - [ ] Unmount handler: remove from map, call handle.unmount()
-  - [ ] Mount IDs via AtomicU32 counter (same pattern as tunnels)
+  **Phase 3: Manager mount/unmount handlers** ✅
+  - [x] Mount handler: validates plugin, opens InternalRawChannel, calls
+        plugin.mount(), stores ManagedMount
+  - [x] Unmount handler: removes from map (drops lock), calls
+        handle.unmount(), closes manager_channel
+  - [x] Mount IDs via rand::random::<u32>() (same as tunnel IDs)
+  - [x] Mount plugins registered in manager Config (build_mount_plugin_map)
 
-  **Phase 4: CLI transition**
-  - [ ] `distant mount` sends Mount request to manager (no --foreground)
-  - [ ] `distant unmount` sends Unmount request (accepts multiple IDs)
-  - [ ] `distant unmount --all` is CLI sugar (queries list, sends all IDs)
-  - [ ] MountProcess test harness: spawn via manager request, poll status
+  **Phase 4: CLI transition + test updates** ✅
+  - [x] `distant mount` sends Mount request, prints result, exits immediately
+  - [x] `distant unmount` interactive selection (follows Kill pattern)
+  - [x] `distant unmount <id>` / `distant unmount --all`
+  - [x] Removed --foreground, daemonization wrapper, mount_with_backend()
+  - [x] MountProcess test harness: cmd.output(), parse mount ID, unmount via manager
+  - [x] Status/unmount tests rewritten for manager-based flow
+  - [x] mount_point bug fixed (plugins return actual path, not empty string)
+  - [x] unmount_path converted to async (tokio::process::Command)
+  - [x] start_manager_daemon converted to async
+  - [x] macFUSE noappledouble/noapplexattr to suppress system scanning
+  - [x] NFS unmount ordering fix (unmount before dropping listener)
+  - [x] Skip wait_for_unmount after successful manager unmount
 
   **Phase 5: Health monitoring + connection resilience**
   - [ ] Periodic health check per mount (FUSE task alive, NFS socket bound,
@@ -147,20 +154,25 @@ Docker per-test manager lingers.
 
 ## Current State (2026-04-04)
 
-**234/234 mount tests passing.** All backends, zero skips, zero failures.
-- 199/199 non-FP tests (NFS, FUSE, Docker) — all green
-- 35/35 FileProvider tests — all green (was 0/35 at start of FP work)
+**A7 Phase 4 complete.** Mount lifecycle owned by manager. CLI sends
+mount/unmount requests to manager instead of spawning foreground processes.
 
-**Key achievements this session:**
-- FUSE+SSH EIO root cause: SFTP error mapping
-- Singleton test servers: Host, SSH, FileProvider
-- Docker offset write support
-- FileProvider in cross-backend template via installed app + provisioning profiles
-- Remote root canonicalization (resolves /var → /private/var symlinks)
-- FP delete, rename, readonly (fileSystemFlags + capabilities) all fixed
-- All 9 FP test skips reverted — replaced with FP-specific test logic
+**Key changes in A7 Phases 1-4:**
+- MountConfig, MountPlugin, MountHandle traits in distant-core
+- 4 mount plugin implementations (NFS, FUSE, FileProvider, CloudFiles)
+- Manager handles Mount/Unmount requests via InternalRawChannel
+- CLI mount exits immediately (no foreground, no daemonization)
+- CLI unmount by ID with interactive selection (follows Kill pattern)
+- `distant status --show mount` for mount listing
+- All blocking OS commands converted to async (tokio::process::Command)
+- macFUSE noappledouble/noapplexattr suppresses Spotlight CPU spike
+- Test harness updated: MountProcess parses mount ID, unmounts via manager
+- Status/unmount tests rewritten for new flow
 
-**Next: A7 — Manager-owned mount lifecycle**
+**Test results:** NFS host tests passing. FUSE host tests passing.
+Full cross-backend validation in progress.
+
+**Next: A7 Phase 5 — Health monitoring + connection resilience**
 
 ---
 
