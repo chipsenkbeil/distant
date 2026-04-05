@@ -6,7 +6,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// SDT-01: Listing a subdirectory through the mount should show the seeded
@@ -16,24 +16,22 @@ use distant_test_harness::skip_if_no_backend;
 fn subdir_should_list_contents(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-subdir");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-subdir");
 
-    let subdir = ctx.child_path(&dir, "subdir");
-    ctx.cli_mkdir(&subdir);
-    ctx.cli_write(&ctx.child_path(&subdir, "nested.txt"), "nested content");
+    let nested = ctx.child_path(&subdir, "subdir");
+    ctx.cli_mkdir(&nested);
+    ctx.cli_write(&ctx.child_path(&nested, "nested.txt"), "nested content");
 
-    let deep = ctx.child_path(&subdir, "deep");
+    let deep = ctx.child_path(&nested, "deep");
     ctx.cli_mkdir(&deep);
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let entries: HashSet<String> = std::fs::read_dir(mp.mount_point().join("subdir"))
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read subdir: {e}"))
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let entries: HashSet<String> =
+        std::fs::read_dir(sm.mount_point.join(&subdir_name).join("subdir"))
+            .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read subdir: {e}"))
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
 
     assert!(
         entries.contains("nested.txt"),
@@ -52,21 +50,19 @@ fn subdir_should_list_contents(#[case] backend: Backend, #[case] mount: MountBac
 fn deeply_nested_file_should_be_readable(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-deep");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-deep");
 
-    let subdir = ctx.child_path(&dir, "subdir");
-    ctx.cli_mkdir(&subdir);
+    let nested = ctx.child_path(&subdir, "subdir");
+    ctx.cli_mkdir(&nested);
 
-    let deep = ctx.child_path(&subdir, "deep");
+    let deep = ctx.child_path(&nested, "deep");
     ctx.cli_mkdir(&deep);
     ctx.cli_write(&ctx.child_path(&deep, "deeper.txt"), "deep content");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
     let content = std::fs::read_to_string(
-        mp.mount_point()
+        sm.mount_point
+            .join(&subdir_name)
             .join("subdir")
             .join("deep")
             .join("deeper.txt"),

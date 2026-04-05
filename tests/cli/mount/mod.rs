@@ -54,7 +54,6 @@ fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
 
 mod backend;
 mod browse;
-mod daemon;
 mod directory_ops;
 mod edge_cases;
 mod file_create;

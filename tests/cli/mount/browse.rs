@@ -6,7 +6,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend, MountProcess};
 use distant_test_harness::skip_if_no_backend;
 
 /// MNT-01: Mounting with `--remote-root` should expose the seeded directory
@@ -16,16 +16,13 @@ use distant_test_harness::skip_if_no_backend;
 fn mount_should_list_root_directory(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-browse");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
-    ctx.cli_mkdir(&ctx.child_path(&dir, "subdir"));
-    ctx.cli_mkdir(&ctx.child_path(&dir, "empty-dir"));
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-browse");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
+    ctx.cli_mkdir(&ctx.child_path(&subdir, "subdir"));
+    ctx.cli_mkdir(&ctx.child_path(&subdir, "empty-dir"));
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let entries: HashSet<String> = std::fs::read_dir(mp.mount_point())
+    let entries: HashSet<String> = std::fs::read_dir(sm.mount_point.join(&subdir_name))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read mount point: {e}"))
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
@@ -49,7 +46,7 @@ fn mount_should_list_root_directory(#[case] backend: Backend, #[case] mount: Mou
 /// the mount point empty or removed.
 #[apply(super::plugin_x_mount)]
 #[test_log::test]
-fn mount_foreground_should_exit_on_kill(#[case] backend: Backend, #[case] mount: MountBackend) {
+fn drop_should_unmount(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
     let dir = ctx.unique_dir("mount-fg-kill");

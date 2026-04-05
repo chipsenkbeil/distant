@@ -3,7 +3,7 @@
 use rstest::rstest;
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// BKE-FUSE: While a FUSE mount is active, the system `mount` command output
@@ -15,24 +15,14 @@ use distant_test_harness::skip_if_no_backend;
 fn fuse_mount_should_appear_in_mount_table(#[case] backend: Backend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-bke-fuse");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(
-        &ctx,
-        MountBackend::Fuse,
-        mount_dir.path(),
-        &["--remote-root", &dir],
-    );
+    let sm = mount::get_or_start_mount(&ctx, MountBackend::Fuse);
 
     let output = std::process::Command::new("mount")
         .output()
         .expect("failed to run mount command");
 
     let mount_table = String::from_utf8_lossy(&output.stdout);
-    let mp_str = mp.mount_point().to_string_lossy();
+    let mp_str = sm.mount_point.to_string_lossy();
 
     assert!(
         mount_table.contains(&*mp_str),

@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{self, MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// DOP-01: Creating a directory through the mount should propagate to the
@@ -14,16 +14,13 @@ use distant_test_harness::skip_if_no_backend;
 fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-dir-create");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-dir-create");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    std::fs::create_dir(mp.mount_point().join("new-dir"))
+    std::fs::create_dir(sm.mount_point.join(&subdir_name).join("new-dir"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to create new-dir: {e}"));
 
-    let remote_path = ctx.child_path(&dir, "new-dir");
+    let remote_path = ctx.child_path(&subdir, "new-dir");
     mount::wait_until_exists(&ctx, &remote_path);
 
     assert!(
@@ -39,24 +36,21 @@ fn mkdir_should_appear_on_remote(#[case] backend: Backend, #[case] mount: MountB
 fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-dir-remove");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_mkdir(&ctx.child_path(&dir, "empty-dir"));
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-dir-remove");
+    ctx.cli_mkdir(&ctx.child_path(&subdir, "empty-dir"));
 
     // FileProvider directories may contain hidden metadata (resource forks),
     // so use remove_dir_all. Other backends use remove_dir for a true empty check.
     if matches!(mount, MountBackend::MacosFileProvider) {
-        std::fs::remove_dir_all(mp.mount_point().join("empty-dir"))
+        std::fs::remove_dir_all(sm.mount_point.join(&subdir_name).join("empty-dir"))
             .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
     } else {
-        std::fs::remove_dir(mp.mount_point().join("empty-dir"))
+        std::fs::remove_dir(sm.mount_point.join(&subdir_name).join("empty-dir"))
             .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove empty-dir: {e}"));
     }
 
-    let remote_path = ctx.child_path(&dir, "empty-dir");
+    let remote_path = ctx.child_path(&subdir, "empty-dir");
     mount::wait_until_gone(&ctx, &remote_path);
 
     assert!(
@@ -72,15 +66,11 @@ fn rmdir_should_remove_from_remote(#[case] backend: Backend, #[case] mount: Moun
 fn empty_dir_should_list_nothing(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-dir-empty");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_mkdir(&ctx.child_path(&dir, "empty-dir"));
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (_subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-dir-empty");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let entries: Vec<_> = std::fs::read_dir(mp.mount_point().join("empty-dir"))
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read empty-dir: {e}"))
+    let entries: Vec<_> = std::fs::read_dir(sm.mount_point.join(&subdir_name))
+        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read empty dir: {e}"))
         .filter_map(|entry| entry.ok())
         .collect();
 

@@ -1,14 +1,20 @@
 //! Mount test infrastructure for integration tests.
 //!
 //! Provides [`MountProcess`] for managing foreground mount lifecycles,
-//! [`wait_for_unmount`] for polling unmount completion, and
-//! [`build_test_app_bundle`] for constructing macOS FileProvider `.app`
-//! bundles in tests. Also re-exports [`MountBackend`] for convenience
+//! [`wait_for_unmount`] for polling unmount completion, singleton mount
+//! coordination via [`get_or_start_mount`], and macOS FileProvider `.app`
+//! bundle installation. Also re-exports [`MountBackend`] for convenience
 //! and defines rstest-reuse templates for parameterized mount tests.
 
+use std::collections::hash_map::DefaultHasher;
+use std::fs::{self, File, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use fs4::fs_std::FileExt;
+use serde::{Deserialize, Serialize};
 
 #[allow(unused_imports)]
 use rstest::rstest;
@@ -498,28 +504,6 @@ pub fn restore_production_app() {
     }
 }
 
-/// Finds the workspace root by walking up from `CARGO_MANIFEST_DIR` until
-/// a `Cargo.toml` containing `[workspace]` is found.
-#[cfg(target_os = "macos")]
-fn find_workspace_root() -> PathBuf {
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists()
-            && let Ok(content) = std::fs::read_to_string(&cargo_toml)
-            && content.contains("[workspace]")
-        {
-            return dir;
-        }
-        if !dir.pop() {
-            panic!(
-                "could not find workspace root from {}",
-                env!("CARGO_MANIFEST_DIR")
-            );
-        }
-    }
-}
-
 /// Returns the `~/Library/CloudStorage/` directory path.
 #[cfg(target_os = "macos")]
 fn dirs_cloud_storage() -> PathBuf {
@@ -617,3 +601,316 @@ pub fn all_plugins(#[case] backend: Backend) {}
     case::host_fp(Backend::Host, MountBackend::MacosFileProvider)
 )]
 pub fn plugin_x_mount(#[case] backend: Backend, #[case] mount: MountBackend) {}
+
+/// Metadata stored in the mount singleton meta file.
+///
+/// Persisted as JSON so that concurrent test processes can discover and
+/// reuse an existing mount without re-creating it.
+#[derive(Debug, Serialize, Deserialize)]
+struct MountMeta {
+    /// Mount ID returned by the manager, if available.
+    mount_id: Option<u32>,
+    /// Local mount point path.
+    mount_point: PathBuf,
+    /// Remote root directory that the mount exposes.
+    remote_root: String,
+}
+
+/// Handle to a shared singleton mount.
+///
+/// The caller must keep this alive for the duration of the test to
+/// maintain the shared file lock, signaling that a client is still
+/// using the mount.
+pub struct MountSingletonHandle {
+    /// Local mount point path.
+    pub mount_point: PathBuf,
+    /// Remote root directory that the mount exposes.
+    pub remote_root: String,
+    /// Shared lock file handle — held (not read) so the lock is released on drop.
+    #[allow(dead_code)]
+    lock_file: File,
+}
+
+/// Returns a truncated hash of the workspace root for namespacing temp files.
+fn workspace_hash() -> String {
+    let root = find_workspace_root();
+    let mut hasher = DefaultHasher::new();
+    root.to_string_lossy().hash(&mut hasher);
+    format!("{:08x}", hasher.finish() as u32)
+}
+
+/// Finds the workspace root by walking up from `CARGO_MANIFEST_DIR`.
+fn find_workspace_root() -> PathBuf {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists()
+            && let Ok(content) = fs::read_to_string(&cargo_toml)
+            && content.contains("[workspace]")
+        {
+            return dir;
+        }
+        if !dir.pop() {
+            panic!(
+                "could not find workspace root from {}",
+                env!("CARGO_MANIFEST_DIR")
+            );
+        }
+    }
+}
+
+/// Returns the string key for a plugin backend variant.
+fn backend_name(ctx: &BackendCtx) -> &'static str {
+    match ctx.backend() {
+        Backend::Host => "host",
+        Backend::Ssh => "ssh",
+        #[cfg(feature = "docker")]
+        Backend::Docker => "docker",
+    }
+}
+
+/// Returns the base path for a mount singleton, without extension.
+fn mount_base_path(backend: &str, mount: &str) -> PathBuf {
+    let hash = workspace_hash();
+    std::env::temp_dir().join(format!("distant-test-{hash}-mount-{backend}-{mount}"))
+}
+
+/// Returns the path to the lock file for a mount singleton.
+fn mount_lock_path(backend: &str, mount: &str) -> PathBuf {
+    let mut p = mount_base_path(backend, mount);
+    p.set_extension("lock");
+    p
+}
+
+/// Returns the path to the meta (JSON) file for a mount singleton.
+fn mount_meta_path(backend: &str, mount: &str) -> PathBuf {
+    let mut p = mount_base_path(backend, mount);
+    p.set_extension("meta");
+    p
+}
+
+/// Reads and validates the meta file for a mount singleton.
+///
+/// Returns `None` if the meta file is missing, unparseable, or the mount
+/// point directory is not readable (indicating the mount is stale).
+fn read_live_mount_meta(backend: &str, mount: &str) -> Option<MountMeta> {
+    let path = mount_meta_path(backend, mount);
+    let content = fs::read_to_string(&path).ok()?;
+    let meta: MountMeta = serde_json::from_str(&content).ok()?;
+
+    if meta.mount_point.is_dir() && meta.mount_point.read_dir().is_ok() {
+        Some(meta)
+    } else {
+        eprintln!(
+            "[mount-singleton] stale meta for {backend}/{mount}: \
+             mount point {} is not a readable directory, cleaning up",
+            meta.mount_point.display()
+        );
+        let _ = fs::remove_file(&path);
+        None
+    }
+}
+
+/// Creates a new mount via the CLI.
+///
+/// For macOS FileProvider mounts, uses the installed `.app` binary and the
+/// FP singleton's socket. For all other backends, uses
+/// [`BackendCtx::new_std_cmd`].
+fn start_mount(
+    ctx: &BackendCtx,
+    mount: MountBackend,
+    mount_point: &Path,
+    remote_root: &str,
+) -> MountMeta {
+    #[cfg(target_os = "macos")]
+    if matches!(mount, MountBackend::MacosFileProvider) {
+        return start_file_provider_mount(mount_point, remote_root);
+    }
+
+    start_foreground_mount(ctx, mount, mount_point, remote_root)
+}
+
+/// Creates a mount via the manager for non-FileProvider backends.
+fn start_foreground_mount(
+    ctx: &BackendCtx,
+    mount: MountBackend,
+    mount_point: &Path,
+    remote_root: &str,
+) -> MountMeta {
+    if let Err(e) = fs::create_dir_all(mount_point) {
+        panic!(
+            "failed to create mount point {}: {e}",
+            mount_point.display()
+        );
+    }
+
+    let mut cmd = ctx.new_std_cmd(["mount"]);
+    cmd.arg("--backend")
+        .arg(mount.as_str())
+        .arg("--remote-root")
+        .arg(remote_root)
+        .arg(mount_point);
+
+    eprintln!("[mount-singleton] creating mount: {cmd:?}");
+    let output = cmd.output().expect("failed to run distant mount");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("[mount-singleton] mount failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse mount ID from output: "Mounted at /path (id: 123)"
+    let mount_id = stdout
+        .lines()
+        .find(|l| l.contains("Mounted"))
+        .and_then(|l| l.rsplit("id: ").next())
+        .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
+
+    MountMeta {
+        mount_id,
+        mount_point: mount_point.to_path_buf(),
+        remote_root: remote_root.to_string(),
+    }
+}
+
+/// Creates a mount via the macOS FileProvider backend.
+///
+/// Uses the installed `.app` binary and the FP singleton's socket to send
+/// the mount request. Discovers the mount point under `~/Library/CloudStorage/`.
+#[cfg(target_os = "macos")]
+fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMeta {
+    use crate::{manager, singleton};
+
+    let fp_handle = singleton::get_or_start_file_provider();
+
+    let bin = PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
+
+    let cloud_storage = dirs_cloud_storage();
+    let before: std::collections::HashSet<_> = list_cloud_storage_entries(&cloud_storage);
+
+    let mut cmd = Command::new(&bin);
+    cmd.arg("mount");
+    cmd.arg("--log-file")
+        .arg(manager::random_log_file("mount-singleton-fp"));
+    cmd.arg("--log-level").arg("trace");
+    cmd.arg("--unix-socket").arg(&fp_handle.socket_or_pipe);
+    cmd.arg("--backend").arg("macos-file-provider");
+    cmd.arg("--remote-root").arg(remote_root);
+
+    eprintln!("[mount-singleton] creating file-provider mount: {cmd:?}");
+    let output = cmd
+        .output()
+        .expect("failed to run distant mount (file-provider)");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("[mount-singleton] file-provider mount failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mount_id = stdout
+        .lines()
+        .find(|l| l.contains("Mounted"))
+        .and_then(|l| l.rsplit("id: ").next())
+        .and_then(|s| s.trim_end_matches(')').parse::<u32>().ok());
+
+    // The actual mount point for FP is discovered under CloudStorage,
+    // not the passed-in mount_point.
+    let discovered = discover_cloud_storage_entry(&cloud_storage, &before)
+        .expect("[mount-singleton] failed to discover file-provider mount point");
+
+    // Keep the FP handle alive so the lock is not released. Since this
+    // is a singleton mount, leak it — the manager will self-terminate
+    // via --shutdown lonely=N.
+    std::mem::forget(fp_handle);
+
+    MountMeta {
+        mount_id,
+        mount_point: discovered,
+        remote_root: remote_root.to_string(),
+    }
+}
+
+/// Gets or creates a singleton mount for the given backend and mount type.
+///
+/// Uses file-lock coordination so the first test process to run creates
+/// the mount, and subsequent processes reuse it. The caller **must** keep
+/// the returned [`MountSingletonHandle`] alive for the duration of the
+/// test to maintain the shared lock.
+///
+/// # Panics
+///
+/// Panics if the mount fails to start or if file-lock operations fail.
+pub fn get_or_start_mount(ctx: &BackendCtx, mount: MountBackend) -> MountSingletonHandle {
+    let backend = backend_name(ctx);
+    let mount_str = mount.as_str();
+
+    let lp = mount_lock_path(backend, mount_str);
+    let mp = mount_meta_path(backend, mount_str);
+
+    // Open/create lock file
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lp)
+        .unwrap_or_else(|e| panic!("failed to open lock file {}: {e}", lp.display()));
+
+    // Exclusive lock for the startup check
+    lock_file
+        .lock_exclusive()
+        .expect("failed to acquire exclusive lock");
+
+    let meta = if let Some(meta) = read_live_mount_meta(backend, mount_str) {
+        eprintln!(
+            "[mount-singleton] reusing existing {backend}/{mount_str} mount at {}",
+            meta.mount_point.display()
+        );
+        meta
+    } else {
+        eprintln!("[mount-singleton] starting new {backend}/{mount_str} mount");
+
+        // Create remote root via the CLI
+        let remote_root = ctx.unique_dir(&format!("mount-shared-{mount_str}"));
+        ctx.cli_mkdir(&remote_root);
+
+        // Create local mount point
+        let hash = workspace_hash();
+        let mount_point =
+            std::env::temp_dir().join(format!("distant-mount-{hash}-{backend}-{mount_str}"));
+
+        let meta = start_mount(ctx, mount, &mount_point, &remote_root);
+
+        let content = serde_json::to_string_pretty(&meta).expect("failed to serialize mount meta");
+        fs::write(&mp, content).expect("failed to write mount meta");
+
+        meta
+    };
+
+    // Downgrade to shared lock — other test processes can now read the meta
+    // and join as additional clients
+    lock_file
+        .lock_shared()
+        .expect("failed to downgrade to shared lock");
+
+    MountSingletonHandle {
+        mount_point: meta.mount_point,
+        remote_root: meta.remote_root,
+        lock_file,
+    }
+}
+
+/// Creates a unique subdirectory under `parent` via the CLI.
+///
+/// Returns `(full_remote_path, subdir_name)`. The directory is created
+/// immediately through the distant CLI so it exists on the remote before
+/// returning.
+pub fn unique_subdir(ctx: &BackendCtx, parent: &str, label: &str) -> (String, String) {
+    let name = format!("{label}-{}", rand::random::<u64>());
+    let path = ctx.child_path(parent, &name);
+    ctx.cli_mkdir(&path);
+    (path, name)
+}

@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{self, MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// FDL-01: Removing a file through the mount should delete it from the
@@ -14,17 +14,14 @@ use distant_test_harness::skip_if_no_backend;
 fn delete_file_should_remove_from_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-delete-file");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-delete-file");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    std::fs::remove_file(mp.mount_point().join("hello.txt"))
+    std::fs::remove_file(sm.mount_point.join(&subdir_name).join("hello.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove hello.txt: {e}"));
 
-    let remote_path = ctx.child_path(&dir, "hello.txt");
+    let remote_path = ctx.child_path(&subdir, "hello.txt");
     mount::wait_until_gone(&ctx, &remote_path);
 
     assert!(
@@ -40,13 +37,10 @@ fn delete_file_should_remove_from_remote(#[case] backend: Backend, #[case] mount
 fn delete_nonexistent_should_fail(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-delete-noent");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (_subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-delete-noent");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let result = std::fs::remove_file(mp.mount_point().join("nonexistent.txt"));
+    let result = std::fs::remove_file(sm.mount_point.join(&subdir_name).join("nonexistent.txt"));
 
     assert!(
         result.is_err(),

@@ -79,15 +79,15 @@ fn mount_onto_file_should_fail(#[case] backend: Backend, #[case] mount: MountBac
 fn filenames_with_spaces_should_work(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-edge-spaces");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello world.txt"), "space content");
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-edge-spaces");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello world.txt"), "space content");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let content = std::fs::read_to_string(mp.mount_point().join("hello world.txt"))
-        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read 'hello world.txt': {e}"));
+    let content =
+        std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("hello world.txt"))
+            .unwrap_or_else(|e| {
+                panic!("[{backend:?}/{mount}] failed to read 'hello world.txt': {e}")
+            });
 
     assert_eq!(
         content, "space content",
@@ -101,16 +101,13 @@ fn filenames_with_spaces_should_work(#[case] backend: Backend, #[case] mount: Mo
 fn rapid_write_read_should_not_corrupt(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-edge-rapid");
-    ctx.cli_mkdir(&dir);
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (_, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-edge-rapid");
 
     for i in 0..10 {
         let name = format!("rapid-{i}.txt");
         let content = format!("iteration-{i}");
-        let path = mp.mount_point().join(&name);
+        let path = sm.mount_point.join(&subdir_name).join(&name);
 
         std::fs::write(&path, &content)
             .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] write failed on iteration {i}: {e}"));

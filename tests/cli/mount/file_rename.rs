@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{self, MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// FRN-01: Renaming a file within the same directory through the mount
@@ -14,28 +14,23 @@ use distant_test_harness::skip_if_no_backend;
 fn rename_file_should_update_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-rename-file");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-rename-file");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let local_dir = sm.mount_point.join(&subdir_name);
+    std::fs::rename(local_dir.join("hello.txt"), local_dir.join("renamed.txt"))
+        .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to rename hello.txt: {e}"));
 
-    std::fs::rename(
-        mp.mount_point().join("hello.txt"),
-        mp.mount_point().join("renamed.txt"),
-    )
-    .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to rename hello.txt: {e}"));
-
-    mount::wait_until_gone(&ctx, &ctx.child_path(&dir, "hello.txt"));
-    mount::wait_until_exists(&ctx, &ctx.child_path(&dir, "renamed.txt"));
+    mount::wait_until_gone(&ctx, &ctx.child_path(&subdir, "hello.txt"));
+    mount::wait_until_exists(&ctx, &ctx.child_path(&subdir, "renamed.txt"));
 
     assert!(
-        !ctx.cli_exists(&ctx.child_path(&dir, "hello.txt")),
+        !ctx.cli_exists(&ctx.child_path(&subdir, "hello.txt")),
         "[{backend:?}/{mount}] hello.txt should no longer exist on remote"
     );
     assert!(
-        ctx.cli_exists(&ctx.child_path(&dir, "renamed.txt")),
+        ctx.cli_exists(&ctx.child_path(&subdir, "renamed.txt")),
         "[{backend:?}/{mount}] renamed.txt should exist on remote"
     );
 }
@@ -47,27 +42,25 @@ fn rename_file_should_update_remote(#[case] backend: Backend, #[case] mount: Mou
 fn rename_across_dirs_should_update_remote(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-rename-xdir");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
-    ctx.cli_mkdir(&ctx.child_path(&dir, "subdir"));
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-rename-xdir");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
+    ctx.cli_mkdir(&ctx.child_path(&subdir, "subdir"));
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
+    let local_dir = sm.mount_point.join(&subdir_name);
     std::fs::rename(
-        mp.mount_point().join("hello.txt"),
-        mp.mount_point().join("subdir").join("moved.txt"),
+        local_dir.join("hello.txt"),
+        local_dir.join("subdir").join("moved.txt"),
     )
     .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed cross-dir rename: {e}"));
 
-    mount::wait_until_gone(&ctx, &ctx.child_path(&dir, "hello.txt"));
+    mount::wait_until_gone(&ctx, &ctx.child_path(&subdir, "hello.txt"));
 
-    let moved_path = ctx.child_path(&ctx.child_path(&dir, "subdir"), "moved.txt");
+    let moved_path = ctx.child_path(&ctx.child_path(&subdir, "subdir"), "moved.txt");
     mount::wait_until_exists(&ctx, &moved_path);
 
     assert!(
-        !ctx.cli_exists(&ctx.child_path(&dir, "hello.txt")),
+        !ctx.cli_exists(&ctx.child_path(&subdir, "hello.txt")),
         "[{backend:?}/{mount}] hello.txt should no longer exist on remote"
     );
     assert!(

@@ -5,7 +5,7 @@ use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
 use distant_test_harness::manager;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// MST-01: With an active mount, `status --show mount` output should contain
@@ -15,12 +15,7 @@ use distant_test_harness::skip_if_no_backend;
 fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-status-active");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let _mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let _sm = mount::get_or_start_mount(&ctx, mount);
 
     let output = ctx
         .new_std_cmd(["status"])
@@ -44,12 +39,7 @@ fn status_should_show_active_mount(#[case] backend: Backend, #[case] mount: Moun
 fn status_json_should_be_valid(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-status-json");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "probe.txt"), "probe");
-
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let _mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
+    let _sm = mount::get_or_start_mount(&ctx, mount);
 
     let output = ctx
         .new_std_cmd(["status"])

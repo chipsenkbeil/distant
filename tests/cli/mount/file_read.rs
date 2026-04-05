@@ -4,7 +4,7 @@ use rstest::rstest;
 use rstest_reuse::{self, *};
 
 use distant_test_harness::backend::Backend;
-use distant_test_harness::mount::{MountBackend, MountProcess};
+use distant_test_harness::mount::{self, MountBackend};
 use distant_test_harness::skip_if_no_backend;
 
 /// FRD-01: Reading a seeded text file through the mount should return the
@@ -14,14 +14,11 @@ use distant_test_harness::skip_if_no_backend;
 fn read_should_return_file_contents(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-read");
-    ctx.cli_mkdir(&dir);
-    ctx.cli_write(&ctx.child_path(&dir, "hello.txt"), "hello world");
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-read");
+    ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let content = std::fs::read_to_string(mp.mount_point().join("hello.txt"))
+    let content = std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("hello.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read hello.txt: {e}"));
 
     assert_eq!(
@@ -37,16 +34,13 @@ fn read_should_return_file_contents(#[case] backend: Backend, #[case] mount: Mou
 fn read_should_handle_large_file(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-read-large");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-read-large");
 
     let large_content = "A".repeat(100 * 1024);
-    ctx.cli_write(&ctx.child_path(&dir, "large.txt"), &large_content);
+    ctx.cli_write(&ctx.child_path(&subdir, "large.txt"), &large_content);
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let content = std::fs::read_to_string(mp.mount_point().join("large.txt"))
+    let content = std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("large.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read large.txt: {e}"));
 
     assert_eq!(
@@ -68,13 +62,10 @@ fn read_should_handle_large_file(#[case] backend: Backend, #[case] mount: MountB
 fn read_should_fail_for_nonexistent_file(#[case] backend: Backend, #[case] mount: MountBackend) {
     let ctx = skip_if_no_backend!(backend);
 
-    let dir = ctx.unique_dir("mount-read-noent");
-    ctx.cli_mkdir(&dir);
+    let sm = mount::get_or_start_mount(&ctx, mount);
+    let (_subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-read-noent");
 
-    let mount_dir = assert_fs::TempDir::new().unwrap();
-    let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &["--remote-root", &dir]);
-
-    let result = std::fs::read_to_string(mp.mount_point().join("nonexistent.txt"));
+    let result = std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("nonexistent.txt"));
 
     assert!(
         result.is_err(),
