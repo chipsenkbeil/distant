@@ -1022,9 +1022,18 @@ pub(crate) fn register_domain(rt: Arc<Runtime>, extra: &Map) -> io::Result<(Stri
         )
     };
 
-    // Also remove any domain with the exact same identifier (re-mount of the
-    // same connection).
-    remove_domain_blocking(&domain);
+    // Only remove an existing domain with the same identifier (re-mount of
+    // the same connection). Calling removeDomain on a non-existent domain
+    // can cause fileproviderd to unregister the extension entirely when it
+    // has zero domains, which prevents the appex from launching for the
+    // new domain being added.
+    if let Ok(existing) = get_all_domains()
+        && existing
+            .iter()
+            .any(|d| unsafe { d.identifier() }.to_string() == domain_id)
+    {
+        remove_domain_blocking(&domain);
+    }
 
     // addDomain is async with a completion handler. We block on it using
     // a channel to bridge to sync code.
