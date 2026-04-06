@@ -401,6 +401,7 @@ pub fn wait_for_sync() {
 /// installed `.app` binary. FileProvider APIs require bundle context,
 /// so this cannot be called directly from the test process.
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 fn cleanup_stale_fp_domains() {
     let bin = std::path::PathBuf::from("/Applications/Distant.app/Contents/MacOS/distant");
     if !bin.exists() {
@@ -437,10 +438,6 @@ fn cleanup_stale_fp_domains() {
 pub fn cleanup_all_stale_mounts() {
     // Clean up stale FileProvider domains on macOS. Each domain creates a
     // CloudStorage entry that persists across process restarts. Without
-    // cleanup, stale domains accumulate and can overwhelm fileproviderd.
-    #[cfg(target_os = "macos")]
-    cleanup_stale_fp_domains();
-
     #[cfg(unix)]
     {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -881,9 +878,6 @@ fn start_foreground_mount(
 #[cfg(target_os = "macos")]
 fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMeta {
     use crate::{manager, singleton};
-
-    // Clean up stale FP domains before registering a new one.
-    cleanup_stale_fp_domains();
 
     let fp_handle = singleton::get_or_start_file_provider();
 

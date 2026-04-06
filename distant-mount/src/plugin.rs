@@ -23,6 +23,9 @@ use crate::core::MountHandle as ConcreteMountHandle;
 struct MountHandleWrapper {
     inner: Mutex<Option<ConcreteMountHandle>>,
     mount_point: String,
+    /// Domain ID for FileProvider cleanup on unmount. Only set for FP mounts.
+    #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+    domain_id: Option<String>,
 }
 
 impl MountHandleTrait for MountHandleWrapper {
@@ -30,10 +33,17 @@ impl MountHandleTrait for MountHandleWrapper {
         Box::pin(async {
             let handle = self.inner.lock().unwrap().take();
             if let Some(handle) = handle {
-                handle.unmount().await
-            } else {
-                Ok(())
+                handle.unmount().await?;
             }
+
+            // Remove the FileProvider domain from macOS so it doesn't
+            // accumulate stale FPFS database entries.
+            #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+            if let Some(ref domain_id) = self.domain_id {
+                crate::backend::macos_file_provider::remove_domain_by_id(domain_id);
+            }
+
+            Ok(())
         })
     }
 
@@ -72,6 +82,8 @@ impl MountPlugin for NfsMountPlugin {
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
+                #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+                domain_id: None,
             }) as Box<dyn MountHandleTrait>)
         })
     }
@@ -218,6 +230,8 @@ impl MountPlugin for FuseMountPlugin {
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
+                #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+                domain_id: None,
             }) as Box<dyn MountHandleTrait>)
         })
     }
@@ -282,10 +296,12 @@ impl MountPlugin for FileProviderMountPlugin {
         config: MountConfig,
     ) -> Pin<Box<dyn Future<Output = io::Result<Box<dyn MountHandleTrait>>> + Send + 'a>> {
         Box::pin(async move {
-            let (handle, mount_point) = mount_file_provider(channel, config).await?;
+            let (handle, mount_point, domain_id) = mount_file_provider(channel, config).await?;
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
+                #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+                domain_id: Some(domain_id),
             }) as Box<dyn MountHandleTrait>)
         })
     }
@@ -295,7 +311,7 @@ impl MountPlugin for FileProviderMountPlugin {
 async fn mount_file_provider(
     channel: Channel,
     config: MountConfig,
-) -> io::Result<(ConcreteMountHandle, String)> {
+) -> io::Result<(ConcreteMountHandle, String, String)> {
     use std::sync::Arc;
 
     use tokio::runtime::Handle;
@@ -333,6 +349,7 @@ async fn mount_file_provider(
     Ok((
         ConcreteMountHandle::new(shutdown_tx, join_handle).detach(),
         mount_point,
+        domain_id,
     ))
 }
 
@@ -366,6 +383,8 @@ impl MountPlugin for CloudFilesMountPlugin {
             Ok(Box::new(MountHandleWrapper {
                 inner: Mutex::new(Some(handle)),
                 mount_point,
+                #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+                domain_id: None,
             }) as Box<dyn MountHandleTrait>)
         })
     }

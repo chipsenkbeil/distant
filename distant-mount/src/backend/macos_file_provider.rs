@@ -129,6 +129,15 @@ fn set_runtime(domain_id: &str, rt: Arc<Runtime>) {
     }
 }
 
+/// Removes the [`Runtime`] for the given domain, if present.
+fn remove_runtime(domain_id: &str) {
+    if let Ok(mut guard) = RUNTIMES.write()
+        && let Some(map) = guard.as_mut()
+    {
+        map.remove(domain_id);
+    }
+}
+
 /// Registers all FileProvider ObjC classes with the Objective-C runtime.
 ///
 /// Must be called as early as possible — before the XPC framework looks up
@@ -1163,7 +1172,6 @@ fn sanitize_display_name(destination: &str, remote_root: Option<&String>) -> Str
 
 /// Removes a single FileProvider domain by identifier and cleans up its
 /// metadata file.
-#[allow(dead_code)]
 pub(crate) fn remove_domain_by_id(domain_id: &str) {
     let identifier = NSString::from_str(domain_id);
     let display = NSString::from_str("");
@@ -1179,6 +1187,9 @@ pub(crate) fn remove_domain_by_id(domain_id: &str) {
     if let Some(dir) = domains_dir() {
         let _ = std::fs::remove_file(dir.join(domain_id));
     }
+
+    // Remove the in-memory Runtime for this domain.
+    remove_runtime(domain_id);
 
     debug!("file_provider: removed domain {domain_id:?}");
 }
