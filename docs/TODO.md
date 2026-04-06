@@ -363,6 +363,17 @@ passing for NFS and FUSE host backends.
    full test run (A7 Phase 6).
 8. **(Enhancement)** Windows Cloud Files automated testing via SSH to
    windows-vm (currently manual only).
+9. **(Architecture)** FileProvider: migrate from add/remove per mount to
+   disconnect/reconnect model. Apple's intended pattern (per WWDC21,
+   Mountain Duck, iCloud) is: `addDomain` once, `disconnect(.temporary)`
+   on unmount, `reconnect()` on remount, `removeDomain` only on explicit
+   delete. Frequent add/remove causes FPFS database accumulation and
+   `fileproviderd` degradation. Requires stable domain IDs (derive from
+   host+user+path, not connection_id) and reconciliation on app startup.
+10. **(Bug)** FileProvider: 51 ghost CloudStorage entries persist after
+    domain removal — macOS doesn't clean them until reboot. Need to
+    investigate `NSFileProviderManager.reimportItems` or the
+    disconnect/reconnect model (#9) as alternatives.
 
 ---
 
