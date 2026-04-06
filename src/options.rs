@@ -57,6 +57,18 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
     if cfg!(feature = "host") {
         features.push("host");
     }
+    if cfg!(feature = "mount-fuse") {
+        features.push("mount-fuse");
+    }
+    if cfg!(feature = "mount-macos-file-provider") {
+        features.push("mount-macos-file-provider");
+    }
+    if cfg!(feature = "mount-nfs") {
+        features.push("mount-nfs");
+    }
+    if cfg!(feature = "mount-windows-cloud-files") {
+        features.push("mount-windows-cloud-files");
+    }
     if cfg!(feature = "pty") {
         features.push("pty");
     }
@@ -217,6 +229,24 @@ impl Options {
                             distant_bind_server
                                 .take()
                                 .or(config.client.launch.distant.bind_server);
+                    }
+                    #[cfg(any(
+                        feature = "mount-fuse",
+                        feature = "mount-nfs",
+                        feature = "mount-windows-cloud-files",
+                        feature = "mount-macos-file-provider",
+                    ))]
+                    ClientSubcommand::Mount { network, .. } => {
+                        network.merge(config.client.network);
+                    }
+                    #[cfg(any(
+                        feature = "mount-fuse",
+                        feature = "mount-nfs",
+                        feature = "mount-windows-cloud-files",
+                        feature = "mount-macos-file-provider",
+                    ))]
+                    ClientSubcommand::Unmount { network, .. } => {
+                        network.merge(config.client.network);
                     }
                     ClientSubcommand::Shell { network, .. } => {
                         network.merge(config.client.network);
@@ -539,6 +569,98 @@ pub enum ClientSubcommand {
         destination: String,
     },
 
+    /// Mount a remote filesystem at a local directory
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
+    Mount {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        /// Specify a connection being managed
+        #[clap(long)]
+        connection: Option<ConnectionId>,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Remote directory to expose (defaults to server's working directory)
+        #[clap(long)]
+        remote_root: Option<String>,
+
+        /// Mount as read-only
+        #[clap(long)]
+        readonly: bool,
+
+        /// Attribute cache TTL in seconds
+        #[clap(long, default_value = "1")]
+        attr_ttl: f64,
+
+        /// Directory listing cache TTL in seconds
+        #[clap(long, default_value = "1")]
+        dir_ttl: f64,
+
+        /// File content read cache TTL in seconds
+        #[clap(long, default_value = "30")]
+        read_ttl: f64,
+
+        /// Mount backend to use
+        #[clap(
+            long,
+            default_value_t,
+            hide_possible_values = false,
+            value_parser = clap::builder::PossibleValuesParser::new(
+                distant_mount::MountBackend::available_backends().iter().map(|b| b.as_str())
+            ).map(|s| s.parse::<distant_mount::MountBackend>().unwrap())
+        )]
+        backend: distant_mount::MountBackend,
+
+        /// Local mount point (optional for FileProvider backend)
+        mount_point: Option<PathBuf>,
+    },
+
+    /// Unmount a previously mounted remote filesystem
+    #[cfg(any(
+        feature = "mount-fuse",
+        feature = "mount-nfs",
+        feature = "mount-windows-cloud-files",
+        feature = "mount-macos-file-provider",
+    ))]
+    Unmount {
+        /// Location to store cached data
+        #[clap(
+            long,
+            value_hint = ValueHint::FilePath,
+            value_parser,
+            default_value = CACHE_FILE_PATH_STR.as_str()
+        )]
+        cache: PathBuf,
+
+        #[clap(flatten)]
+        network: NetworkSettings,
+
+        /// Mount ID to unmount (interactive selection if omitted)
+        id: Option<u32>,
+
+        /// Unmount all active mounts
+        #[clap(long)]
+        all: bool,
+
+        /// Also remove all registered macOS FileProvider domains.
+        /// Hidden flag used by test infrastructure for cleanup.
+        #[clap(long, hide = true)]
+        include_all_macos_file_provider_domains: bool,
+    },
+
     /// Specialized treatment of running a remote shell process
     Shell {
         /// Location to store cached data
@@ -736,13 +858,20 @@ pub enum ClientSubcommand {
         cmd: Option<Vec<String>>,
     },
 
-    /// Show the current status of the manager and active connections.
+    /// Show the current status of the manager and managed resources.
     ///
-    /// With no arguments, shows an overview of the manager and all connections.
-    /// With a connection ID, shows detailed info about that specific connection.
+    /// With no arguments, shows an overview of all connections, mounts, and tunnels.
+    /// With `--show`, filters to specific resource types (comma-separated).
+    /// With `--id`, shows detailed info about a specific resource.
     Status {
-        /// Connection ID to inspect (shows overview if omitted)
-        id: Option<ConnectionId>,
+        /// Resource ID to inspect (shows overview if omitted).
+        /// Works for connection, tunnel, or mount IDs.
+        id: Option<u32>,
+
+        /// Which resource types to show (comma-separated).
+        /// Values: connection, tunnel, mount. Default: all.
+        #[clap(long, value_delimiter = ',')]
+        show: Vec<String>,
 
         #[clap(short, long, default_value_t, value_enum)]
         format: Format,
@@ -811,6 +940,20 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.cache_path(),
             Self::Tunnel(sub) => sub.cache_path(),
             Self::Launch { cache, .. } => cache.as_path(),
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Mount { cache, .. } => cache.as_path(),
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Unmount { cache, .. } => cache.as_path(),
             Self::Api { cache, .. } => cache.as_path(),
             Self::Shell { cache, .. } => cache.as_path(),
             Self::Spawn { cache, .. } => cache.as_path(),
@@ -831,6 +974,20 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.network_settings(),
             Self::Tunnel(sub) => sub.network_settings(),
             Self::Launch { network, .. } => network,
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Mount { network, .. } => network,
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Unmount { network, .. } => network,
             Self::Api { network, .. } => network,
             Self::Shell { network, .. } => network,
             Self::Spawn { network, .. } => network,
@@ -854,6 +1011,20 @@ impl ClientSubcommand {
             Self::FileSystem(fs) => fs.format(),
             Self::Tunnel(sub) => sub.format(),
             Self::Launch { format, .. } => *format,
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Mount { .. } => Format::Shell,
+            #[cfg(any(
+                feature = "mount-fuse",
+                feature = "mount-nfs",
+                feature = "mount-windows-cloud-files",
+                feature = "mount-macos-file-provider",
+            ))]
+            Self::Unmount { .. } => Format::Shell,
             Self::Shell { .. } => Format::Shell,
             Self::Spawn { .. } => Format::Shell,
             #[cfg(feature = "ssh")]
@@ -1483,6 +1654,10 @@ pub enum ManagerSubcommand {
         /// If specified, will listen on a user-local unix socket or local windows named pipe
         #[clap(long)]
         user: bool,
+
+        /// Rules for how the manager will shut down automatically
+        #[clap(long, default_value_t = Value::Default(Shutdown::Never))]
+        shutdown: Value<Shutdown>,
 
         /// Register an external plugin (NAME=PATH). Scheme defaults to NAME.
         /// Can be specified multiple times.
@@ -4049,6 +4224,7 @@ mod tests {
             },
             command: DistantSubcommand::Client(ClientSubcommand::Status {
                 id: None,
+                show: vec![],
                 format: Format::Shell,
                 cache: PathBuf::new(),
                 network: NetworkSettings {
@@ -4084,6 +4260,7 @@ mod tests {
                 },
                 command: DistantSubcommand::Client(ClientSubcommand::Status {
                     id: None,
+                    show: vec![],
                     format: Format::Shell,
                     cache: PathBuf::new(),
                     network: NetworkSettings {
@@ -4106,6 +4283,7 @@ mod tests {
             },
             command: DistantSubcommand::Client(ClientSubcommand::Status {
                 id: Some(0),
+                show: vec![],
                 format: Format::Json,
                 cache: PathBuf::new(),
                 network: NetworkSettings {
@@ -4141,6 +4319,7 @@ mod tests {
                 },
                 command: DistantSubcommand::Client(ClientSubcommand::Status {
                     id: Some(0),
+                    show: vec![],
                     format: Format::Json,
                     cache: PathBuf::new(),
                     network: NetworkSettings {
@@ -4393,6 +4572,7 @@ mod tests {
                 access: None,
                 daemon: false,
                 user: false,
+                shutdown: Value::Default(Shutdown::Never),
                 plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: None,
@@ -4429,6 +4609,7 @@ mod tests {
                     access: Some(AccessControl::Group),
                     daemon: false,
                     user: false,
+                    shutdown: Value::Default(Shutdown::Never),
                     plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("config-unix-socket")),
@@ -4452,6 +4633,7 @@ mod tests {
                 access: Some(AccessControl::Owner),
                 daemon: false,
                 user: false,
+                shutdown: Value::Default(Shutdown::Never),
                 plugin: Vec::new(),
                 network: NetworkSettings {
                     unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -4488,6 +4670,7 @@ mod tests {
                     access: Some(AccessControl::Owner),
                     daemon: false,
                     user: false,
+                    shutdown: Value::Default(Shutdown::Never),
                     plugin: Vec::new(),
                     network: NetworkSettings {
                         unix_socket: Some(PathBuf::from("cli-unix-socket")),
@@ -4870,6 +5053,7 @@ mod tests {
     fn format_status_returns_specified_format() {
         let cmd = ClientSubcommand::Status {
             id: None,
+            show: vec![],
             format: Format::Json,
             network: NetworkSettings::default(),
             cache: PathBuf::new(),
@@ -4961,6 +5145,7 @@ mod tests {
             access: None,
             daemon: false,
             user: false,
+            shutdown: Value::Default(Shutdown::Never),
             plugin: Vec::new(),
             network: NetworkSettings::default(),
         });
@@ -5053,6 +5238,7 @@ mod tests {
             },
             ClientSubcommand::Status {
                 id: None,
+                show: vec![],
                 format: Format::Shell,
                 network: net.clone(),
                 cache: cache.clone(),
@@ -5232,6 +5418,7 @@ mod tests {
 
         let cmd = ClientSubcommand::Status {
             id: None,
+            show: vec![],
             format: Format::Shell,
             network: net.clone(),
             cache: PathBuf::new(),
@@ -5430,6 +5617,7 @@ mod tests {
             access: None,
             daemon: false,
             user: false,
+            shutdown: Value::Default(Shutdown::Never),
             plugin: Vec::new(),
             network: NetworkSettings::default(),
         };

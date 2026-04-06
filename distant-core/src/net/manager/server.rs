@@ -12,7 +12,8 @@ use crate::net::manager::{
     ManagerRequest, ManagerResponse, SemVer,
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
-use crate::plugin::extract_scheme;
+use crate::plugin::{MountHandle, extract_scheme};
+use crate::protocol::MountInfo;
 
 mod authentication;
 pub use authentication::*;
@@ -28,6 +29,14 @@ pub use connection::*;
 
 mod tunnel;
 pub use tunnel::*;
+
+/// A mount whose lifecycle is managed by the manager process.
+#[allow(dead_code)]
+struct ManagedMount {
+    info: MountInfo,
+    handle: Box<dyn MountHandle>,
+    manager_channel: ManagerChannel,
+}
 
 /// Represents a manager of multiple server connections.
 pub struct ManagerServer {
@@ -47,6 +56,9 @@ pub struct ManagerServer {
 
     /// Tunnels whose lifecycle is managed by this server process
     managed_tunnels: RwLock<HashMap<ManagedTunnelId, ManagedTunnel>>,
+
+    /// Mounts whose lifecycle is managed by this server process
+    mounts: RwLock<HashMap<u32, ManagedMount>>,
 }
 
 impl ManagerServer {
@@ -60,6 +72,7 @@ impl ManagerServer {
             connections: RwLock::new(HashMap::new()),
             registry: Arc::new(RwLock::new(HashMap::new())),
             managed_tunnels: RwLock::new(HashMap::new()),
+            mounts: RwLock::new(HashMap::new()),
         })
     }
 
@@ -372,14 +385,27 @@ impl ServerHandler for ManagerServer {
                     Err(x) => ManagerResponse::from(x),
                 }
             }
-            ManagerRequest::List => {
-                debug!("Attempting to retrieve the list of connections");
-                match self.list().await {
-                    Ok(list) => {
-                        info!("Retrieved list of connections");
-                        ManagerResponse::List(list)
+            ManagerRequest::List { ref resources } => {
+                if resources.contains(&crate::protocol::ResourceKind::Mount) {
+                    debug!("Attempting to retrieve the list of mounts");
+                    let mounts: Vec<MountInfo> = self
+                        .mounts
+                        .read()
+                        .await
+                        .values()
+                        .map(|m| m.info.clone())
+                        .collect();
+                    info!("Retrieved {} mount(s)", mounts.len());
+                    ManagerResponse::Mounts { mounts }
+                } else {
+                    debug!("Attempting to retrieve the list of connections");
+                    match self.list().await {
+                        Ok(list) => {
+                            info!("Retrieved list of connections");
+                            ManagerResponse::List(list)
+                        }
+                        Err(x) => ManagerResponse::from(x),
                     }
-                    Err(x) => ManagerResponse::from(x),
                 }
             }
             ManagerRequest::Kill { id } => {
@@ -502,6 +528,133 @@ impl ServerHandler for ManagerServer {
                     .collect();
                 ManagerResponse::ManagedTunnels { tunnels }
             }
+            ManagerRequest::Mount {
+                connection_id,
+                backend,
+                mut config,
+            } => {
+                debug!("Mounting via plugin '{backend}' on connection {connection_id}");
+
+                let plugin = match self.config.mount_plugins.get(&backend) {
+                    Some(p) => Arc::clone(p),
+                    None => {
+                        return reply_err(
+                            reply,
+                            connection_id,
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                format!("No mount plugin registered for backend '{backend}'"),
+                            ),
+                        );
+                    }
+                };
+
+                // Open an internal channel and read the connection destination
+                // while holding the read lock.
+                let (internal, destination) =
+                    match self.connections.read().await.get(&connection_id) {
+                        Some(conn) => match InternalRawChannel::open(conn) {
+                            Ok(ic) => (ic, conn.destination.clone()),
+                            Err(e) => return reply_err(reply, connection_id, e),
+                        },
+                        None => {
+                            return reply_err(
+                                reply,
+                                connection_id,
+                                io::Error::new(
+                                    io::ErrorKind::NotConnected,
+                                    "Connection does not exist",
+                                ),
+                            );
+                        }
+                    };
+                // Lock dropped — async mount proceeds without blocking connections.
+
+                // Inject connection/runtime metadata into the config's extra
+                // map for plugins that need it (e.g. FileProvider persists
+                // this to a domain metadata file for the appex bootstrap).
+                config
+                    .extra
+                    .insert("connection_id".into(), connection_id.to_string());
+                config.extra.insert("destination".into(), destination);
+                config
+                    .extra
+                    .insert("log_level".into(), log::max_level().to_string());
+
+                let remote_root = config
+                    .remote_root
+                    .as_ref()
+                    .map(|r| r.to_string())
+                    .unwrap_or_default();
+                let readonly = config.readonly;
+
+                let (channel, manager_channel) = internal.into_parts();
+
+                match plugin.mount(channel, config).await {
+                    Ok(handle) => {
+                        let mount_id: u32 = rand::random();
+                        let mount_point = handle.mount_point().to_string();
+                        let info = MountInfo {
+                            id: mount_id,
+                            connection_id,
+                            backend: backend.clone(),
+                            mount_point: mount_point.clone(),
+                            remote_root,
+                            readonly,
+                            status: "active".to_string(),
+                        };
+                        self.mounts.write().await.insert(
+                            mount_id,
+                            ManagedMount {
+                                info,
+                                handle,
+                                manager_channel,
+                            },
+                        );
+                        info!("Mounted '{backend}' at '{mount_point}' (id={mount_id})");
+                        ManagerResponse::Mounted {
+                            id: mount_id,
+                            mount_point,
+                            backend,
+                        }
+                    }
+                    Err(e) => {
+                        error!("Mount via '{backend}' failed: {e}");
+                        ManagerResponse::from(e)
+                    }
+                }
+            }
+            ManagerRequest::Unmount { ids } => {
+                debug!("Unmounting {} mount(s)", ids.len());
+
+                // Remove mounts under the lock, then unmount outside the lock
+                // to avoid holding RwLockWriteGuard across .await.
+                let removed: Vec<(u32, ManagedMount)> = {
+                    let mut mounts = self.mounts.write().await;
+                    ids.iter()
+                        .filter_map(|id| mounts.remove(id).map(|m| (*id, m)))
+                        .collect()
+                };
+
+                let mut unmounted = Vec::new();
+                for (id, mut mount) in removed {
+                    if let Err(e) = mount.handle.unmount().await {
+                        warn!("Unmount of mount {id} failed: {e}");
+                    } else {
+                        info!("Unmounted mount {id}");
+                    }
+                    let _ = mount.manager_channel.close();
+                    unmounted.push(id);
+                }
+
+                for id in &ids {
+                    if !unmounted.contains(id) {
+                        warn!("No mount with id {id}");
+                    }
+                }
+
+                ManagerResponse::Unmounted { ids: unmounted }
+            }
         };
 
         if let Err(x) = reply.send(response) {
@@ -593,6 +746,7 @@ mod tests {
             connection_buffer_size: 100,
             user: false,
             plugins: HashMap::new(),
+            mount_plugins: HashMap::new(),
         }
     }
 
@@ -619,6 +773,7 @@ mod tests {
             connections: RwLock::new(HashMap::new()),
             registry,
             managed_tunnels: RwLock::new(HashMap::new()),
+            mounts: RwLock::new(HashMap::new()),
         };
 
         (server, authenticator)

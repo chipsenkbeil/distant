@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.distant.file-provider</string>
+    <key>CFBundleExecutable</key>
+    <string>distant</string>
+    <key>CFBundleName</key>
+    <string>DistantFileProvider</string>
+    <key>CFBundleDisplayName</key>
+    <string>Distant</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.21.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.21.0</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.fileprovider-nonui</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>DistantFileProvider</string>
+        <key>NSExtensionFileProviderSupportsEnumeration</key>
+        <true/>
+        <key>NSExtensionFileProviderDocumentGroup</key>
+        <string>39C6AGD73Z.group.dev.distant</string>
+    </dict>
+</dict>
+</plist>

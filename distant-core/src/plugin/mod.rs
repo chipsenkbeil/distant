@@ -6,7 +6,10 @@ use crate::auth::Authenticator;
 use crate::net::client::UntypedClient;
 use crate::net::common::{Destination, Map};
 
+mod mount;
 mod process;
+
+pub use mount::{MountHandle, MountPlugin};
 pub use process::ProcessPlugin;
 
 /// Object-safe plugin interface used by the manager.

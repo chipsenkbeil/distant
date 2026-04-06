@@ -26,6 +26,22 @@ Each item is tagged with a category:
 These are internal shortcuts and known rough edges that should eventually be
 addressed.
 
+### TD-0: Singleton test server — sshd/Docker cleanup after nextest
+
+**(Enhancement)** The singleton test infrastructure (`distant-test-harness/src/singleton.rs`)
+shares manager+server across all tests via file-lock coordination. Servers
+auto-exit via `--shutdown lonely=10`. However, sshd and Docker containers
+stay alive after nextest finishes (cleaned up on next run startup).
+
+Options to explore:
+1. Lock-file-watching reaper process that kills sshd when no shared locks remain
+2. Nextest teardown scripts (not yet implemented in nextest — tracking issue #978)
+3. `#[dtor]` from `ctor` crate works for `cargo test` (single process) but
+   not for nextest (process-per-test, serial mount tests mean dtor fires after
+   every test)
+
+For now this is acceptable — sshd is ~2MB RSS, Docker container is idle.
+
 ### TD-1: Windows service integration incomplete
 
 **(Limitation)** `win_service.rs` has `#![allow(dead_code)]` — Windows service
@@ -314,22 +330,39 @@ methods as features (static-key always available, password as opt-in).
 
 ---
 
-### Issue #145: Support user-level file system mounting
+### Issue #145: Mount feature — remaining work
 
-- **Type:** Enhancement (Long-term)
+- **Type:** Enhancement
 - **URL:** https://github.com/chipsenkbeil/distant/issues/145
 
-**Problem:** Want SSHFS-like mounting of remote filesystems.
+**Status:** Mount lifecycle is owned by the manager (A7 Phases 1-4 complete).
+Four backends: NFS, FUSE (`fuser`), macOS FileProvider, Windows Cloud Files.
+CLI commands `distant mount` (sends to manager, exits), `distant unmount`
+(by ID or interactive), `distant status --show mount`. All mount tests
+passing for NFS and FUSE host backends.
 
-**Codebase context:** No FUSE/filesystem mounting code exists in the
-codebase. This is a large standalone feature.
+**Completed:**
+- FUSE+SSH EIO bug fixed (SFTP error mapping + flush lock + path normalize)
+- Readonly enforcement on all backends (RemoteFs + FP fileSystemFlags)
+- FileProvider in cross-backend template (singleton via installed app)
+- `--read-ttl` exposed, cache TTLs configurable
+- Manager-owned mount lifecycle (MountPlugin trait, async unmount)
 
-**Work needed:**
-1. Linux: Use `fuser` crate (modern Rust FUSE library)
-2. macOS: Investigate Finder Sync Extension or macFUSE
-3. Windows: Use Cloud Files API (Windows 10+)
-4. Large feature — each platform has different requirements
-5. All three platforms need the distant client API as the data source
+**Remaining work:**
+1. **(Limitation)** `setattr` not implemented — requires distant protocol
+   changes to support `chmod`/`chown`/`utime` on remote files.
+2. **(Limitation)** Symlinks and hard links not implemented — needs protocol
+   support for `symlink`, `readlink`, `link`.
+3. **(Limitation)** File locking (POSIX `flock`/`fcntl`) not implemented.
+4. **(Limitation)** Extended attributes (`xattr`) not implemented.
+5. **(Limitation)** Large file streaming — files are fully buffered in
+   memory. Need chunked read/write for files > RAM.
+6. **(Enhancement)** Health monitoring: periodic checks per mount, connection
+   drop → "disconnected" → reconnect → resume (A7 Phase 5).
+7. **(Enhancement)** Process count audit: verify ~5 distant processes during
+   full test run (A7 Phase 6).
+8. **(Enhancement)** Windows Cloud Files automated testing via SSH to
+   windows-vm (currently manual only).
 
 ---
 

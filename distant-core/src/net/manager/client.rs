@@ -285,7 +285,11 @@ impl ManagerClient {
     /// Retrieves a list of active connections
     pub async fn list(&mut self) -> io::Result<ConnectionList> {
         trace!("list()");
-        let res = self.send(ManagerRequest::List).await?;
+        let res = self
+            .send(ManagerRequest::List {
+                resources: Vec::new(),
+            })
+            .await?;
         match res.payload {
             ManagerResponse::List(list) => Ok(list),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),
@@ -392,6 +396,86 @@ impl ManagerClient {
         let res = self.send(ManagerRequest::ListManagedTunnels).await?;
         match res.payload {
             ManagerResponse::ManagedTunnels { tunnels } => Ok(tunnels),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Mounts a remote filesystem via the manager.
+    ///
+    /// The manager dispatches to the appropriate mount plugin based on the
+    /// `backend` name. Returns the mount ID, mount point path, and backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no plugin is registered for the backend, the
+    /// connection doesn't exist, or the mount fails.
+    pub async fn mount(
+        &mut self,
+        connection_id: ConnectionId,
+        backend: impl Into<String>,
+        config: crate::protocol::MountConfig,
+    ) -> io::Result<(u32, String, String)> {
+        let backend = backend.into();
+        trace!("mount({connection_id}, {backend})");
+        let res = self
+            .send(ManagerRequest::Mount {
+                connection_id,
+                backend,
+                config,
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::Mounted {
+                id,
+                mount_point,
+                backend,
+            } => Ok((id, mount_point, backend)),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Unmounts one or more mounted filesystems by ID.
+    ///
+    /// Returns the list of IDs that were successfully unmounted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if communication with the manager fails.
+    pub async fn unmount(&mut self, ids: Vec<u32>) -> io::Result<Vec<u32>> {
+        trace!("unmount({ids:?})");
+        let res = self.send(ManagerRequest::Unmount { ids }).await?;
+        match res.payload {
+            ManagerResponse::Unmounted { ids } => Ok(ids),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Retrieves the list of active mounts managed by the manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if communication with the manager fails.
+    pub async fn list_mounts(&mut self) -> io::Result<Vec<crate::protocol::MountInfo>> {
+        trace!("list_mounts()");
+        let res = self
+            .send(ManagerRequest::List {
+                resources: vec![crate::protocol::ResourceKind::Mount],
+            })
+            .await?;
+        match res.payload {
+            ManagerResponse::Mounts { mounts } => Ok(mounts),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,

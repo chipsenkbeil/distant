@@ -206,7 +206,7 @@ async fn upload_file(
     let sp = ui.spinner(&format!("Uploading {name} ({})...", format_bytes(size)));
 
     channel
-        .write_file(RemotePath::new(remote.as_str()), data)
+        .write_file(RemotePath::new(remote.as_str()), data, Default::default())
         .await
         .with_context(|| format!("Failed to write remote file {}", remote.as_str()))?;
 
@@ -236,7 +236,7 @@ async fn download_file(
     ));
 
     let data = channel
-        .read_file(RemotePath::new(remote.as_str()))
+        .read_file(RemotePath::new(remote.as_str()), Default::default())
         .await
         .with_context(|| format!("Failed to read remote file {}", remote.as_str()))?;
 
@@ -355,7 +355,11 @@ async fn upload_dir(
         total_size += data.len() as u64;
 
         channel
-            .write_file(RemotePath::new(remote_file.as_str()), data)
+            .write_file(
+                RemotePath::new(remote_file.as_str()),
+                data,
+                Default::default(),
+            )
             .await
             .with_context(|| format!("Failed to write remote file {}", remote_file.as_str()))?;
 
@@ -456,7 +460,7 @@ async fn download_dir(
         // Build full remote path from base + relative entry path
         let remote_file = remote.join(file_entry.path.as_str());
         let data = channel
-            .read_file(RemotePath::new(remote_file.as_str()))
+            .read_file(RemotePath::new(remote_file.as_str()), Default::default())
             .await
             .with_context(|| format!("Failed to read remote file {}", file_entry.path))?;
         total_size += data.len() as u64;

@@ -1,5 +1,5 @@
 use crate::auth::msg::Authentication;
-use crate::protocol::TunnelDirection;
+use crate::protocol::{MountInfo, TunnelDirection};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -7,6 +7,18 @@ use super::{
     SemVer,
 };
 use crate::net::common::{ConnectionId, Destination, UntypedResponse};
+
+/// Detailed information about any managed resource, returned by `Info { id }`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum ResourceInfo {
+    /// Connection details.
+    Connection(ConnectionInfo),
+    /// Tunnel details.
+    Tunnel(ManagedTunnelInfo),
+    /// Mount details.
+    Mount(MountInfo),
+}
 
 /// Information about a tunnel managed by the manager process.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +96,25 @@ pub enum ManagerResponse {
 
     /// List of managed tunnels
     ManagedTunnels { tunnels: Vec<ManagedTunnelInfo> },
+
+    /// Confirmation that a mount was created.
+    Mounted {
+        /// Unique mount identifier.
+        id: u32,
+        /// Local mount point path.
+        mount_point: String,
+        /// Backend name.
+        backend: String,
+    },
+
+    /// Acknowledgement that mounts were removed.
+    Unmounted {
+        /// IDs that were successfully unmounted.
+        ids: Vec<u32>,
+    },
+
+    /// List of active mounts.
+    Mounts { mounts: Vec<MountInfo> },
 }
 
 impl<T: std::error::Error> From<T> for ManagerResponse {

@@ -1,6 +1,7 @@
-//! Integration tests for the `file_append_text` JSON API endpoint.
+//! Integration tests for appending text content via the `file_write` JSON API endpoint
+//! with `append: true` in the options.
 //!
-//! Tests appending text content to an existing file and error handling
+//! Tests appending byte data (converted from text) to an existing file and error handling
 //! when the target file's parent directory is missing.
 
 use assert_fs::prelude::*;
@@ -34,9 +35,12 @@ async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_append_text",
+            "type": "file_write",
             "path": file.to_path_buf(),
-            "text": APPENDED_FILE_CONTENTS.to_string(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+            "options": {
+                "append": true
+            },
         },
     });
 
@@ -70,9 +74,12 @@ async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiPro
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_append_text",
+            "type": "file_write",
             "path": file.to_path_buf(),
-            "text": APPENDED_FILE_CONTENTS.to_string(),
+            "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+            "options": {
+                "append": true
+            },
         },
     });
 

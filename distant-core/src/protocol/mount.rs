@@ -1,0 +1,125 @@
+//! Mount-related protocol types shared across distant crates.
+//!
+//! Provides configuration, resource identification, and status types used by
+//! the mount subsystem and the manager's resource tracking.
+
+use std::fmt;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::net::common::Map;
+use crate::protocol::RemotePath;
+
+/// Identifies a type of managed resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceKind {
+    /// A distant connection to a remote server.
+    Connection,
+    /// A TCP tunnel (forward or reverse).
+    Tunnel,
+    /// A mounted remote filesystem.
+    Mount,
+}
+
+impl fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connection => write!(f, "connection"),
+            Self::Tunnel => write!(f, "tunnel"),
+            Self::Mount => write!(f, "mount"),
+        }
+    }
+}
+
+/// Configuration for mounting a filesystem.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MountConfig {
+    /// Local mount point path.
+    ///
+    /// Required for FUSE, NFS, and Windows Cloud Files backends. Not used by
+    /// the macOS FileProvider backend (macOS manages the CloudStorage folder).
+    pub mount_point: Option<PathBuf>,
+
+    /// Remote directory to expose (defaults to the server's current working
+    /// directory when `None`).
+    pub remote_root: Option<RemotePath>,
+
+    /// Mount as read-only.
+    pub readonly: bool,
+
+    /// Cache configuration.
+    pub cache: CacheConfig,
+
+    /// Backend-specific key-value data.
+    ///
+    /// For FileProvider: expects `connection_id` and `destination` keys.
+    /// For other backends: currently unused.
+    pub extra: Map,
+}
+
+/// Cache tuning parameters for a mounted filesystem.
+///
+/// Controls time-to-live durations and maximum capacities for the attribute,
+/// directory listing, and read caches. Shorter TTLs give more up-to-date
+/// views of remote state at the cost of additional round trips.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Attribute cache TTL.
+    pub attr_ttl: Duration,
+
+    /// Directory listing cache TTL.
+    pub dir_ttl: Duration,
+
+    /// Read cache TTL.
+    pub read_ttl: Duration,
+
+    /// Maximum number of cached attributes.
+    pub attr_capacity: usize,
+
+    /// Maximum number of cached directory listings.
+    pub dir_capacity: usize,
+
+    /// Maximum number of cached file contents.
+    pub read_capacity: usize,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            attr_ttl: Duration::from_secs(1),
+            dir_ttl: Duration::from_secs(1),
+            read_ttl: Duration::from_secs(30),
+            attr_capacity: 10_000,
+            dir_capacity: 1_000,
+            read_capacity: 100,
+        }
+    }
+}
+
+/// Describes an active mount managed by the distant manager.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MountInfo {
+    /// Unique mount identifier.
+    pub id: u32,
+
+    /// Connection this mount uses.
+    pub connection_id: u32,
+
+    /// Backend name (e.g., "nfs", "fuse", "macos-file-provider", "windows-cloud-files").
+    pub backend: String,
+
+    /// Local mount point path.
+    pub mount_point: String,
+
+    /// Remote root directory that is mounted.
+    pub remote_root: String,
+
+    /// Whether the mount is read-only.
+    pub readonly: bool,
+
+    /// Current status: "active", "disconnected", or "failed".
+    pub status: String,
+}
