@@ -62,18 +62,16 @@ define_class!(
             observer: &ProtocolObject<dyn NSFileProviderChangeObserver>,
             _sync_anchor: &NSFileProviderSyncAnchor,
         ) {
-            let container_str = self.ivars().container_id.to_string();
-            debug!(
-                "file_provider: enumerateChanges for container {:?}",
-                container_str,
+            // Report the sync anchor as expired so macOS falls back to a
+            // full enumerateItems. Without a remote file watcher we cannot
+            // track incremental changes. Combined with signalEnumerator on
+            // bootstrap, this ensures fresh data on every access.
+            let ns_error = macos_file_provider::make_fp_error(
+                NSFileProviderErrorCode::SyncAnchorExpired,
+                "remote filesystem does not support incremental change tracking",
             );
-            let now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let anchor = NSData::with_bytes(&now.to_le_bytes());
             unsafe {
-                observer.finishEnumeratingChangesUpToSyncAnchor_moreComing(&anchor, false);
+                observer.finishEnumeratingWithError(&ns_error);
             }
         }
 

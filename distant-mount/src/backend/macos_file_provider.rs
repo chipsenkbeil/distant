@@ -247,6 +247,7 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
 
     // Warm the cache by pre-enumerating the root directory in the
     // background. This ensures the first Finder open is instant.
+    let signal_domain_id = domain_id.to_owned();
     rt.spawn(|fs| async move {
         match fs.readdir(1).await {
             Ok(entries) => {
@@ -254,6 +255,7 @@ pub(crate) fn bootstrap(domain_id: &str) -> io::Result<()> {
                     "file_provider: cache warm complete — root has {} entries",
                     entries.len()
                 );
+                signal_enumerator_for_domain(&signal_domain_id).await;
             }
             Err(e) => {
                 debug!("file_provider: cache warm failed (non-fatal): {e}");
@@ -1136,6 +1138,53 @@ pub(crate) async fn cloud_storage_path_for_domain(domain_id: &str) -> io::Result
         path.display()
     );
     Ok(path)
+}
+
+/// Signals macOS to re-enumerate the root container for a FileProvider domain.
+///
+/// Called after bootstrap completes so macOS fetches the initial file listing
+/// instead of serving a stale empty cache.
+pub(crate) async fn signal_enumerator_for_domain(domain_id: &str) {
+    let rx = {
+        let identifier = NSString::from_str(domain_id);
+        let display = NSString::from_str("");
+        let domain = unsafe {
+            NSFileProviderDomain::initWithIdentifier_displayName(
+                NSFileProviderDomain::alloc(),
+                &identifier,
+                &display,
+            )
+        };
+
+        let Some(manager) = (unsafe { NSFileProviderManager::managerForDomain(&domain) }) else {
+            debug!("file_provider: no manager for domain {domain_id}, skipping signal");
+            return;
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        let tx = std::sync::Mutex::new(Some(tx));
+
+        let completion = block2::RcBlock::new(move |error: *mut NSError| {
+            if let Some(tx) = tx.lock().unwrap().take() {
+                let _ = tx.send(error.is_null());
+            }
+        });
+
+        unsafe {
+            manager.signalEnumeratorForContainerItemIdentifier_completionHandler(
+                NSFileProviderRootContainerItemIdentifier,
+                &completion,
+            );
+        }
+
+        rx
+    };
+
+    match tokio::time::timeout(OBJC_CALLBACK_TIMEOUT, rx).await {
+        Ok(Ok(true)) => debug!("file_provider: signaled enumerator for {domain_id}"),
+        Ok(Ok(false)) => debug!("file_provider: signal enumerator error for {domain_id}"),
+        _ => debug!("file_provider: signal enumerator timed out for {domain_id}"),
+    }
 }
 
 /// Builds a domain identifier from connection ID and optional remote root.

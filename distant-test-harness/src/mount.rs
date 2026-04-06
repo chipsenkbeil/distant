@@ -200,6 +200,7 @@ impl MountProcess {
             .and_then(|l| l.rsplit_once(" (id: ").map(|(path, _)| path))
             .ok_or("mount output did not contain mount point")?;
         let mount_point = PathBuf::from(mount_point_str);
+        wait_for_fp_mount_ready(&mount_point);
 
         Ok(Self {
             mount_id,
@@ -331,6 +332,30 @@ pub fn wait_for_unmount(mount_point: &Path) {
         }
         std::thread::sleep(UNMOUNT_POLL_INTERVAL);
     }
+}
+
+/// Waits for a FileProvider mount point to become accessible.
+///
+/// After `addDomain`, macOS needs time to launch the appex, bootstrap it,
+/// and run the initial enumeration. The CloudStorage directory exists
+/// immediately but `read_dir` may error until the appex responds.
+/// Polls every 200ms for up to 30s.
+#[cfg(target_os = "macos")]
+fn wait_for_fp_mount_ready(mount_point: &Path) {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(30);
+    let poll = Duration::from_millis(200);
+
+    while start.elapsed() < timeout {
+        if std::fs::read_dir(mount_point).is_ok() {
+            return;
+        }
+        std::thread::sleep(poll);
+    }
+    eprintln!(
+        "warning: FP mount point {} not accessible after {timeout:?}",
+        mount_point.display()
+    );
 }
 
 /// Poll until a condition is met on the remote, or timeout after 10 seconds.
@@ -917,6 +942,7 @@ fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMet
         .and_then(|l| l.rsplit_once(" (id: ").map(|(path, _)| path))
         .expect("[mount-singleton] mount output did not contain mount point");
     let mount_point = PathBuf::from(mount_point_str);
+    wait_for_fp_mount_ready(&mount_point);
 
     // Keep the FP handle alive so the lock is not released. Since this
     // is a singleton mount, leak it — the manager will self-terminate
