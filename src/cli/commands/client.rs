@@ -474,6 +474,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             read_ttl,
             backend,
             mount_point,
+            extras,
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
@@ -503,7 +504,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                     read_ttl: Duration::from_secs_f64(read_ttl),
                     ..Default::default()
                 },
-                extra: Map::new(),
+                extra: {
+                    let mut map = Map::new();
+                    for (key, value) in &extras {
+                        map.insert(key.clone(), value.clone());
+                    }
+                    map
+                },
             };
 
             let (id, mount_point, _backend) = client

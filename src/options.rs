@@ -626,6 +626,10 @@ pub enum ClientSubcommand {
 
         /// Local mount point (optional for FileProvider backend)
         mount_point: Option<PathBuf>,
+
+        /// Extra key=value pairs passed to the mount backend
+        #[clap(long = "extra", value_parser = parse_extra_pair)]
+        extras: Vec<(String, String)>,
     },
 
     /// Unmount a previously mounted remote filesystem
@@ -1636,6 +1640,13 @@ fn parse_plugin_flag(s: &str) -> Result<(String, PathBuf), String> {
             "invalid plugin spec '{s}': expected NAME=PATH (e.g. docker=/usr/local/bin/distant-plugin-docker)"
         )),
     }
+}
+
+fn parse_extra_pair(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("expected KEY=VALUE, got {s:?}"))?;
+    Ok((key.to_owned(), value.to_owned()))
 }
 
 /// Subcommands for `distant manager`.

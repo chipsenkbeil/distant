@@ -63,9 +63,10 @@ define_class!(
             _sync_anchor: &NSFileProviderSyncAnchor,
         ) {
             // Report the sync anchor as expired so macOS falls back to a
-            // full enumerateItems. Without a remote file watcher we cannot
-            // track incremental changes. Combined with signalEnumerator on
-            // bootstrap, this ensures fresh data on every access.
+            // full enumerateItems call with fresh remote data. Without a
+            // remote file watcher, we cannot provide incremental changes.
+            // The manager's periodic signalEnumerator (every poll_interval)
+            // controls how often this fires — it is NOT a tight loop.
             let ns_error = macos_file_provider::make_fp_error(
                 NSFileProviderErrorCode::SyncAnchorExpired,
                 "remote filesystem does not support incremental change tracking",
@@ -87,15 +88,15 @@ define_class!(
                 container_str,
             );
 
-            // Working set and trash containers return empty results immediately.
-            let working_set_id =
-                unsafe { NSFileProviderWorkingSetContainerItemIdentifier }.to_string();
-            let trash_id = unsafe { NSFileProviderTrashContainerItemIdentifier }.to_string();
-            if container_str == working_set_id || container_str == trash_id {
-                debug!(
-                    "file_provider: enumerate_items — returning empty for {:?}",
-                    container_str,
-                );
+            // Working set enumerations fall through to the root path so
+            // signalEnumerator on the working set refreshes the listing.
+            // Trash returns empty immediately.
+            let is_working_set = container_str
+                == unsafe { NSFileProviderWorkingSetContainerItemIdentifier }.to_string();
+            let is_trash =
+                container_str == unsafe { NSFileProviderTrashContainerItemIdentifier }.to_string();
+            if is_trash {
+                debug!("file_provider: enumerate_items — returning empty for trash",);
                 unsafe {
                     observer.finishEnumeratingUpToPage(None);
                 }
@@ -127,8 +128,8 @@ define_class!(
 
             let root_id = unsafe { NSFileProviderRootContainerItemIdentifier };
             let root_id_str = root_id.to_string();
-            let ino = if container_str == root_id_str {
-                1u64
+            let ino: u64 = if container_str == root_id_str || is_working_set {
+                1
             } else {
                 container_str.parse::<u64>().unwrap_or(1)
             };

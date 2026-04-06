@@ -1140,10 +1140,10 @@ pub(crate) async fn cloud_storage_path_for_domain(domain_id: &str) -> io::Result
     Ok(path)
 }
 
-/// Signals macOS to re-enumerate the root container for a FileProvider domain.
+/// Signals macOS to re-enumerate the working set for a FileProvider domain.
 ///
-/// Called after bootstrap completes so macOS fetches the initial file listing
-/// instead of serving a stale empty cache.
+/// Called periodically by the polling loop and after bootstrap completes so
+/// macOS fetches fresh file listings instead of serving a stale cache.
 pub(crate) async fn signal_enumerator_for_domain(domain_id: &str) {
     let rx = {
         let identifier = NSString::from_str(domain_id);
@@ -1172,7 +1172,7 @@ pub(crate) async fn signal_enumerator_for_domain(domain_id: &str) {
 
         unsafe {
             manager.signalEnumeratorForContainerItemIdentifier_completionHandler(
-                NSFileProviderRootContainerItemIdentifier,
+                NSFileProviderWorkingSetContainerItemIdentifier,
                 &completion,
             );
         }

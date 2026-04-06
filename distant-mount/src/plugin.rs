@@ -307,6 +307,11 @@ impl MountPlugin for FileProviderMountPlugin {
     }
 }
 
+/// Default interval for polling the remote filesystem for changes.
+/// Configurable via `poll_interval` key in `MountConfig.extra` (seconds).
+#[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
+const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[cfg(all(feature = "macos-file-provider", target_os = "macos"))]
 async fn mount_file_provider(
     channel: Channel,
@@ -330,6 +335,13 @@ async fn mount_file_provider(
         domain_meta.insert("readonly".into(), "true".into());
     }
 
+    let poll_interval = config
+        .extra
+        .get("poll_interval")
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(std::time::Duration::from_secs_f64)
+        .unwrap_or(DEFAULT_POLL_INTERVAL);
+
     let fs = core::RemoteFs::init(channel, config).await?;
     let rt = Arc::new(core::Runtime::with_fs(Handle::current(), fs));
 
@@ -340,9 +352,19 @@ async fn mount_file_provider(
         .to_string_lossy()
         .into_owned();
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let signal_domain_id = domain_id.clone();
     let join_handle = tokio::spawn(async move {
-        let _ = shutdown_rx.await;
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                _ = tokio::time::sleep(poll_interval) => {
+                    backend::macos_file_provider::signal_enumerator_for_domain(
+                        &signal_domain_id,
+                    ).await;
+                }
+            }
+        }
         Ok(())
     });
 

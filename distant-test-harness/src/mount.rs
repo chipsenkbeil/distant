@@ -171,6 +171,7 @@ impl MountProcess {
         cmd.arg("--log-level").arg("trace");
         cmd.arg("--unix-socket").arg(&fp_handle.socket_or_pipe);
         cmd.arg("--backend").arg("macos-file-provider");
+        cmd.args(["--extra", "poll_interval=0.05"]);
 
         for arg in args {
             cmd.arg(arg);
@@ -356,6 +357,25 @@ fn wait_for_fp_mount_ready(mount_point: &Path) {
         "warning: FP mount point {} not accessible after {timeout:?}",
         mount_point.display()
     );
+}
+
+/// Waits for a path inside an FP mount to become visible locally.
+///
+/// FileProvider refreshes directory listings periodically (controlled by
+/// `poll_interval` in MountConfig.extra). This helper polls the local path
+/// until it exists, giving macOS time to process the enumerator refresh.
+pub fn wait_for_fp_path(path: &Path) {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(10);
+    let poll = Duration::from_millis(100);
+
+    while start.elapsed() < timeout {
+        if path.exists() {
+            return;
+        }
+        std::thread::sleep(poll);
+    }
+    // Don't panic — let the test assertion handle the failure message
 }
 
 /// Poll until a condition is met on the remote, or timeout after 10 seconds.
@@ -915,6 +935,7 @@ fn start_file_provider_mount(_mount_point: &Path, remote_root: &str) -> MountMet
     cmd.arg("--log-level").arg("trace");
     cmd.arg("--unix-socket").arg(&fp_handle.socket_or_pipe);
     cmd.arg("--backend").arg("macos-file-provider");
+    cmd.args(["--extra", "poll_interval=0.05"]);
     cmd.arg("--remote-root").arg(remote_root);
 
     eprintln!("[mount-singleton] creating file-provider mount: {cmd:?}");
