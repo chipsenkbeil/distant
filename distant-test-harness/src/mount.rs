@@ -359,6 +359,19 @@ fn wait_for_fp_mount_ready(mount_point: &Path) {
     );
 }
 
+/// Waits for a path to become visible through the mount.
+///
+/// For FileProvider mounts, macOS refreshes directory listings
+/// asynchronously. This polls until the path exists locally.
+/// For all other backends (NFS, FUSE, WCF), this is a no-op
+/// since they serve fresh data on every access.
+pub fn wait_for_path(mount_backend: MountBackend, path: &Path) {
+    if !matches!(mount_backend, MountBackend::MacosFileProvider) {
+        return;
+    }
+    wait_for_fp_path(path);
+}
+
 /// Waits for a path inside an FP mount to become visible locally.
 ///
 /// FileProvider refreshes directory listings periodically (controlled by

@@ -17,6 +17,8 @@ fn create_file_should_appear_on_remote(#[case] backend: Backend, #[case] mount: 
     let sm = mount::get_or_start_mount(&ctx, mount);
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-create-file");
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name));
+
     std::fs::write(sm.mount_point.join(&subdir_name).join("new.txt"), "created")
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to write new.txt: {e}"));
 
@@ -43,6 +45,8 @@ fn create_file_in_subdir_should_appear_on_remote(
     let sm = mount::get_or_start_mount(&ctx, mount);
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-create-subdir");
     ctx.cli_mkdir(&ctx.child_path(&subdir, "subdir"));
+
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("subdir"));
 
     std::fs::write(
         sm.mount_point

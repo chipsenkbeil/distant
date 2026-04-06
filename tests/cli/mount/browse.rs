@@ -22,6 +22,8 @@ fn mount_should_list_root_directory(#[case] backend: Backend, #[case] mount: Mou
     ctx.cli_mkdir(&ctx.child_path(&subdir, "subdir"));
     ctx.cli_mkdir(&ctx.child_path(&subdir, "empty-dir"));
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name));
+
     let entries: HashSet<String> = std::fs::read_dir(sm.mount_point.join(&subdir_name))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read mount point: {e}"))
         .filter_map(|entry| entry.ok())
@@ -59,6 +61,8 @@ fn drop_should_unmount(#[case] backend: Backend, #[case] mount: MountBackend) {
     {
         let mp = MountProcess::spawn(&ctx, mount, &mount_path, &["--remote-root", &dir]);
 
+        mount::wait_for_path(mount, &mp.mount_point().join("canary.txt"));
+
         let entries: Vec<_> = std::fs::read_dir(mp.mount_point())
             .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read mount point: {e}"))
             .filter_map(|entry| entry.ok())
@@ -93,6 +97,8 @@ fn mount_should_default_to_server_cwd(#[case] backend: Backend, #[case] mount: M
 
     let mount_dir = assert_fs::TempDir::new().unwrap();
     let mp = MountProcess::spawn(&ctx, mount, mount_dir.path(), &[]);
+
+    mount::wait_for_path(mount, mp.mount_point());
 
     let entries: Vec<_> = std::fs::read_dir(mp.mount_point())
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read mount point: {e}"))

@@ -21,6 +21,8 @@ fn overwrite_file_should_sync_to_remote(#[case] backend: Backend, #[case] mount:
         mount::unique_subdir(&ctx, &sm.remote_root, "mount-modify-overwrite");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
+
     std::fs::write(
         sm.mount_point.join(&subdir_name).join("hello.txt"),
         "overwritten",
@@ -47,6 +49,8 @@ fn append_to_file_should_sync_to_remote(#[case] backend: Backend, #[case] mount:
     let sm = mount::get_or_start_mount(&ctx, mount);
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-modify-append");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
+
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
 
     let mut file = std::fs::OpenOptions::new()
         .append(true)

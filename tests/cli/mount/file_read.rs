@@ -18,6 +18,8 @@ fn read_should_return_file_contents(#[case] backend: Backend, #[case] mount: Mou
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-read");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
+
     let content = std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("hello.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read hello.txt: {e}"));
 
@@ -39,6 +41,8 @@ fn read_should_handle_large_file(#[case] backend: Backend, #[case] mount: MountB
 
     let large_content = "A".repeat(100 * 1024);
     ctx.cli_write(&ctx.child_path(&subdir, "large.txt"), &large_content);
+
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("large.txt"));
 
     let content = std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("large.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read large.txt: {e}"));

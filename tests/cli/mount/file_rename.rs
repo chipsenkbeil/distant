@@ -18,6 +18,8 @@ fn rename_file_should_update_remote(#[case] backend: Backend, #[case] mount: Mou
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-rename-file");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
+
     let local_dir = sm.mount_point.join(&subdir_name);
     std::fs::rename(local_dir.join("hello.txt"), local_dir.join("renamed.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to rename hello.txt: {e}"));
@@ -46,6 +48,8 @@ fn rename_across_dirs_should_update_remote(#[case] backend: Backend, #[case] mou
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-rename-xdir");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
     ctx.cli_mkdir(&ctx.child_path(&subdir, "subdir"));
+
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
 
     let local_dir = sm.mount_point.join(&subdir_name);
     std::fs::rename(

@@ -18,6 +18,8 @@ fn delete_file_should_remove_from_remote(#[case] backend: Backend, #[case] mount
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-delete-file");
     ctx.cli_write(&ctx.child_path(&subdir, "hello.txt"), "hello world");
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("hello.txt"));
+
     std::fs::remove_file(sm.mount_point.join(&subdir_name).join("hello.txt"))
         .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to remove hello.txt: {e}"));
 

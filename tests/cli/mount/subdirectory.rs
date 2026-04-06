@@ -26,6 +26,8 @@ fn subdir_should_list_contents(#[case] backend: Backend, #[case] mount: MountBac
     let deep = ctx.child_path(&nested, "deep");
     ctx.cli_mkdir(&deep);
 
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name).join("subdir"));
+
     let entries: HashSet<String> =
         std::fs::read_dir(sm.mount_point.join(&subdir_name).join("subdir"))
             .unwrap_or_else(|e| panic!("[{backend:?}/{mount}] failed to read subdir: {e}"))
@@ -59,6 +61,15 @@ fn deeply_nested_file_should_be_readable(#[case] backend: Backend, #[case] mount
     let deep = ctx.child_path(&nested, "deep");
     ctx.cli_mkdir(&deep);
     ctx.cli_write(&ctx.child_path(&deep, "deeper.txt"), "deep content");
+
+    mount::wait_for_path(
+        mount,
+        &sm.mount_point
+            .join(&subdir_name)
+            .join("subdir")
+            .join("deep")
+            .join("deeper.txt"),
+    );
 
     let content = std::fs::read_to_string(
         sm.mount_point

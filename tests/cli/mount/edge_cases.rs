@@ -83,6 +83,11 @@ fn filenames_with_spaces_should_work(#[case] backend: Backend, #[case] mount: Mo
     let (subdir, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-edge-spaces");
     ctx.cli_write(&ctx.child_path(&subdir, "hello world.txt"), "space content");
 
+    mount::wait_for_path(
+        mount,
+        &sm.mount_point.join(&subdir_name).join("hello world.txt"),
+    );
+
     let content =
         std::fs::read_to_string(sm.mount_point.join(&subdir_name).join("hello world.txt"))
             .unwrap_or_else(|e| {
@@ -103,6 +108,8 @@ fn rapid_write_read_should_not_corrupt(#[case] backend: Backend, #[case] mount: 
 
     let sm = mount::get_or_start_mount(&ctx, mount);
     let (_, subdir_name) = mount::unique_subdir(&ctx, &sm.remote_root, "mount-edge-rapid");
+
+    mount::wait_for_path(mount, &sm.mount_point.join(&subdir_name));
 
     for i in 0..10 {
         let name = format!("rapid-{i}.txt");
