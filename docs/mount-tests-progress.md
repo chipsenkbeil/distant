@@ -193,7 +193,20 @@ content. All 26 failing tests attempt to read/write through the mount and
 get "Operation timed out (os error 60)". Tests that don't read through
 the mount (unmount, status, readonly-write-fail, etc.) pass.
 
-**Next: Investigate appex-to-manager connectivity**
+**Root cause found and fixed (commit 9f0c834):**
+- `register_domain` called `removeDomain` unconditionally before `addDomain`.
+  When no domain existed, this caused `fileproviderd` to unregister the
+  extension, preventing the appex from ever launching.
+- Additionally, the File Providers toggle in System Settings was disabled by
+  macOS during the domain churn era. Must be manually re-enabled.
+- Fix: only call `remove_domain_blocking` when `get_all_domains()` confirms
+  a domain with the same ID exists.
+
+**20/37 FP tests now pass.** 17 remaining failures are "No such file or
+directory" (enumeration timing) — the appex bootstraps and connects but
+files aren't materialized before the test tries to read them.
+
+**Next: Fix FP enumeration timing for remaining 17 tests**
 
 ---
 
