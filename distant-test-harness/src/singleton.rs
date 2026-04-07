@@ -416,7 +416,7 @@ fn start_ssh(socket_path: &Path) -> ServerMeta {
 /// Installs the test app to `/Applications/Distant.app`, then starts a
 /// manager + server using the installed binary. The manager listens on the
 /// App Group container socket so the FileProvider extension can find it.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "mount"))]
 fn start_file_provider(_socket_path: &Path) -> ServerMeta {
     // Install the test app (idempotent — skips rebuild if mtime matches)
     crate::mount::install_test_app().expect("failed to install test app for FileProvider");
@@ -738,7 +738,7 @@ pub fn get_or_start_ssh() -> SingletonHandle {
 /// that listens on the App Group container socket, and connects a local
 /// server. The FileProvider extension connects to this manager via the
 /// standard App Group socket path.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "mount"))]
 pub fn get_or_start_file_provider() -> SingletonHandle {
     get_or_start("file-provider", start_file_provider)
 }
