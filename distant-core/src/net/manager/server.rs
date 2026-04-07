@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::auth::msg::AuthenticationResponse;
 use log::*;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot};
 
 use crate::net::common::{ConnectionId, Map};
 use crate::net::manager::{
@@ -59,6 +59,11 @@ pub struct ManagerServer {
 
     /// Mounts whose lifecycle is managed by this server process
     mounts: RwLock<HashMap<u32, ManagedMount>>,
+
+    /// Channel for sending connection death notifications from monitor tasks.
+    /// Each [`ManagerConnection`] spawned by this server receives a clone to report
+    /// when its underlying transport disconnects.
+    death_tx: mpsc::UnboundedSender<ConnectionId>,
 }
 
 impl ManagerServer {
@@ -66,6 +71,16 @@ impl ManagerServer {
     /// methods. The provided `config` will be used to configure the launch and connect handlers
     /// for the server as well as provide other defaults.
     pub fn new(config: Config) -> Server<Self> {
+        let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+
+        // Spawn a task that logs connection deaths.
+        // Reconnection orchestration will be added in a future phase.
+        tokio::spawn(async move {
+            while let Some(id) = death_rx.recv().await {
+                warn!("[Conn {id}] Connection death detected by manager");
+            }
+        });
+
         Server::new().handler(Self {
             config,
             channels: RwLock::new(HashMap::new()),
@@ -73,6 +88,7 @@ impl ManagerServer {
             registry: Arc::new(RwLock::new(HashMap::new())),
             managed_tunnels: RwLock::new(HashMap::new()),
             mounts: RwLock::new(HashMap::new()),
+            death_tx,
         })
     }
 
@@ -146,8 +162,13 @@ impl ManagerServer {
             .connect(raw_destination, &options, &mut authenticator)
             .await?;
 
-        let connection =
-            ManagerConnection::spawn(raw_destination.to_string(), options, client).await?;
+        let connection = ManagerConnection::spawn(
+            raw_destination.to_string(),
+            options,
+            client,
+            Some(self.death_tx.clone()),
+        )
+        .await?;
         let id = connection.id;
         self.connections.write().await.insert(id, connection);
         Ok(id)
@@ -767,6 +788,8 @@ mod tests {
             registry: Arc::clone(&registry),
         };
 
+        let (death_tx, _death_rx) = mpsc::unbounded_channel();
+
         let server = ManagerServer {
             config,
             channels: RwLock::new(HashMap::new()),
@@ -774,6 +797,7 @@ mod tests {
             registry,
             managed_tunnels: RwLock::new(HashMap::new()),
             mounts: RwLock::new(HashMap::new()),
+            death_tx,
         };
 
         (server, authenticator)
@@ -908,6 +932,7 @@ mod tests {
             "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
+            None,
         )
         .await
         .unwrap();
@@ -941,6 +966,7 @@ mod tests {
             "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
+            None,
         )
         .await
         .unwrap();
@@ -951,6 +977,7 @@ mod tests {
             "other://host2",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
+            None,
         )
         .await
         .unwrap();
@@ -978,6 +1005,7 @@ mod tests {
             "scheme://host",
             "key=value".parse().unwrap(),
             detached_untyped_client(),
+            None,
         )
         .await
         .unwrap();

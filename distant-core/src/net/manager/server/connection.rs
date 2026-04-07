@@ -5,12 +5,12 @@ use log::*;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::net::client::{Mailbox, UntypedClient};
+use crate::net::client::{ConnectionWatcher, Mailbox, UntypedClient};
 use crate::net::common::{ConnectionId, Map, UntypedRequest, UntypedResponse};
 use crate::net::manager::data::{ManagerChannelId, ManagerResponse};
 use crate::net::server::ServerReply;
 
-/// Represents a connection a distant manager has with some distant-compatible server
+/// Represents a connection a distant manager has with some distant-compatible server.
 pub struct ManagerConnection {
     pub id: ConnectionId,
     /// Raw destination string as provided by the user (e.g. `"docker://ubuntu:22.04"`).
@@ -21,6 +21,10 @@ pub struct ManagerConnection {
     action_task: JoinHandle<()>,
     request_task: JoinHandle<()>,
     response_task: JoinHandle<()>,
+
+    /// Optional task that monitors the underlying connection health and sends
+    /// a death notification when the connection transitions to `Disconnected`.
+    monitor_task: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -60,10 +64,15 @@ impl ManagerChannel {
 }
 
 impl ManagerConnection {
+    /// Spawns a new manager connection wrapping the given [`UntypedClient`].
+    ///
+    /// If `death_tx` is provided, a background monitor task will watch the client's connection
+    /// health and send the connection ID through the channel when the connection dies.
     pub async fn spawn(
         destination: impl Into<String>,
         options: Map,
         mut client: UntypedClient,
+        death_tx: Option<mpsc::UnboundedSender<ConnectionId>>,
     ) -> io::Result<Self> {
         let destination = destination.into();
         let connection_id = rand::random();
@@ -75,6 +84,9 @@ impl ManagerConnection {
         // never triggering!
         client.shutdown_on_drop(true);
 
+        // Clone the connection watcher before moving the client into tasks
+        let watcher = client.clone_connection_watcher();
+
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let action_task = tokio::spawn(action_task(connection_id, rx, request_tx));
         let response_task = tokio::spawn(response_task(
@@ -84,6 +96,10 @@ impl ManagerConnection {
         ));
         let request_task = tokio::spawn(request_task(connection_id, client, request_rx));
 
+        // Spawn a monitor task if a death notification channel was provided
+        let monitor_task =
+            death_tx.map(|dtx| tokio::spawn(connection_monitor(connection_id, watcher, dtx)));
+
         Ok(Self {
             id: connection_id,
             destination,
@@ -92,6 +108,7 @@ impl ManagerConnection {
             action_task,
             request_task,
             response_task,
+            monitor_task,
         })
     }
 
@@ -139,6 +156,9 @@ impl ManagerConnection {
         self.action_task.abort();
         self.request_task.abort();
         self.response_task.abort();
+        if let Some(ref task) = self.monitor_task {
+            task.abort();
+        }
     }
 }
 
@@ -182,6 +202,27 @@ impl fmt::Debug for Action {
             Self::Write { id, .. } => write!(f, "Action::Write {{ id: {id}, .. }}"),
         }
     }
+}
+
+/// Watches a connection's health state and sends a death notification when the
+/// connection transitions to [`ConnectionState::Disconnected`].
+///
+/// If the watcher channel closes (sender dropped), the connection is also considered dead.
+async fn connection_monitor(
+    id: ConnectionId,
+    mut watcher: ConnectionWatcher,
+    death_tx: mpsc::UnboundedSender<ConnectionId>,
+) {
+    while let Some(state) = watcher.next().await {
+        if state.is_disconnected() {
+            info!("[Conn {id}] Connection died, notifying manager");
+            let _ = death_tx.send(id);
+            return;
+        }
+    }
+    // Watcher channel closed (sender dropped) — connection is dead
+    debug!("[Conn {id}] Connection watcher closed");
+    let _ = death_tx.send(id);
 }
 
 /// Internal task to process outgoing [`UntypedRequest`]s.
@@ -287,8 +328,7 @@ async fn action_task(
 
 #[cfg(test)]
 mod tests {
-    //! Tests for ManagerChannel (send, close, clone), ManagerConnection (spawn, open_channel,
-    //! channel_ids, close/unregister, abort), and Action Debug formatting.
+    use std::time::Duration;
 
     use super::*;
     use crate::net::client::UntypedClient;
@@ -371,7 +411,7 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = "key=value".parse().unwrap();
 
-        let conn = ManagerConnection::spawn(dest.clone(), opts.clone(), client)
+        let conn = ManagerConnection::spawn(dest.clone(), opts.clone(), client, None)
             .await
             .unwrap();
 
@@ -388,7 +428,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
 
         let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
         let reply = ServerReply {
@@ -407,7 +449,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
 
         let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
         let reply = ServerReply {
@@ -431,7 +475,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
 
         let ids = conn.channel_ids().await.unwrap();
         assert!(ids.is_empty());
@@ -443,7 +489,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
 
         let mut channel_ids = Vec::new();
         for _ in 0..3 {
@@ -472,7 +520,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
 
         let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
         let reply = ServerReply {
@@ -503,7 +553,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
         conn.abort();
 
         // After abort, channel_ids should fail because the action task is aborted
@@ -518,7 +570,9 @@ mod tests {
         let dest = "scheme://host".to_string();
         let opts: Map = Map::new();
 
-        let conn = ManagerConnection::spawn(dest, opts, client).await.unwrap();
+        let conn = ManagerConnection::spawn(dest, opts, client, None)
+            .await
+            .unwrap();
         conn.abort();
 
         // Give time for abort to take effect
@@ -540,6 +594,124 @@ mod tests {
             let ids_result = conn.channel_ids().await;
             assert!(ids_result.is_err());
         }
+    }
+
+    // ---- Connection Monitor ----
+
+    #[test_log::test(tokio::test)]
+    async fn connection_monitor_should_send_death_on_disconnect() {
+        let (client, server_conn) = make_untyped_client();
+        let watcher = client.clone_connection_watcher();
+        let connection_id: ConnectionId = 12345;
+
+        let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+
+        // Spawn the monitor in the background
+        let _monitor = tokio::spawn(connection_monitor(connection_id, watcher, death_tx));
+
+        // Drop the server side of the connection to trigger disconnect.
+        // The client's event loop will detect the broken transport, attempt
+        // reconnection (which fails immediately with the default Fail strategy),
+        // and transition to Disconnected.
+        drop(server_conn);
+        // Also drop the client so the watcher task can observe the state change
+        // before the client is fully cleaned up. Actually, the client task runs
+        // independently, so the watcher should see Disconnected once the task
+        // completes its reconnect failure path.
+        drop(client);
+
+        // Wait for the death notification with a timeout
+        let received_id = tokio::time::timeout(Duration::from_secs(5), death_rx.recv())
+            .await
+            .expect("timed out waiting for death notification")
+            .expect("death channel closed without sending");
+
+        assert_eq!(received_id, connection_id);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn connection_monitor_should_send_death_when_watcher_closes() {
+        // Create a client with shutdown_on_drop=true so dropping it aborts the
+        // internal task immediately, which drops the watch::Sender without first
+        // sending a Disconnected state. This exercises the fallback path in
+        // connection_monitor where watcher.next() returns None.
+        let (mut client, _server_conn) = make_untyped_client();
+        client.shutdown_on_drop(true);
+        let watcher = client.clone_connection_watcher();
+        let connection_id: ConnectionId = 67890;
+
+        let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+
+        // Spawn the monitor in the background
+        let _monitor = tokio::spawn(connection_monitor(connection_id, watcher, death_tx));
+
+        // Drop the client. Because shutdown_on_drop is true, this aborts the
+        // internal task, dropping the watch sender. The server connection is kept
+        // alive so the client task has no reason to send Disconnected before abort.
+        drop(client);
+
+        let received_id = tokio::time::timeout(Duration::from_secs(5), death_rx.recv())
+            .await
+            .expect("timed out waiting for death notification")
+            .expect("death channel closed without sending");
+
+        assert_eq!(received_id, connection_id);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_with_death_tx_should_notify_on_client_drop() {
+        let (client, server_conn) = make_untyped_client();
+        let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+
+        let conn = ManagerConnection::spawn("scheme://host", Map::new(), client, Some(death_tx))
+            .await
+            .unwrap();
+
+        let connection_id = conn.id;
+
+        // Drop the server side to trigger disconnection in the underlying transport.
+        // The client event loop will fail reconnection and transition to Disconnected,
+        // which the monitor task observes and sends through death_tx.
+        drop(server_conn);
+
+        let received_id = tokio::time::timeout(Duration::from_secs(5), death_rx.recv())
+            .await
+            .expect("timed out waiting for death notification")
+            .expect("death channel closed without sending");
+
+        assert_eq!(received_id, connection_id);
+
+        // Clean up the connection to abort its tasks
+        conn.abort();
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_without_death_tx_should_not_have_monitor_task() {
+        let (client, _server_conn) = make_untyped_client();
+
+        let conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+
+        assert!(
+            conn.monitor_task.is_none(),
+            "monitor_task should be None when no death_tx is provided"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn spawn_with_death_tx_should_have_monitor_task() {
+        let (client, _server_conn) = make_untyped_client();
+        let (death_tx, _death_rx) = mpsc::unbounded_channel();
+
+        let conn = ManagerConnection::spawn("scheme://host", Map::new(), client, Some(death_tx))
+            .await
+            .unwrap();
+
+        assert!(
+            conn.monitor_task.is_some(),
+            "monitor_task should be Some when death_tx is provided"
+        );
     }
 
     // ---- Action Debug ----
