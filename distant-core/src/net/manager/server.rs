@@ -676,6 +676,22 @@ impl ServerHandler for ManagerServer {
 
                 ManagerResponse::Unmounted { ids: unmounted }
             }
+            ManagerRequest::Subscribe { topics: _ } => {
+                // Real subscription dispatch lands in step 0h together
+                // with the event broadcast channel and reconnection
+                // orchestration. Until then, fail loudly so callers
+                // know the wire shape is in place but the producer
+                // side isn't.
+                ManagerResponse::Error {
+                    description: "Subscribe not yet implemented".to_string(),
+                }
+            }
+            ManagerRequest::Unsubscribe => ManagerResponse::Error {
+                description: "Unsubscribe not yet implemented".to_string(),
+            },
+            ManagerRequest::Reconnect { id: _ } => ManagerResponse::Error {
+                description: "Reconnect not yet implemented".to_string(),
+            },
         };
 
         if let Err(x) = reply.send(response) {

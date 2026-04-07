@@ -1,7 +1,7 @@
 use crate::auth::msg::AuthenticationResponse;
 use serde::{Deserialize, Serialize};
 
-use super::{ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId};
+use super::{EventTopic, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId};
 use crate::net::common::{ConnectionId, Map, UntypedRequest};
 use crate::protocol::{MountConfig, ResourceKind};
 
@@ -113,6 +113,27 @@ pub enum ManagerRequest {
     Unmount {
         /// Mount IDs to unmount.
         ids: Vec<u32>,
+    },
+
+    /// Subscribe to event notifications on this channel.
+    ///
+    /// After the manager replies with `Subscribed`, it begins
+    /// pushing `Event(_)` responses for every event whose topic is
+    /// in `topics`. The subscription stays open until either the
+    /// channel closes or an `Unsubscribe` request arrives.
+    Subscribe {
+        /// Topics to subscribe to. Use `[EventTopic::All]` to receive
+        /// every event variant.
+        topics: Vec<EventTopic>,
+    },
+
+    /// Cancel a previous subscription on this channel.
+    Unsubscribe,
+
+    /// Manually trigger reconnection of a managed connection.
+    Reconnect {
+        /// Id of the connection to reconnect.
+        id: ConnectionId,
     },
 }
 
@@ -243,6 +264,65 @@ mod tests {
     #[test]
     fn close_managed_tunnel_should_reject_unknown_fields() {
         let json = r#"{"type":"close_managed_tunnel","id":1,"extra":"bad"}"#;
+        let result = serde_json::from_str::<ManagerRequest>(json);
+        assert!(
+            result.is_err(),
+            "Expected deserialization to fail on unknown field"
+        );
+    }
+
+    #[test]
+    fn subscribe_should_round_trip_with_topics() {
+        let request = ManagerRequest::Subscribe {
+            topics: vec![EventTopic::Connection, EventTopic::Mount],
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"subscribe\""), "got {json}");
+        assert!(json.contains("\"connection\""), "got {json}");
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerRequest::Subscribe { topics } => {
+                assert_eq!(topics, vec![EventTopic::Connection, EventTopic::Mount]);
+            }
+            other => panic!("Expected Subscribe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subscribe_should_accept_empty_topics_list() {
+        let json = r#"{"type":"subscribe","topics":[]}"#;
+        let request: ManagerRequest = serde_json::from_str(json).unwrap();
+        match request {
+            ManagerRequest::Subscribe { topics } => assert!(topics.is_empty()),
+            other => panic!("Expected Subscribe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsubscribe_should_round_trip_via_json() {
+        let request = ManagerRequest::Unsubscribe;
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(json, "{\"type\":\"unsubscribe\"}");
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, ManagerRequest::Unsubscribe));
+    }
+
+    #[test]
+    fn reconnect_should_round_trip_via_json() {
+        let request = ManagerRequest::Reconnect { id: 99 };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"reconnect\""), "got {json}");
+        assert!(json.contains("\"id\":99"), "got {json}");
+        let deserialized: ManagerRequest = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerRequest::Reconnect { id } => assert_eq!(id, 99),
+            other => panic!("Expected Reconnect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconnect_should_reject_unknown_fields() {
+        let json = r#"{"type":"reconnect","id":1,"extra":"field"}"#;
         let result = serde_json::from_str::<ManagerRequest>(json);
         assert!(
             result.is_err(),

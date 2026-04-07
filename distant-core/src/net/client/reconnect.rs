@@ -2,6 +2,7 @@ use std::io;
 use std::time::Duration;
 
 use log::*;
+use serde::{Deserialize, Serialize};
 use strum::Display;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -47,8 +48,9 @@ impl ConnectionWatcher {
 }
 
 /// Represents the state of a connection.
-#[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Display, PartialEq, Eq, Serialize, Deserialize)]
 #[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ConnectionState {
     /// Connection is not active, but currently going through reconnection process.
     Reconnecting,
@@ -254,8 +256,8 @@ impl ReconnectStrategy {
         }
     }
 
-    /// Returns the initial duration to sleep.
-    fn initial_sleep_duration(&self) -> Duration {
+    /// Returns the initial duration to sleep based on the strategy variant.
+    pub fn initial_sleep_duration(&self) -> Duration {
         match self {
             ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { base, .. } => *base,
@@ -264,8 +266,8 @@ impl ReconnectStrategy {
         }
     }
 
-    /// Adjusts next sleep duration based on the strategy.
-    fn adjust_sleep(&self, prev: Option<Duration>, curr: Duration) -> Duration {
+    /// Adjusts next sleep duration based on the strategy variant.
+    pub fn adjust_sleep(&self, prev: Option<Duration>, curr: Duration) -> Duration {
         match self {
             ReconnectStrategy::Fail => Duration::new(0, 0),
             ReconnectStrategy::ExponentialBackoff { factor, .. } => {
