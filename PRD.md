@@ -1,13 +1,33 @@
 # Mount Backends — Production Fixes & Full Test Coverage PRD
 
-## Status (2026-04-06)
+## Status (2026-04-07)
 
-**228/228 mount tests passing (100%).** All 37 FP tests now pass after
-the FP fix series (commits `9f0c834` → `86d794d`). Suite is fully green
-on macOS. The next phase of work — network resilience + mount health
-monitoring — is described in
+**228/228 mount tests passing + 2291 distant-core lib tests passing.**
+The Network Resilience + Mount Health work is **complete through Phase
+5** (commits `eb0747b` → `9e8e5ea`). PR #288 has been incorporated and
+refactored per the review comments to use a generic
+[`Subscribe`/`Event`](#wire-types) protocol; mount health monitoring
+sits on top of the same event bus.
+
+Highlights:
+- Generic `Subscribe { topics: Vec<EventTopic> }` /
+  `Subscribed` / `Event { event: Event }` /
+  `ReconnectInitiated` protocol covers connection state and mount
+  state changes through one canonical bus.
+- Per-mount monitor task transitions `MountStatus` (now a typed
+  enum) on backend liveness probes and connection state events.
+- `distant kill <id>` now tears down mounts on the killed
+  connection (HLT-05 regression test locks this in).
+- TCP keepalive on every socket; per-plugin reconnect strategies
+  (Host/SSH/Docker `ExponentialBackoff`); `--no-reconnect`,
+  `--heartbeat-interval`, `--max-heartbeat-failures` CLI flags.
+- 26 new unit tests in distant-core for the mount state machine
+  and monitor task.
+
+See [PROGRESS.md](PROGRESS.md#active-plan) for the per-step
+checklist and
 [§ Plan: Network Resilience + Mount Health](#plan-network-resilience--mount-health)
-below.
+for the full plan that drove this work.
 
 | Backend     | Tests | Result   |
 |-------------|-------|----------|
@@ -81,17 +101,28 @@ Completed (Phases 1-4):
 - [x] Test harness + status/unmount tests rewritten
 - [x] FP enumeration timing — wait_for_path + working set polling
 
-### Remaining (becomes the new plan)
+### Status (2026-04-07)
 
-- [ ] Health monitoring: periodic checks per backend type (Phase 5)
-- [ ] Connection drop → mount "disconnected" → reconnect → resume (Phase 5)
-- [ ] Process audit: expect ~5 distant processes (vs 30+ today) (Phase 6)
+- [x] Health monitoring: periodic per-mount probe + connection
+      state propagation
+- [x] Connection drop → mount "disconnected" → reconnect → resume
+      (via the generic event bus)
+- [x] Generic event subscription system (incorporated from PR #288,
+      refactored per review)
+- [x] HLT-05 regression test for the kill-leak fix
+- [ ] HLT-01..04 + EVT-01..02 (sshd kill / connection drop CLI
+      tests) — deferred to a follow-up that needs more harness
+      orchestration than this round shipped
+- [ ] Granular per-backend probes (NFS server task lift, FUSE
+      BackgroundSession lift, WCF watcher) — deferred. The
+      coarse "mount task ended" signal in Phase 4 is sufficient
+      for wholesale-failure detection.
+- [ ] Process audit: expect ~5 distant processes (vs 30+ today)
 - [ ] Windows testing via ssh windows-vm + rsync + cargo nextest
-- [ ] Generic event subscription system (incorporated from PR #288)
 
 See [PROGRESS.md](PROGRESS.md) for the detailed checklist and
 [§ Plan: Network Resilience + Mount Health](#plan-network-resilience--mount-health)
-below for the full step-by-step.
+below for the full step-by-step that drove this work.
 
 Additional completed work not in original requirements:
 - Singleton test servers (Host, SSH, Docker, FileProvider)

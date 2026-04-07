@@ -19,37 +19,81 @@ network resilience stack and layers mount health on top.
 
 ### Phase 0 — PR #288 incorporation
 
-- [-] **0a** Move + correct PRD/PROGRESS docs, embed plan into PRD
-- [ ] **0b** TCP keepalive (cherry-pick `61e48c0`, public API
-      instead of `pub(crate) use`)
-- [ ] **0c** Heartbeat failure escalation (cherry-pick `fa40953`)
-- [ ] **0d** `Plugin::reconnect` + `reconnect_strategy`
-      (cherry-pick `3660e62`)
-- [ ] **0e** Backend health monitors — SSH + Docker (cherry-pick
-      `993ed8d`)
-- [ ] **0f** `ManagerConnection` connection-watcher plumbing
-      (cherry-pick `594c3ca`)
-- [ ] **0g** Generic `Subscribe` / `Event` protocol (refactored
-      from `5b1c439`, addresses review comments 2933812110,
-      2933814790, 2933821911, 2933826601)
-- [ ] **0h** Manager reconnection orchestration (cherry-pick
-      `aa035a8`, adapt to new protocol)
-- [ ] **0i** CLI integration: `subscribe_and_display_events`,
-      `distant client reconnect`, `--no-reconnect`,
-      `--heartbeat-interval`, `--max-heartbeat-failures`
-- [ ] **0j** Step 0 validation gate (fmt + clippy + nextest +
-      code-validator)
+- [x] **0a** Move + correct PRD/PROGRESS docs, embed plan into PRD
+      (commit `eb0747b`)
+- [x] **0b** TCP keepalive — `TcpTransport::set_keepalive` public
+      API instead of `pub(crate) use` lift (commit `b6ea29c`)
+- [x] **0c** Heartbeat failure escalation
+      (`max_heartbeat_failures` on `ServerConfig`, commit
+      `063a1f6`)
+- [x] **0d** `Plugin::reconnect` + `reconnect_strategy` with
+      per-plugin `ExponentialBackoff` (commit `5e1d1ee`)
+- [x] **0e** Backend health monitors — SSH + Docker self-shutdown
+      via `ShutdownSender` + `ApiServerHandler::from_arc` (commit
+      `1cab529`)
+- [x] **0f** `ManagerConnection` `clone_connection_watcher` +
+      `connection_monitor` task + `replace_client` (commit
+      `ce7cccd`)
+- [x] **0g** Generic `Subscribe`/`Event` protocol — addresses
+      review comments 2933812110, 2933814790, 2933821911,
+      2933826601. New `data/event.rs` module with `EventTopic`
+      and `Event { ConnectionState, MountState }` (commit
+      `52ab230`)
+- [x] **0h** Manager reconnection orchestration —
+      `handle_reconnection`, `NonInteractiveAuthenticator`,
+      death loop, real Subscribe/Reconnect handlers (commit
+      `eba8509`)
+- [x] **0i** CLI: `subscribe_and_display_events`, `distant client
+      reconnect`, `--no-reconnect`, `--heartbeat-interval`,
+      `--max-heartbeat-failures` (commits `543f013`, `2234acb`)
+- [x] **0j** Validation gate — 228/228 mount integration tests
+      pass; clippy + fmt clean across the workspace; 2291
+      distant-core lib tests pass
 
-### Phase 1–6 (mount health on top of generic event bus)
+Plus an incidental fix:
+- [x] `fix(test-harness)`: gate FileProvider singleton on the
+      mount feature so distant-core/host/ssh/docker subset tests
+      build standalone (commit `2b1a2bf`)
 
-- [ ] **Phase 1** `MountStatus` enum + `Event::MountState`
-- [ ] **Phase 2** `MountHandle::probe` trait extension
-- [ ] **Phase 3** `ManagedMount` restructure + per-mount monitor
-      task + kill-leak fix
-- [ ] **Phase 4** Backend probe implementations (NFS / FUSE / FP /
-      WCF)
-- [ ] **Phase 5** Tests (HLT-01..05, EVT-01..02, unit tests)
-- [ ] **Phase 6** Documentation roll-up
+### Phase 1–6 — mount health on top of generic event bus
+
+- [x] **Phase 1** `MountStatus` enum + `Event::MountState`
+      (commit `ae850c5`). Wire shape:
+      `{"state":"active"}` / `{"state":"failed","reason":"..."}`.
+      `format_mount_status` helper for shell rendering of
+      `distant status --show mount`. CLI `display_event` learns
+      the new variant.
+- [x] **Phase 2** `MountHandle::probe` trait extension with
+      `MountProbe { Healthy, Degraded, Failed }` (commit
+      `d8efb62`). Default impl returns `Healthy`.
+- [x] **Phase 3** `ManagedMount` restructure + per-mount monitor
+      task + kill-leak fix (commit `46caad5`).
+      `info: Arc<RwLock<MountInfo>>`,
+      `handle: Arc<Mutex<Option<...>>>`,
+      `monitor: JoinHandle<()>`. New `monitor_mount` task
+      polls every `Config::mount_health_interval` (default 5s)
+      and reacts to connection state events from the broadcast
+      bus. `kill(id)` now tears down mounts on the killed
+      connection (latent leak fix).
+- [x] **Phase 4** Backend probe implementations (commit
+      `9ff6cd0`). All backends report `Failed("mount task ended")`
+      via `core::MountHandle::is_alive()`. FileProvider
+      additionally checks `list_file_provider_domains()` and
+      returns `Degraded`/`Failed` if the OS-side domain has
+      disappeared. Granular per-backend probes (NFS server task
+      lift, FUSE BackgroundSession lift, WCF watcher) deferred.
+- [x] **Phase 5** Tests (commit `9e8e5ea`).
+      - distant-core unit tests for `MountStatus` serde,
+        `probe_to_status`, `connection_state_to_mount_status`,
+        `monitor_mount` (3 e2e tests with a scripted MountHandle
+        test double).
+      - CLI integration: HLT-05
+        `kill_should_remove_mounts_owned_by_connection` —
+        regression test for the kill-leak fix.
+      - HLT-01..04 + EVT-01..02 (require sshd kill + connection
+        drop orchestration in the integration harness) deferred
+        to a follow-up.
+- [-] **Phase 6** Documentation roll-up (this commit)
 
 ---
 
