@@ -9,7 +9,7 @@ use crate::net::common::{Destination, Map};
 mod mount;
 mod process;
 
-pub use mount::{MountHandle, MountPlugin};
+pub use mount::{MountHandle, MountPlugin, MountProbe};
 pub use process::ProcessPlugin;
 
 /// Object-safe plugin interface used by the manager.
