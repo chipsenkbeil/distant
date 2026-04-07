@@ -112,6 +112,62 @@ impl ManagerConnection {
         })
     }
 
+    /// Replaces the underlying client with a new one, aborting old tasks and
+    /// respawning them with the same [`ConnectionId`].
+    ///
+    /// **Existing channels are invalidated** — the old action task is aborted
+    /// and a new one is spawned, so any [`ManagerChannel`] handles obtained
+    /// before this call will fail on subsequent sends. Callers must re-open
+    /// channels after replacement.
+    ///
+    /// If `death_tx` is provided, a new connection monitor task is spawned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the default mailbox cannot be assigned on the new client.
+    pub async fn replace_client(
+        &mut self,
+        mut client: UntypedClient,
+        death_tx: Option<mpsc::UnboundedSender<ConnectionId>>,
+    ) -> io::Result<()> {
+        let id = self.id;
+        debug!("[Conn {id}] Replacing client — aborting old tasks");
+
+        // Abort old tasks (action_task is NOT aborted — channels live there)
+        self.request_task.abort();
+        self.response_task.abort();
+        if let Some(ref task) = self.monitor_task {
+            task.abort();
+        }
+
+        // Configure the new client
+        client.shutdown_on_drop(true);
+
+        // Clone watcher before moving the client
+        let watcher = client.clone_connection_watcher();
+
+        // Set up new request and response tasks using the existing action tx
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let mailbox = client.assign_default_mailbox(100).await?;
+
+        self.response_task = tokio::spawn(response_task(id, mailbox, self.tx.clone()));
+        self.request_task = tokio::spawn(request_task(id, client, request_rx));
+
+        // Abort the old action task and respawn with the new request_tx.
+        // Channel registrations start fresh — existing ManagerChannel handles
+        // hold a clone of the OLD self.tx and will fail on next send.
+        self.action_task.abort();
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.action_task = tokio::spawn(action_task(id, rx, request_tx));
+        self.tx = tx;
+
+        // Spawn a new monitor task if requested
+        self.monitor_task = death_tx.map(|dtx| tokio::spawn(connection_monitor(id, watcher, dtx)));
+
+        info!("[Conn {id}] Client replaced successfully");
+        Ok(())
+    }
+
     pub fn open_channel(&self, reply: ServerReply<ManagerResponse>) -> io::Result<ManagerChannel> {
         let channel_id = rand::random();
         self.tx
@@ -766,5 +822,200 @@ mod tests {
         let action = Action::Write { id: 7, req };
         let debug = format!("{action:?}");
         assert_eq!(debug, "Action::Write { id: 7, .. }");
+    }
+
+    // ---- replace_client ----
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_should_preserve_connection_id() {
+        let (client, _server) = make_untyped_client();
+        let conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+        let original_id = conn.id;
+
+        // Build a new client to replace with
+        let (new_client, _new_server) = make_untyped_client();
+
+        let mut conn = conn;
+        conn.replace_client(new_client, None).await.unwrap();
+
+        assert_eq!(conn.id, original_id);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_should_preserve_destination_and_options() {
+        let (client, _server) = make_untyped_client();
+        let opts: Map = "key=value".parse().unwrap();
+        let dest = "scheme://host".to_string();
+        let conn = ManagerConnection::spawn(dest.clone(), opts.clone(), client, None)
+            .await
+            .unwrap();
+
+        let (new_client, _new_server) = make_untyped_client();
+
+        let mut conn = conn;
+        conn.replace_client(new_client, None).await.unwrap();
+
+        assert_eq!(conn.destination, dest);
+        assert_eq!(conn.options, opts);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_should_allow_new_channels_after_replacement() {
+        let (client, _server) = make_untyped_client();
+        let mut conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+
+        // Replace with a new client
+        let (new_client, _new_server) = make_untyped_client();
+        conn.replace_client(new_client, None).await.unwrap();
+
+        // Give the new action task time to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Open a channel on the replacement
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+        let channel = conn.open_channel(reply).unwrap();
+        let channel_id = channel.id();
+
+        // Wait for registration
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let ids = conn.channel_ids().await.unwrap();
+        assert!(
+            ids.contains(&channel_id),
+            "New channel should be registered after replace_client"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_with_death_tx_should_have_monitor_task() {
+        let (client, _server) = make_untyped_client();
+        let mut conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+
+        assert!(
+            conn.monitor_task.is_none(),
+            "Initial spawn without death_tx should have no monitor"
+        );
+
+        let (death_tx, _death_rx) = mpsc::unbounded_channel();
+        let (new_client, _new_server) = make_untyped_client();
+        conn.replace_client(new_client, Some(death_tx))
+            .await
+            .unwrap();
+
+        assert!(
+            conn.monitor_task.is_some(),
+            "After replace_client with death_tx, monitor should be Some"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_without_death_tx_should_not_have_monitor_task() {
+        let (client, _server) = make_untyped_client();
+        let (death_tx, _death_rx) = mpsc::unbounded_channel();
+        let mut conn =
+            ManagerConnection::spawn("scheme://host", Map::new(), client, Some(death_tx))
+                .await
+                .unwrap();
+
+        assert!(
+            conn.monitor_task.is_some(),
+            "Initial spawn with death_tx should have monitor"
+        );
+
+        let (new_client, _new_server) = make_untyped_client();
+        conn.replace_client(new_client, None).await.unwrap();
+
+        assert!(
+            conn.monitor_task.is_none(),
+            "After replace_client without death_tx, monitor should be None"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_should_start_with_empty_channel_registrations() {
+        let (client, _server) = make_untyped_client();
+        let mut conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+
+        // Register a channel on the old action task
+        let (reply_tx, _reply_rx) = mpsc::unbounded_channel();
+        let reply = ServerReply {
+            origin_id: "test".to_string(),
+            tx: reply_tx,
+        };
+        let _channel = conn.open_channel(reply).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let ids_before = conn.channel_ids().await.unwrap();
+        assert_eq!(ids_before.len(), 1);
+
+        // Replace the client -- this replaces the action task, so registrations reset
+        let (new_client, _new_server) = make_untyped_client();
+        conn.replace_client(new_client, None).await.unwrap();
+
+        // Give the new action task time to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let ids_after = conn.channel_ids().await.unwrap();
+        assert!(
+            ids_after.is_empty(),
+            "Channel registrations should be empty after replace_client, but found: {ids_after:?}"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_death_tx_should_notify_on_new_client_disconnect() {
+        let (client, _server) = make_untyped_client();
+        let mut conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+        let conn_id = conn.id;
+
+        let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+        let (new_client, new_server) = make_untyped_client();
+        conn.replace_client(new_client, Some(death_tx))
+            .await
+            .unwrap();
+
+        // Drop the server side to trigger disconnect detection on the new client
+        drop(new_server);
+
+        let received_id = tokio::time::timeout(Duration::from_secs(5), death_rx.recv())
+            .await
+            .expect("timed out waiting for death notification")
+            .expect("death channel closed without sending");
+
+        assert_eq!(received_id, conn_id);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn replace_client_should_propagate_error_when_client_task_is_dead() {
+        let (client, _server) = make_untyped_client();
+        let mut conn = ManagerConnection::spawn("scheme://host", Map::new(), client, None)
+            .await
+            .unwrap();
+
+        // Create a new client and abort its internal task so the post office
+        // is dropped. This causes assign_default_mailbox to fail with
+        // NotConnected because the Weak<PostOffice> cannot be upgraded.
+        let (mut dead_client, _dead_server) = make_untyped_client();
+        dead_client.shutdown_on_drop(true);
+        dead_client.abort();
+        // Give the task time to actually stop
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let err = conn.replace_client(dead_client, None).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
     }
 }

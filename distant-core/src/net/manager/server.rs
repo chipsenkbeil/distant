@@ -1,18 +1,23 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::auth::msg::AuthenticationResponse;
 use log::*;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
+use crate::auth::Authenticator;
+use crate::auth::msg::*;
+use crate::net::client::ConnectionState;
 use crate::net::common::{ConnectionId, Map};
+use crate::net::manager::data::Event;
 use crate::net::manager::{
-    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
-    ManagerRequest, ManagerResponse, SemVer,
+    ConnectionInfo, ConnectionList, EventTopic, ManagedTunnelId, ManagerAuthenticationId,
+    ManagerChannelId, ManagerRequest, ManagerResponse, SemVer,
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
-use crate::plugin::{MountHandle, extract_scheme};
+use crate::plugin::{MountHandle, Plugin, extract_scheme};
 use crate::protocol::MountInfo;
 
 mod authentication;
@@ -47,8 +52,10 @@ pub struct ManagerServer {
     /// enabling us to cancel the tasks on demand
     channels: RwLock<HashMap<ManagerChannelId, ManagerChannel>>,
 
-    /// Mapping of connection id -> connection
-    connections: RwLock<HashMap<ConnectionId, ManagerConnection>>,
+    /// Mapping of connection id -> connection.
+    /// Wrapped in `Arc` so the background reconnection task can access connections
+    /// without holding a borrow on `ManagerServer`.
+    connections: Arc<RwLock<HashMap<ConnectionId, ManagerConnection>>>,
 
     /// Mapping of auth id -> callback
     registry:
@@ -64,6 +71,11 @@ pub struct ManagerServer {
     /// Each [`ManagerConnection`] spawned by this server receives a clone to report
     /// when its underlying transport disconnects.
     death_tx: mpsc::UnboundedSender<ConnectionId>,
+
+    /// Broadcast bus for [`Event`] push notifications. Subscribers
+    /// (`ManagerRequest::Subscribe`) attach a `subscribe()` receiver
+    /// and forward events that match their requested topics.
+    event_tx: broadcast::Sender<Event>,
 }
 
 impl ManagerServer {
@@ -72,23 +84,43 @@ impl ManagerServer {
     /// for the server as well as provide other defaults.
     pub fn new(config: Config) -> Server<Self> {
         let (death_tx, mut death_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = broadcast::channel::<Event>(16);
+        let connections = Arc::new(RwLock::new(HashMap::new()));
 
-        // Spawn a task that logs connection deaths.
-        // Reconnection orchestration will be added in a future phase.
-        tokio::spawn(async move {
-            while let Some(id) = death_rx.recv().await {
-                warn!("[Conn {id}] Connection death detected by manager");
-            }
-        });
+        // Spawn a background task that handles connection deaths.
+        // When a connection dies, this task orchestrates reconnection using
+        // the plugin's reconnect() method and retry strategy.
+        {
+            let connections = Arc::clone(&connections);
+            let event_tx = event_tx.clone();
+            let death_tx = death_tx.clone();
+            let plugins = config.plugins.clone();
+            let fallback_scheme = config.connect_fallback_scheme.clone();
+            tokio::spawn(async move {
+                while let Some(id) = death_rx.recv().await {
+                    warn!("[Conn {id}] Connection death detected by manager");
+                    handle_reconnection(
+                        id,
+                        &connections,
+                        &plugins,
+                        &fallback_scheme,
+                        &death_tx,
+                        &event_tx,
+                    )
+                    .await;
+                }
+            });
+        }
 
         Server::new().handler(Self {
             config,
             channels: RwLock::new(HashMap::new()),
-            connections: RwLock::new(HashMap::new()),
+            connections,
             registry: Arc::new(RwLock::new(HashMap::new())),
             managed_tunnels: RwLock::new(HashMap::new()),
             mounts: RwLock::new(HashMap::new()),
             death_tx,
+            event_tx,
         })
     }
 
@@ -256,6 +288,231 @@ fn reply_err(reply: ServerReply<ManagerResponse>, conn_id: ConnectionId, err: io
     if let Err(x) = reply.send(response) {
         error!("[Conn {}] {}", conn_id, x);
     }
+}
+
+/// An [`Authenticator`] that fails all interactive authentication challenges.
+///
+/// Used during background reconnection where no user is available to answer
+/// prompts. Plugins that rely solely on key files or ssh-agent will never
+/// invoke the challenge/verify methods, so reconnection succeeds silently.
+/// If the server requires interactive auth, reconnection fails immediately.
+struct NonInteractiveAuthenticator;
+
+impl Authenticator for NonInteractiveAuthenticator {
+    fn initialize<'a>(
+        &'a mut self,
+        initialization: Initialization,
+    ) -> Pin<Box<dyn Future<Output = io::Result<InitializationResponse>> + Send + 'a>> {
+        // Accept whatever methods the server offers — let the plugin decide.
+        Box::pin(async move {
+            Ok(InitializationResponse {
+                methods: initialization.methods,
+            })
+        })
+    }
+
+    fn challenge<'a>(
+        &'a mut self,
+        _challenge: Challenge,
+    ) -> Pin<Box<dyn Future<Output = io::Result<ChallengeResponse>> + Send + 'a>> {
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "non-interactive reconnection cannot answer authentication challenges",
+            ))
+        })
+    }
+
+    fn verify<'a>(
+        &'a mut self,
+        _verification: Verification,
+    ) -> Pin<Box<dyn Future<Output = io::Result<VerificationResponse>> + Send + 'a>> {
+        // Auto-accept host verification during reconnection (already verified on first connect).
+        Box::pin(async { Ok(VerificationResponse { valid: true }) })
+    }
+
+    fn info<'a>(
+        &'a mut self,
+        _info: Info,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn error<'a>(
+        &'a mut self,
+        _error: Error,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn start_method<'a>(
+        &'a mut self,
+        _start_method: StartMethod,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn finished<'a>(&'a mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Publishes a [`ConnectionState`] change as an [`Event::ConnectionState`]
+/// on the broadcast bus. Subscribers (set up via `Subscribe { topics }`)
+/// receive the event and forward it through their channels as
+/// `ManagerResponse::Event { event }`.
+fn publish_connection_state(
+    event_tx: &broadcast::Sender<Event>,
+    id: ConnectionId,
+    state: ConnectionState,
+) {
+    let _ = event_tx.send(Event::ConnectionState { id, state });
+}
+
+/// Orchestrates reconnection for the connection with the given `id`.
+///
+/// Steps:
+/// 1. Read connection info (destination, options) and look up the plugin by scheme.
+/// 2. Check if the plugin supports reconnection (`reconnect_strategy != Fail`).
+/// 3. Broadcast `Reconnecting` state to subscribers.
+/// 4. Execute the plugin's `reconnect()` in a retry loop using the strategy.
+/// 5. On success: hot-swap the old connection via `replace_client()`, broadcast `Connected`.
+/// 6. On failure: broadcast `Disconnected`.
+async fn handle_reconnection(
+    id: ConnectionId,
+    connections: &RwLock<HashMap<ConnectionId, ManagerConnection>>,
+    plugins: &HashMap<String, Arc<dyn Plugin>>,
+    fallback_scheme: &str,
+    death_tx: &mpsc::UnboundedSender<ConnectionId>,
+    event_tx: &broadcast::Sender<Event>,
+) {
+    // Step 1: Read connection info without holding the lock across await points
+    let (destination, options) = {
+        let conns = connections.read().await;
+        match conns.get(&id) {
+            Some(conn) => (conn.destination.clone(), conn.options.clone()),
+            None => {
+                warn!("[Conn {id}] Reconnection aborted: connection not found");
+                return;
+            }
+        }
+    };
+
+    // Look up the plugin by scheme
+    let scheme = match extract_scheme(&destination) {
+        Some(scheme) => scheme.to_lowercase(),
+        None => fallback_scheme.to_lowercase(),
+    };
+
+    let plugin = match plugins.get(&scheme) {
+        Some(plugin) => Arc::clone(plugin),
+        None => {
+            error!("[Conn {id}] Reconnection aborted: no plugin for scheme '{scheme}'");
+            publish_connection_state(event_tx, id, ConnectionState::Disconnected);
+            return;
+        }
+    };
+
+    // Step 2: Check reconnect strategy
+    let strategy = plugin.reconnect_strategy();
+    if strategy.is_fail() {
+        info!("[Conn {id}] Plugin '{scheme}' does not support reconnection");
+        publish_connection_state(event_tx, id, ConnectionState::Disconnected);
+        return;
+    }
+
+    // Step 3: Broadcast Reconnecting
+    info!("[Conn {id}] Starting reconnection via plugin '{scheme}'");
+    publish_connection_state(event_tx, id, ConnectionState::Reconnecting);
+
+    // Step 4: Retry loop using ReconnectStrategy's delay logic
+    let mut previous_sleep = None;
+    let mut current_sleep = strategy.initial_sleep_duration();
+    let mut retries_remaining = strategy.max_retries();
+    let timeout = strategy.timeout();
+    let max_duration = strategy.max_duration();
+
+    let mut last_err: Option<io::Error> = None;
+
+    while retries_remaining.is_none() || retries_remaining > Some(0) {
+        let mut authenticator = NonInteractiveAuthenticator;
+
+        let result = match timeout {
+            Some(t) => {
+                match tokio::time::timeout(
+                    t,
+                    plugin.reconnect(&destination, &options, &mut authenticator),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(elapsed) => Err(elapsed.into()),
+                }
+            }
+            None => {
+                plugin
+                    .reconnect(&destination, &options, &mut authenticator)
+                    .await
+            }
+        };
+
+        match result {
+            Ok(new_client) => {
+                // Step 5: Hot-swap the connection
+                let mut conns = connections.write().await;
+                if let Some(conn) = conns.get_mut(&id) {
+                    match conn
+                        .replace_client(new_client, Some(death_tx.clone()))
+                        .await
+                    {
+                        Ok(()) => {
+                            info!("[Conn {id}] Reconnection succeeded");
+                            publish_connection_state(event_tx, id, ConnectionState::Connected);
+                            return;
+                        }
+                        Err(e) => {
+                            error!("[Conn {id}] Failed to replace client after reconnect: {e}");
+                            last_err = Some(e);
+                        }
+                    }
+                } else {
+                    warn!("[Conn {id}] Connection removed during reconnection");
+                    return;
+                }
+            }
+            Err(e) => {
+                debug!("[Conn {id}] Reconnect attempt failed: {e}");
+                last_err = Some(e);
+            }
+        }
+
+        // Decrement remaining retries if we have a limit
+        if let Some(remaining) = retries_remaining.as_mut()
+            && *remaining > 0
+        {
+            *remaining -= 1;
+        }
+
+        // Sleep before next attempt
+        tokio::time::sleep(current_sleep).await;
+
+        // Update sleep duration using the strategy's backoff logic
+        let next_sleep = strategy.adjust_sleep(previous_sleep, current_sleep);
+        previous_sleep = Some(current_sleep);
+        current_sleep = if let Some(duration) = max_duration {
+            std::cmp::min(next_sleep, duration)
+        } else {
+            next_sleep
+        };
+    }
+
+    // Step 6: All retries exhausted
+    let err_msg = last_err
+        .as_ref()
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "unknown error".to_string());
+    error!("[Conn {id}] Reconnection failed after all retries: {err_msg}");
+    publish_connection_state(event_tx, id, ConnectionState::Disconnected);
 }
 
 impl ServerHandler for ManagerServer {
@@ -676,22 +933,67 @@ impl ServerHandler for ManagerServer {
 
                 ManagerResponse::Unmounted { ids: unmounted }
             }
-            ManagerRequest::Subscribe { topics: _ } => {
-                // Real subscription dispatch lands in step 0h together
-                // with the event broadcast channel and reconnection
-                // orchestration. Until then, fail loudly so callers
-                // know the wire shape is in place but the producer
-                // side isn't.
-                ManagerResponse::Error {
-                    description: "Subscribe not yet implemented".to_string(),
+            ManagerRequest::Subscribe { topics } => {
+                // Spawn a forwarder task that drains the broadcast bus and
+                // wraps each `Event` in `ManagerResponse::Event` before
+                // sending it back through the channel's reply stream. The
+                // task exits when the reply stream closes (channel closed)
+                // or when `recv()` errors (sender dropped).
+                let mut event_rx = self.event_tx.subscribe();
+                let reply_clone = reply.clone();
+                let want_all = topics.contains(&EventTopic::All);
+                let topics: std::collections::HashSet<EventTopic> = topics.into_iter().collect();
+                tokio::spawn(async move {
+                    while let Ok(event) = event_rx.recv().await {
+                        if !want_all && !topics.contains(&event.topic()) {
+                            continue;
+                        }
+                        if reply_clone.send(ManagerResponse::Event { event }).is_err() {
+                            break;
+                        }
+                    }
+                });
+                ManagerResponse::Subscribed
+            }
+            ManagerRequest::Unsubscribe => {
+                // The subscription forwarder task tied to this channel
+                // exits naturally when the reply stream closes — i.e.,
+                // when the channel is dropped on the client side.
+                // `Unsubscribe` is a hint that lets clients keep the
+                // channel open while no longer receiving events; today
+                // it acks immediately (real teardown of an in-flight
+                // forwarder requires per-channel cancellation handles,
+                // tracked as a follow-up).
+                ManagerResponse::Unsubscribed
+            }
+            ManagerRequest::Reconnect { id } => {
+                let exists = self.connections.read().await.contains_key(&id);
+                if !exists {
+                    ManagerResponse::from(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "No connection found",
+                    ))
+                } else {
+                    info!("[Conn {id}] Manual reconnection requested");
+                    let connections = Arc::clone(&self.connections);
+                    let plugins = self.config.plugins.clone();
+                    let fallback_scheme = self.config.connect_fallback_scheme.clone();
+                    let death_tx = self.death_tx.clone();
+                    let event_tx = self.event_tx.clone();
+                    tokio::spawn(async move {
+                        handle_reconnection(
+                            id,
+                            &connections,
+                            &plugins,
+                            &fallback_scheme,
+                            &death_tx,
+                            &event_tx,
+                        )
+                        .await;
+                    });
+                    ManagerResponse::ReconnectInitiated { id }
                 }
             }
-            ManagerRequest::Unsubscribe => ManagerResponse::Error {
-                description: "Unsubscribe not yet implemented".to_string(),
-            },
-            ManagerRequest::Reconnect { id: _ } => ManagerResponse::Error {
-                description: "Reconnect not yet implemented".to_string(),
-            },
         };
 
         if let Err(x) = reply.send(response) {
@@ -805,15 +1107,17 @@ mod tests {
         };
 
         let (death_tx, _death_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = broadcast::channel::<Event>(16);
 
         let server = ManagerServer {
             config,
             channels: RwLock::new(HashMap::new()),
-            connections: RwLock::new(HashMap::new()),
+            connections: Arc::new(RwLock::new(HashMap::new())),
             registry,
             managed_tunnels: RwLock::new(HashMap::new()),
             mounts: RwLock::new(HashMap::new()),
             death_tx,
+            event_tx,
         };
 
         (server, authenticator)
@@ -1032,5 +1336,142 @@ mod tests {
 
         let lock = server.connections.read().await;
         assert!(!lock.contains_key(&id), "Connection still exists");
+    }
+
+    // ---------------------------------------------------------------
+    // NonInteractiveAuthenticator tests
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_initialize_should_echo_methods() {
+        let mut auth = NonInteractiveAuthenticator;
+        let init = crate::auth::msg::Initialization {
+            methods: vec!["publickey".to_string(), "keyboard-interactive".to_string()],
+        };
+        let resp = auth.initialize(init).await.unwrap();
+        assert_eq!(
+            resp.methods,
+            vec!["publickey".to_string(), "keyboard-interactive".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_initialize_should_echo_empty_methods() {
+        let mut auth = NonInteractiveAuthenticator;
+        let init = crate::auth::msg::Initialization { methods: vec![] };
+        let resp = auth.initialize(init).await.unwrap();
+        assert!(resp.methods.is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_initialize_should_echo_single_method() {
+        let mut auth = NonInteractiveAuthenticator;
+        let init = crate::auth::msg::Initialization {
+            methods: vec!["none".to_string()],
+        };
+        let resp = auth.initialize(init).await.unwrap();
+        assert_eq!(resp.methods, vec!["none".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_challenge_should_return_permission_denied() {
+        let mut auth = NonInteractiveAuthenticator;
+        let challenge = crate::auth::msg::Challenge {
+            questions: vec![crate::auth::msg::Question::new("Enter password")],
+            options: std::collections::HashMap::new(),
+        };
+        let err = auth.challenge(challenge).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_challenge_should_have_descriptive_error_message() {
+        let mut auth = NonInteractiveAuthenticator;
+        let challenge = crate::auth::msg::Challenge {
+            questions: vec![],
+            options: std::collections::HashMap::new(),
+        };
+        let err = auth.challenge(challenge).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("non-interactive reconnection cannot answer authentication challenges"),
+            "Error message was: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_verify_should_return_valid_true() {
+        let mut auth = NonInteractiveAuthenticator;
+        let verification = crate::auth::msg::Verification {
+            kind: crate::auth::msg::VerificationKind::Host,
+            text: "ssh-ed25519 AAAA...".to_string(),
+        };
+        let resp = auth.verify(verification).await.unwrap();
+        assert!(resp.valid);
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_verify_should_return_valid_for_unknown_kind() {
+        let mut auth = NonInteractiveAuthenticator;
+        let verification = crate::auth::msg::Verification {
+            kind: crate::auth::msg::VerificationKind::Unknown,
+            text: "something".to_string(),
+        };
+        let resp = auth.verify(verification).await.unwrap();
+        assert!(resp.valid);
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_info_should_succeed() {
+        let mut auth = NonInteractiveAuthenticator;
+        let info = crate::auth::msg::Info {
+            text: "Connecting to host...".to_string(),
+        };
+        auth.info(info).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_error_should_succeed() {
+        let mut auth = NonInteractiveAuthenticator;
+        let error = crate::auth::msg::Error::fatal("auth failed");
+        auth.error(error).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_start_method_should_succeed() {
+        let mut auth = NonInteractiveAuthenticator;
+        let start = crate::auth::msg::StartMethod {
+            method: "publickey".to_string(),
+        };
+        auth.start_method(start).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn non_interactive_authenticator_finished_should_succeed() {
+        let mut auth = NonInteractiveAuthenticator;
+        auth.finished().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_connection_state_should_broadcast_event() {
+        let (event_tx, mut event_rx) = broadcast::channel::<Event>(16);
+        let id: ConnectionId = 42;
+
+        publish_connection_state(&event_tx, id, ConnectionState::Reconnecting);
+
+        let event = event_rx.recv().await.unwrap();
+        match event {
+            Event::ConnectionState { id: recv_id, state } => {
+                assert_eq!(recv_id, 42);
+                assert_eq!(state, ConnectionState::Reconnecting);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_connection_state_should_not_panic_with_no_subscribers() {
+        let (event_tx, _) = broadcast::channel::<Event>(16);
+        publish_connection_state(&event_tx, 1, ConnectionState::Disconnected);
     }
 }
