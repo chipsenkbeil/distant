@@ -18,7 +18,7 @@ use crate::net::manager::{
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
 use crate::plugin::{MountHandle, Plugin, extract_scheme};
-use crate::protocol::MountInfo;
+use crate::protocol::{MountInfo, MountStatus};
 
 mod authentication;
 pub use authentication::*;
@@ -886,7 +886,7 @@ impl ServerHandler for ManagerServer {
                             mount_point: mount_point.clone(),
                             remote_root,
                             readonly,
-                            status: "active".to_string(),
+                            status: MountStatus::Active,
                         };
                         self.mounts.write().await.insert(
                             mount_id,
@@ -1473,6 +1473,7 @@ mod tests {
                 assert_eq!(recv_id, 42);
                 assert_eq!(state, ConnectionState::Reconnecting);
             }
+            other => panic!("Expected ConnectionState event, got {other:?}"),
         }
     }
 

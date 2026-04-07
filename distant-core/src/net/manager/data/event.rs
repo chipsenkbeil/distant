@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::net::client::ConnectionState;
 use crate::net::common::ConnectionId;
+use crate::protocol::MountStatus;
 
 /// A topic that subscribers filter on. [`Self::All`] matches every
 /// existing and future event variant.
@@ -41,6 +42,13 @@ pub enum Event {
         /// New connection state.
         state: ConnectionState,
     },
+    /// A managed mount's lifecycle state changed.
+    MountState {
+        /// Id of the mount whose state changed.
+        id: u32,
+        /// New mount state.
+        state: MountStatus,
+    },
 }
 
 impl Event {
@@ -50,6 +58,7 @@ impl Event {
     pub fn topic(&self) -> EventTopic {
         match self {
             Self::ConnectionState { .. } => EventTopic::Connection,
+            Self::MountState { .. } => EventTopic::Mount,
         }
     }
 }
@@ -90,6 +99,41 @@ mod tests {
             state: ConnectionState::Connected,
         };
         assert_eq!(event.topic(), EventTopic::Connection);
+    }
+
+    #[test]
+    fn mount_state_event_should_serialize_with_type_tag() {
+        let event = Event::MountState {
+            id: 7,
+            state: MountStatus::Failed {
+                reason: "fuse session ended".to_string(),
+            },
+        };
+        let value: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["type"], "mount_state");
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["state"]["state"], "failed");
+        assert_eq!(value["state"]["reason"], "fuse session ended");
+    }
+
+    #[test]
+    fn mount_state_event_should_round_trip_through_json() {
+        let original = Event::MountState {
+            id: 42,
+            state: MountStatus::Active,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn mount_state_event_topic_is_mount() {
+        let event = Event::MountState {
+            id: 1,
+            state: MountStatus::Active,
+        };
+        assert_eq!(event.topic(), EventTopic::Mount);
     }
 
     #[test]

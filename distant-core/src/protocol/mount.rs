@@ -99,6 +99,45 @@ impl Default for CacheConfig {
     }
 }
 
+/// Lifecycle state of a mount tracked by the manager.
+///
+/// Distinct from [`crate::net::client::ConnectionState`] so the user
+/// can tell at a glance which subsystem they're looking at and so
+/// mount-side `Failed` (terminal) is distinguishable from the
+/// transient connection-side `Disconnected` (recoverable).
+///
+/// State machine:
+/// ```text
+///                ┌──────────────┐ connection drop ┌──────────────┐
+///     Active ───►│ Reconnecting ├────────────────►│ Disconnected │
+///          ▲     └──────┬───────┘                 └──────┬───────┘
+///          │            │ reconnect succeeded            │
+///          └────────────┘                                │
+///                                                        │ permanent
+///                                                        ▼
+///                                                   ┌────────┐
+///                                                   │ Failed │
+///                                                   └────────┘
+/// ```
+///
+/// `Failed` is terminal — the only exit is to unmount and remount.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum MountStatus {
+    /// Mount is healthy and serving requests.
+    #[default]
+    Active,
+    /// Underlying connection is reconnecting; the mount will resume
+    /// once the connection comes back.
+    Reconnecting,
+    /// Underlying connection is gone; the mount cannot serve
+    /// requests but may still recover via reconnect.
+    Disconnected,
+    /// Mount has failed permanently. The only exit is to unmount
+    /// and remount.
+    Failed { reason: String },
+}
+
 /// Describes an active mount managed by the distant manager.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MountInfo {
@@ -120,6 +159,6 @@ pub struct MountInfo {
     /// Whether the mount is read-only.
     pub readonly: bool,
 
-    /// Current status: "active", "disconnected", or "failed".
-    pub status: String,
+    /// Current lifecycle state of the mount.
+    pub status: MountStatus,
 }

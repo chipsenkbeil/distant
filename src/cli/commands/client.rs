@@ -12,7 +12,7 @@ use distant_core::net::common::{
 };
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
-    self, ChangeKind, ChangeKindSet, FileType, Permissions, RemotePath, SearchQuery,
+    self, ChangeKind, ChangeKindSet, FileType, MountStatus, Permissions, RemotePath, SearchQuery,
     SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
     SystemInfo, Version, semver,
 };
@@ -1511,7 +1511,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                                                 style(m.id).bold(),
                                                 m.mount_point,
                                                 m.backend,
-                                                m.status
+                                                format_mount_status(&m.status),
                                             );
                                         }
                                     }
@@ -1876,6 +1876,20 @@ fn format_change_kind(kind: ChangeKind) -> &'static str {
         x if x.is_modify() => "(Modified)",
         x if x.is_rename() => "(Renamed)",
         _ => "(Affected)",
+    }
+}
+
+/// Format a [`MountStatus`] as a single shell-readable label.
+///
+/// Active/Reconnecting/Disconnected render as their lowercase variant
+/// names; Failed renders as `failed: <reason>` so the failure cause
+/// is visible in the same row as the mount.
+fn format_mount_status(status: &MountStatus) -> String {
+    match status {
+        MountStatus::Active => "active".to_string(),
+        MountStatus::Reconnecting => "reconnecting".to_string(),
+        MountStatus::Disconnected => "disconnected".to_string(),
+        MountStatus::Failed { reason } => format!("failed: {reason}"),
     }
 }
 

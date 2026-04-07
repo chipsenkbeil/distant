@@ -559,6 +559,34 @@ fn display_event(event: Event, format: Format) {
                 })
             );
         }
+        (Event::MountState { id, state }, Format::Shell) => {
+            use distant_core::protocol::MountStatus;
+            let label = match &state {
+                MountStatus::Active => "active".to_string(),
+                MountStatus::Reconnecting => "reconnecting".to_string(),
+                MountStatus::Disconnected => "disconnected".to_string(),
+                MountStatus::Failed { reason } => format!("failed ({reason})"),
+            };
+            eprintln!("[distant] mount {id}: {label}");
+        }
+        (Event::MountState { id, state }, Format::Json) => {
+            // The state already has its own #[serde(tag = "state")]
+            // shape, so we can flatten it into the event payload
+            // through serde_json directly.
+            let state_json =
+                serde_json::to_value(&state).expect("MountStatus serialization is infallible");
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "event",
+                    "event": {
+                        "type": "mount_state",
+                        "id": id,
+                        "state": state_json,
+                    }
+                })
+            );
+        }
     }
 }
 
