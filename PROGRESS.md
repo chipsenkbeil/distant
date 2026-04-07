@@ -95,6 +95,208 @@ Plus an incidental fix:
         to a follow-up.
 - [-] **Phase 6** Documentation roll-up (this commit)
 
+### Phases E–K — Test Quality & Stability (next slice)
+
+This batch is driven directly by the friction observed during the
+Phase 0–6 rollout. See
+[PRD.md § Lessons from Phase 0–6 implementation](PRD.md#lessons-from-phase-06-implementation-2026-04-07)
+for the inventory of incidents that motivate each phase. Acceptance
+criteria and concrete deliverables live in
+[PRD.md § Plan: Test Quality & Stability](PRD.md#plan-test-quality--stability).
+
+#### Phase E — State hygiene
+
+- [ ] **E1** `scripts/test-mount-clean.sh` script: kills stale
+      `distant manager`/`distant server`/`DistantFileProvider.appex`
+      processes, removes lock/meta files under
+      `$TMPDIR/distant-test-*`, bulk-removes stale FP domains via
+      `distant unmount --include-all-macos-file-provider-domains`,
+      and prunes `$TMPDIR/distant-test-mount-shared-*` orphans.
+      Idempotent. Ships with a `--check` flag for CI dry-run.
+- [ ] **E2** Build-hash validation in singleton meta files.
+      `start_*` writes `git rev-parse HEAD || sha256(binary)` into
+      the meta JSON; clients refuse to attach to a singleton whose
+      hash doesn't match the current binary and tear it down
+      (rather than silently producing "No mounts found" on a
+      protocol mismatch).
+- [ ] **E3** Move stale FP domain bulk cleanup from the test exit
+      path to the test entry path. Today
+      `cleanup_all_stale_mounts()` only runs in the no-mounts-test
+      and on `Drop`; if a previous run aborted, the next run sees
+      60+ accumulated CloudStorage entries and the FP discovery
+      diff fails.
+
+#### Phase F — Diagnostics & observability
+
+- [ ] **F1** `assert_mount_status!` macro that captures full
+      diagnostic context on failure: manager binary path, manager
+      PID, socket path, log file tail, raw command stdout/stderr,
+      JSON value (when applicable). Replaces the bare
+      `assert!(stdout.contains("nfs"), "...")` pattern that hides
+      the failure root cause.
+- [ ] **F2** `MountSingletonHandle::diagnostic_dump(&self) -> String`
+      that returns a structured snapshot (PID, socket path, lock
+      file path, last 50 lines of manager log) for inclusion in
+      panic messages. Wired into HLT-* test panics by default.
+- [ ] **F3** Inline tail-of-log dumps in mount test panics. When a
+      mount integration test fails, automatically slurp the last
+      100 lines of the manager log and the server log into the
+      panic message via `panic::set_hook`. Currently logs are
+      written to disk and never surface unless I grep manually.
+
+#### Phase G — Test isolation
+
+- [ ] **G1** `MountSingletonScope::Owned` variant — explicit opt-in
+      for tests that need a fresh manager+server because they
+      mutate global state (kill, unmount --all, mount/unmount
+      cycles). Default stays `Shared` for read-only/additive
+      tests. The choice is per-test, not per-file.
+- [ ] **G2** PID-locked sentinel files for singletons. Use the
+      already-imported `fs4` crate to take an exclusive lock on
+      the meta file when a singleton is owned, write `{pid,
+      build_hash, started_at, socket}` JSON inside the lock.
+      Detect stale locks (PID gone) and reclaim them safely.
+- [ ] **G3** `MountTempDir` RAII helper that registers itself with
+      a process-wide cleanup list and is reaped via
+      `panic::set_hook` even when a test panics. Today
+      `assert_fs::TempDir` cleans on `Drop` but a panic
+      mid-`new_std_cmd` skips the drop and leaks the dir.
+
+#### Phase H — Coverage gaps
+
+- [ ] **H1** Wire format compatibility tests. Frozen JSON fixtures
+      under `distant-core/src/protocol/fixtures/v0.21.0/*.json`
+      cover every request/response variant. The test loads each
+      fixture and asserts it round-trips through the current
+      types. Catches breaking changes like the
+      `MountInfo.status: String → MountStatus` flip before they
+      ship. Inspired by
+      [`gitoxide`'s pack-format snapshots](https://github.com/Byron/gitoxide).
+- [ ] **H2** HLT-01..04 + EVT-01..02 (deferred from Phase 5).
+      Needs:
+      - `with_isolated_sshd` test fixture that owns a
+        single-test sshd and can `kill -9` + restart it on demand.
+      - `EventCapture` fixture that subscribes to the manager
+        bus, buffers events into a channel, and provides
+        `expect_within(timeout, predicate)` assertions.
+      - HLT-01 healthy steady state, HLT-02 connection drop →
+        disconnected, HLT-03 reconnect → active, HLT-04 backend
+        failure → failed, EVT-01 generic subscribe, EVT-02 mount
+        events on the same subscription.
+- [ ] **H3** Cross-version singleton compatibility test. Build
+      the binary at `master`, write its hash into a meta file,
+      then connect with the current binary and assert the manager
+      either accepts the request (backwards compatible) or
+      refuses cleanly with a version error (not silently empty).
+      Uses `cargo build --release --target-dir target/compat-test`
+      with a known-good baseline tag.
+- [ ] **H4** Soak / leak detection tests (gated `#[ignore]`,
+      run via `cargo nextest run --run-ignored only`). Loop
+      mount/unmount/list for N minutes and assert process count,
+      open FD count, and `$TMPDIR/distant-test-*` file count
+      stay flat. Catches the kind of leaks that produced the 60+
+      orphaned CloudStorage dirs over time.
+- [ ] **H5** Per-backend probe tests, one per backend, that
+      simulate the backend's failure mode and assert the probe
+      returns `Failed`:
+      - NFS: kill the in-process NFS listener task → probe
+        Failed within 1s
+      - FUSE: externally `umount -f` the mount point → probe
+        Failed within 1s
+      - FileProvider: `removeDomain` via `NSFileProviderManager`
+        directly → probe Failed within 1s
+      - WCF: `CfDisconnectSyncRoot` directly → probe Failed
+        within 1s
+      Layered on top of Phase 4's coarse "task ended" probe once
+      the granular per-backend probes land.
+- [ ] **H6** Property-based round-trip tests with `proptest` for
+      every protocol type
+      (`MountStatus`, `Event`, `EventTopic`,
+      `ManagerRequest`, `ManagerResponse`, `MountInfo`,
+      `ConnectionState`). Catches edge-case serde regressions
+      that hand-written round-trip tests miss. Inspired by
+      [`tokio`'s use of proptest for codec testing].
+
+#### Phase I — Test infrastructure simplification
+
+- [ ] **I1** Typed `DistantCmd` builder in
+      `distant-test-harness::cmd`. Fluent API:
+      ```rust
+      DistantCmd::new(ctx)
+          .status()
+          .show(ResourceKind::Mount)
+          .format_json()
+          .run()
+          .expect_success()
+          .json::<Vec<MountInfo>>()
+      ```
+      Each method maps to a real CLI flag, so subcommand typos
+      (like the `manager list` and `client kill` mistakes I made
+      writing HLT-05) become compile errors.
+- [ ] **I2** Test fixtures for common scenarios in
+      `distant-test-harness::fixtures`:
+      - `MountedHost { mount_id, mount_point, ctx, _guard }` —
+        `setup` connects + mounts + waits for ready, `Drop`
+        unmounts.
+      - `MountedSsh`, `MountedDocker` — same shape.
+      - `IsolatedManager` — owns a fresh manager+server pair for
+        one test, killed on drop.
+      - `EventCapture` — subscribed to the bus, exposes
+        `assert_eventually(predicate)`.
+- [ ] **I3** Promote `ScriptedMountHandle` from
+      `distant-core::net::manager::server::tests` into
+      `distant-test-harness::mock`. Add sibling variants:
+      - `BlockingMountHandle` — `unmount` blocks forever (tests
+        timeout handling)
+      - `FailingMountHandle` — `unmount` returns the configured
+        error
+      - `LaggyMountHandle` — `probe` sleeps for the configured
+        duration (tests interval slippage)
+- [ ] **I4** Faster build / iter cycle:
+      - Add `[profile.dev-fast]` with
+        `inherits = "dev"`, `debug = "line-tables-only"`,
+        `incremental = true`, `codegen-units = 256`. Optional
+        for local iteration.
+      - Document `mold` (Linux) / `lld` (mac) linker setup in
+        `docs/BUILDING.md`.
+      - `cargo test-mount-fast` alias that uses `--profile=dev-fast`
+        and only runs the affected crate's tests.
+
+#### Phase J — CI invocation
+
+- [ ] **J1** Tighter `[profile.mount]` in `.config/nextest.toml`:
+      - Lower retry count from 5 to 2 for mount tests so flakes
+        surface as failures faster.
+      - Mark known-flaky tests with `#[ignore = "tracking
+        #ISSUE"]`.
+      - Add `--no-tests warn` so subset filters fail loudly when
+        a typo selects no tests.
+- [ ] **J2** `scripts/test-mount-preflight.sh`. Runs E1's cleanup
+      script, verifies binaries are up-to-date (`cargo build`
+      first to avoid races), warns when sshd/Docker are
+      unavailable, prints the resolved test command. Documented
+      in `docs/TESTING.md` as the canonical way to run mount
+      tests locally.
+- [ ] **J3** `scripts/test-report.sh` that parses
+      `cargo nextest run ... --message-format=libtest-json` (or
+      the new structured event stream) and produces a
+      categorized markdown report (compilation / panic / timeout
+      / flaky / leaky). Useful for CI artifact upload.
+
+#### Phase K — Documentation & process
+
+- [ ] **K1** `docs/TESTING.md` additions:
+      - "Diagnosing flaky mount tests" recipe section
+      - "Cleaning singleton state" walkthrough (links to E1)
+      - "Why my test sees 'No mounts found'" troubleshooting
+        section
+      - Document the "preflight before mount tests" pattern
+- [ ] **K2** CLAUDE.md test author checklist. One-page checklist
+      covering: which fixture to use (Shared vs Owned
+      singleton), how to add diagnostic context to assertions,
+      when to use `proptest` vs hand-rolled cases, when to gate
+      a test with `#[ignore]`.
+
 ---
 
 ## Phase A: Production Code Fixes

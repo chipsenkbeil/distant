@@ -1246,3 +1246,835 @@ Acceptance criteria:
     subscription, no separator/section comments, proper
     `TcpListener::with_keepalive` API rather than `pub(crate)
     use` lift).
+
+---
+
+## Lessons from Phase 0–6 implementation (2026-04-07)
+
+The Network Resilience + Mount Health rollout took 17 commits across
+one extended session. The code itself is in good shape, but the test
+infrastructure surfaced enough friction to motivate a follow-up
+slice ([§ Plan: Test Quality & Stability](#plan-test-quality--stability)
+below). This section is the post-mortem inventory: every incident
+that cost more than a couple of minutes to diagnose, plus the
+underlying root cause.
+
+### Stale singleton state was the #1 friction source
+
+Phase 1 changed `MountInfo.status` from `String` to a `MountStatus`
+enum. The wire format went from `"status":"active"` to
+`"status":{"state":"active"}`. When I ran the integration suite
+afterwards, **every FP test failed silently with "No mounts
+found"**, not with a deserialization error. Root cause: the
+singleton manager process was started by an OLD binary
+(pre-Phase-1) and stayed alive across cargo invocations because
+its `--shutdown lonely=N` timer hadn't expired. The NEW client
+binary tried to deserialize the OLD wire format and silently
+produced an empty list.
+
+I diagnosed this by accident — `pkill -f "Distant.app/Contents/MacOS/distant"`
++ removing the lock files, then re-running, and seeing every test
+go green. Without `pkill` knowledge I might have spent hours on
+the wrong path (e.g. hunting for a regression in my Phase 1 code).
+
+**Direct fixes**: Phase E1 (cleanup script), E2 (build hash
+validation in singleton meta files so the next attach detects the
+mismatch and tears the singleton down rather than silently
+failing).
+
+### "No mounts found" was uninformative
+
+The status integration test fails with:
+```
+panicked at tests/cli/mount/status.rs:28:5:
+[Host/macos-file-provider] status --show mount should include
+backend name 'macos-file-provider', got:
+No mounts found
+```
+
+That message tells me NOTHING about which manager was queried,
+which binary handled the request, what socket was used, or what
+the manager actually returned. To diagnose I had to (a) re-run
+with `--no-capture` (a flag I had to Google), (b) discover which
+PID the test reused vs spawned, (c) `tail` the manager log file
+manually.
+
+**Direct fixes**: Phase F1 (verbose failure context macro), F2
+(diagnostic dump on the singleton handle), F3 (inline log tail
+in panic messages).
+
+### Test harness compilation was fragile under feature subsets
+
+When I tried to run `cargo test --all-features -p distant-host
+--lib` to verify a small slice of the workspace, the
+`distant-test-harness` failed to compile:
+
+```
+error[E0433]: failed to resolve: could not find `mount` in the
+crate root
+   --> distant-test-harness/src/singleton.rs:422:12
+    |
+422 |     crate::mount::install_test_app().expect(...);
+```
+
+Root cause: `start_file_provider` referenced
+`crate::mount::install_test_app()` unconditionally even though
+the `mount` module was gated behind `feature = "mount"`. This
+was a pre-existing bug; I fixed it as a one-line cfg gate
+(commit `2b1a2bf`), but the underlying problem is that the test
+harness has multiple cross-cutting feature gates and no CI job
+that builds with subset features.
+
+**Direct fixes**: Add a CI matrix that builds the test harness
+with the cartesian product of feature flags (covered by the
+broader Phase J work).
+
+### Cherry-pick conflict resolution was lossy
+
+PR #288 was based on a branch behind the file-mount work. Each
+of the 9 cherry-picks had at least one conflict in `server.rs`
+or `lib.rs`. I resolved them by hand. The resolution was correct
+each time, but:
+
+- I had to manually re-strip separator comments (anti-pattern
+  #11) in three plugins because the cherry-pick re-introduced them
+- I had to manually rename `notify_state_change` to
+  `publish_connection_state` in two locations across two
+  commits (a third one was missed and only caught by `cargo
+  check`)
+- I had to manually fix the `MountInfo.status` field initializer
+  twice — once in the production code (Phase 1 commit `ae850c5`)
+  and once in a test fixture that the cherry-pick brought in but
+  didn't update
+
+**Direct fixes**: Phase H1 (frozen wire-format fixtures) catches
+breaking protocol changes the moment they ship, not the next
+time someone runs the integration suite against a stale
+singleton.
+
+### Tests didn't catch the orphan-mount latent bug
+
+Until HLT-05 was added in Phase 5, no test covered the case
+"connection killed → mounts cleaned up". The bug had probably
+been latent since A7 Phase 4 (manager-owned mount lifecycle)
+shipped. It was only spotted because the explore agent in
+Phase 0 read the `kill(id)` code carefully and noticed the
+omission.
+
+**Direct fixes**: Phase H2 ships HLT-01..04 + EVT-01..02 to
+cover the rest of the lifecycle scenarios. Phase H5 covers the
+per-backend probe failure modes that the coarse Phase 4 probe
+can't catch.
+
+### Background tasks vs foreground tasks vs timeouts
+
+Several `cargo nextest run` invocations during this session
+either ran in the background and timed out (e.g. one I had to
+`TaskStop`), or hung indefinitely waiting on a stale singleton
+that was never going to respond. The default `--no-fail-fast
+--test-threads=1` invocation I used for diagnostics is slow
+(~one test per second of overhead) but easier to read.
+
+**Direct fixes**: Phase J2 (preflight script) avoids the stale
+singleton hangs, J1 (tighter retry policy) makes flakes surface
+faster, J3 (test result triage) makes async runs easier to skim.
+
+### Build cycle is 10–30s of latency between commits
+
+Each commit needed `cargo fmt + cargo clippy + cargo test`.
+On the file-mount branch with my hardware, this was ~25 seconds
+of wall clock per cycle. Across 17 commits that's ~7 minutes of
+pure linker latency. Not catastrophic but adds up.
+
+**Direct fixes**: Phase I4 documents the `mold`/`lld` linker
+setup and adds a `dev-fast` profile.
+
+### Test author boilerplate is too high
+
+The HLT-05 test I wrote in Phase 5 had two CLI subcommand typos
+on the first attempt:
+- `manager list` (doesn't exist; correct is `status --show
+  connection`)
+- `client kill` (doesn't exist; correct is just `kill`)
+
+Both took one full test run + grep + edit to fix. A typed
+command builder would have caught both at compile time.
+
+**Direct fixes**: Phase I1 (typed `DistantCmd` builder), I2
+(reusable fixtures so a test author doesn't have to assemble
+connect+mount+verify from scratch each time).
+
+### Flakes are masked by retries
+
+The full mount integration run reported `228 tests run: 228
+passed (3 slow, 6 flaky, 1 leaky)`. The 6 flakes silently
+retried up to 5 times each and eventually passed. That's
+acceptable for landing a green build, but it papers over real
+intermittent issues that will get worse as the test suite
+grows. There's no tracking issue list for the flaky 6, no
+characterization of WHICH backends they hit, and no decision
+to either fix them or quarantine them with `#[ignore]`.
+
+**Direct fixes**: Phase J1 (lower retry budget so flakes show
+up), Phase H4 (soak tests to characterize the underlying
+leaks).
+
+---
+
+## Plan: Test Quality & Stability
+
+> **Active plan as of 2026-04-07.** This is the next slice after
+> Network Resilience + Mount Health. Each phase below is driven by
+> a specific incident in
+> [§ Lessons from Phase 0–6 implementation](#lessons-from-phase-06-implementation-2026-04-07).
+> Cross-referenced from
+> [PROGRESS.md § Phases E–K](PROGRESS.md#phases-ek--test-quality--stability-next-slice).
+
+### Plan goals
+
+1. **Singleton state is hygienic by default.** Stale state from a
+   previous run never silently affects the next run. Wire-format
+   mismatches between the singleton binary and the test client are
+   detected at attach time and resolved by tearing the singleton
+   down, not by producing empty lists.
+2. **Failures are self-explanatory.** When a mount integration
+   test fails, the panic message contains everything I'd otherwise
+   have to dig out by hand: manager binary path, PID, socket,
+   command line, full stdout/stderr, last N lines of the relevant
+   log files. No "go grep the log" step.
+3. **The test author surface is small.** Writing a new mount
+   integration test should be ~10 lines of code, not 50. Common
+   scenarios live in fixtures; CLI commands are constructed via a
+   typed builder; `Drop` cleanup is automatic.
+4. **Coverage gaps from Phase 5 are closed.** HLT-01..04 +
+   EVT-01..02 ship with proper sshd-kill orchestration. Wire
+   format compatibility tests catch breaking changes the moment
+   they ship. Per-backend probe failure modes are covered.
+5. **Flakes surface early.** Lower the retry budget for mount
+   tests, mark known-flaky tests with `#[ignore]` and a tracking
+   issue, periodically run soak tests to detect resource leaks.
+6. **Documentation closes the loop.** TESTING.md walks new
+   contributors through the diagnostic recipes I had to discover
+   the hard way.
+
+### Plan agent usage
+
+Same pipeline as Network Resilience + Mount Health:
+
+1. **rust-explorer** — research existing test infrastructure, find
+   reusable utilities, identify hot spots.
+2. **rust-coder** — implement each phase. Run **once per
+   sub-phase** to keep blast radius small.
+3. **code-validator** — mandatory after each step that touches
+   production code or harness code (BLOCKING).
+4. **test-implementor** — for new test fixtures and the new
+   HLT/EVT tests in Phase H2. **This time around use the agent
+   instead of writing tests directly** — the HLT-05 test had two
+   CLI typos that the test-validator agent would have caught.
+5. **test-validator** — mandatory after every test-implementor
+   run (BLOCKING).
+
+### Phases at a glance
+
+| Phase | Theme | Key deliverable |
+|---|---|---|
+| **E** | State hygiene | Cleanup script, build-hash validation, FP domain bulk reset |
+| **F** | Diagnostics | `assert_mount_status!`, singleton diagnostic dump, inline log tail |
+| **G** | Test isolation | Owned-singleton scope, PID-locked sentinels, RAII tempdirs |
+| **H** | Coverage | Wire-format fixtures, HLT-01..04 + EVT-01..02, cross-version, soak, per-backend probes, proptest |
+| **I** | Simplification | `DistantCmd` builder, fixture set, mock handles, dev-fast profile |
+| **J** | CI | nextest profile tweaks, preflight script, result triage |
+| **K** | Documentation | TESTING.md additions, CLAUDE.md test author checklist |
+
+### Phase E — State hygiene
+
+#### E1 · `scripts/test-mount-clean.sh`
+
+A single idempotent shell script that the test-author runs (or
+that CI invokes via a pre-flight hook) to bring the system back
+to a known-clean state. Concretely:
+
+1. `pkill -f '/Applications/Distant.app/Contents/MacOS/distant'`
+2. `pkill -f 'DistantFileProvider.appex'`
+3. `pkill -f 'target/debug/distant'`
+4. `pkill -f 'target/release/distant'`
+5. `rm -f $TMPDIR/distant-test-*-*.{lock,meta,sock}`
+6. `rm -rf $TMPDIR/distant-test-mount-shared-*`
+7. `distant unmount --include-all-macos-file-provider-domains`
+   (best effort, with a 5s timeout)
+8. Optional `--check` flag dry-runs everything and prints what
+   would be done; useful for CI dry-run.
+
+Acceptance: running the script before a flaky FP test sequence
+consistently produces a green test run; running it twice in a
+row is a no-op (idempotent).
+
+#### E2 · Build-hash validation in singleton meta files
+
+Today the singleton meta JSON contains `{ socket, pid }`. Extend
+it to `{ socket, pid, build_hash, started_at }` where
+`build_hash` is `git rev-parse HEAD` if a git repo is available,
+otherwise `sha256(target/debug/distant)`.
+
+`get_or_start` checks the meta hash against the current binary's
+hash. Mismatch → kill the singleton (graceful: send shutdown
+signal first, then `pkill` after 2s) and start fresh. Match →
+attach as before.
+
+This is the single biggest win. It catches the **exact failure
+mode** that caused all the FP test breakage in this session
+(NEW client → OLD singleton → wire format mismatch → empty
+results).
+
+Acceptance: a test that intentionally writes a bogus
+`build_hash` to the meta file causes the next `get_or_start`
+call to tear down and recreate the singleton, not produce empty
+mount lists.
+
+#### E3 · Move stale FP domain cleanup to entry path
+
+`distant_test_harness::mount::cleanup_all_stale_mounts` already
+exists and uses
+`distant unmount --include-all-macos-file-provider-domains`. It
+runs only on the no-mounts test (`status_no_mounts_should_say_none`)
+and on `Drop` of the mount handle. Move it to also run at the
+**start** of `MountSingleton::start_file_provider`, gated by an
+"if there are more than N stale entries" check to avoid the
+performance hit on healthy systems.
+
+Acceptance: starting an FP test on a system with 100 stale
+CloudStorage entries completes the cleanup in under 5s and the
+test runs successfully.
+
+### Phase F — Diagnostics & observability
+
+#### F1 · `assert_mount_status!` macro
+
+A test-helper macro that wraps the common
+`status --show mount → grep → assert` pattern with full failure
+context. Sample usage:
+
+```rust
+let cmd = DistantCmd::new(&isolated)
+    .status()
+    .show(ResourceKind::Mount)
+    .format_json();
+assert_mount_status!(cmd, |mounts| mounts.iter().any(|m| m.backend == "nfs"));
+```
+
+On failure, the macro panic message includes:
+- The full command line that was run
+- The exit code
+- The first 200 chars of stdout
+- The first 200 chars of stderr
+- The manager binary path (resolved from PATH or the test
+  context)
+- The manager PID (read from the singleton meta file)
+- The manager log file path
+- The last 50 lines of the manager log
+
+Acceptance: the HLT-05 test (and any new HLT tests) panic with
+enough information to diagnose the failure without re-running.
+
+#### F2 · `MountSingletonHandle::diagnostic_dump`
+
+Add a method that returns a structured snapshot:
+
+```rust
+pub fn diagnostic_dump(&self) -> SingletonDiagnostic {
+    SingletonDiagnostic {
+        kind: self.kind,
+        socket: self.socket_or_pipe.clone(),
+        pid: self.read_meta_pid(),
+        build_hash: self.read_meta_build_hash(),
+        meta_path: self.meta_path(),
+        manager_log_tail: tail(self.manager_log_path(), 50),
+        server_log_tail: tail(self.server_log_path(), 50),
+    }
+}
+```
+
+Wired into `assert_mount_status!` for inclusion in panic
+messages. Also available standalone for ad-hoc test debugging.
+
+Acceptance: `format!("{}", handle.diagnostic_dump())` produces a
+~40-line human-readable block that fits in a panic message.
+
+#### F3 · Inline log tail dumps via `panic::set_hook`
+
+Install a process-wide panic hook in
+`distant_test_harness::install_test_panic_hook()` that, on
+panic in any test thread, slurps the last 100 lines of every
+known log file (read from `LogFileRegistry`) and prepends them
+to the panic message before letting the default hook run.
+
+Acceptance: a deliberate panic in a mount test produces an
+output that includes the manager log tail without any
+explicit `assert!` decoration.
+
+### Phase G — Test isolation
+
+#### G1 · `MountSingletonScope::Owned`
+
+Add an explicit per-test choice:
+
+```rust
+pub enum MountSingletonScope {
+    /// Reuse a process-wide singleton. Default. Use for
+    /// read-only and additive tests.
+    Shared,
+    /// Spawn a fresh manager+server pair for this one test.
+    /// Killed on drop. Use for tests that mutate global state
+    /// (kill, unmount --all, mount/unmount cycles).
+    Owned,
+}
+
+pub fn get_or_start_mount_with_scope(
+    ctx: &BackendCtx,
+    backend: MountBackend,
+    scope: MountSingletonScope,
+) -> MountSingletonHandle { ... }
+```
+
+The existing `get_or_start_mount` defaults to `Shared`. Tests
+that need isolation opt in via the new variant. Documented in
+the test-author checklist (Phase K2).
+
+Acceptance: HLT-05 (kill cleans mounts) uses `Owned` scope and
+no longer pollutes the shared singleton.
+
+#### G2 · PID-locked singleton sentinel files
+
+Use `fs4::FileExt::try_lock_exclusive` (already a dependency)
+on the singleton meta file. Lock holders write
+`{ pid, build_hash, started_at }` JSON inside the lock; lock
+attempts fail fast if another process holds the lock. Stale
+locks (PID gone) are detected by reading the JSON, checking
+`/proc/<pid>` (or `kill -0` on macOS) for liveness, and
+forcibly clearing if dead.
+
+Acceptance: killing a singleton with `kill -9` and then
+running the next test cleanly recovers without manual lock
+file removal.
+
+#### G3 · `MountTempDir` RAII helper
+
+Wrap `assert_fs::TempDir` in a thin `MountTempDir` that
+registers itself with a process-wide cleanup list and is
+reaped via `panic::set_hook` even when a test panics
+mid-`new_std_cmd`.
+
+Acceptance: a deliberately panicking test doesn't leak temp
+dirs to `$TMPDIR/distant-test-mount-shared-*`.
+
+### Phase H — Coverage
+
+#### H1 · Wire format compatibility tests
+
+Frozen JSON fixtures under
+`distant-core/src/protocol/fixtures/v0.21.0/`:
+
+```
+fixtures/v0.21.0/
+  mount_info_active.json
+  mount_info_failed.json
+  mount_info_reconnecting.json
+  manager_request_subscribe.json
+  manager_response_event_connection_state.json
+  manager_response_event_mount_state.json
+  ...
+```
+
+A single test loads each fixture and asserts it round-trips
+through the current types. When a wire format breaks, the test
+fails with the diff between the fixture and the current
+serialization, plus a hint to either bump the version directory
+or update the fixture intentionally.
+
+Inspired by [`gitoxide`'s pack format snapshot
+tests](https://github.com/Byron/gitoxide/tree/main/gix-pack/tests/fixtures).
+
+Acceptance: a hypothetical change to `MountStatus` that adds a
+new variant in the middle (which would shift JSON tag values
+in some serde shapes) causes this test to fail with an
+actionable message.
+
+#### H2 · HLT-01..04 + EVT-01..02 (deferred from Phase 5)
+
+Implement the remaining health-monitoring CLI tests using the
+fixtures from Phase I2. Specifically:
+
+- **HLT-01 healthy steady state**: mount, sleep `interval +
+  1s`, assert `state: active` via the JSON status output.
+- **HLT-02 connection drop → disconnected**: mount,
+  `distant kill <connection_id>`, poll status until
+  `disconnected` (10s timeout), then cleanup. Note: today the
+  kill-leak fix removes the mount entirely; HLT-02 needs an
+  alternative mechanism to drop the connection without
+  cleaning the mounts (e.g. simulate sshd death so the
+  connection state machine sees a transport drop). Use the
+  `with_isolated_sshd` fixture.
+- **HLT-03 reconnect → active** (SSH only): mount, kill sshd,
+  restart sshd, poll status for `active` within 30s. Skip with
+  `[skipped: ssh-only]` for non-SSH backends.
+- **HLT-04 backend failure → failed**: backend-specific
+  injection. For FUSE: `umount -f` the mount point and assert
+  `state: failed`. For NFS: kill the in-process NFS listener
+  via a debug RPC (or process signal). Skip for FP/WCF in the
+  first cut.
+- **EVT-01 generic subscribe**: spawn a long-running
+  `distant shell`, kill the underlying connection, assert the
+  shell's stderr contains `[distant] connection N:
+  reconnecting` followed by either `connected` or
+  `disconnected`. Use `EventCapture` (Phase I2) instead of
+  parsing stderr.
+- **EVT-02 mount events on the same subscription**: same
+  setup as EVT-01 but with a mount; assert the stderr contains
+  `[distant] mount N: failed (...)` after `umount -f`.
+
+Acceptance: all six tests pass on macOS in the `mount-integration`
+nextest group.
+
+#### H3 · Cross-version singleton compatibility
+
+A single test that:
+
+1. Builds the binary at the most recent tagged release into
+   `target/compat-baseline/distant`.
+2. Spawns a singleton manager using the baseline binary.
+3. Runs `distant status --show mount` using the **current**
+   binary against the baseline manager's socket.
+4. Asserts one of two outcomes:
+   - The status request succeeds (forward compatible).
+   - The status request fails with a clear "version mismatch"
+     error (not silently empty results).
+
+Acceptance: the test catches the exact failure mode I hit
+this session — NEW client + OLD manager → empty results — and
+reports it as an actionable test failure.
+
+#### H4 · Soak / leak detection tests
+
+Long-running mount/unmount cycles, gated `#[ignore]`, opt-in
+via `cargo nextest run --run-ignored only -E
+'test(soak::)'`. For each backend:
+
+```rust
+#[ignore]
+#[test_log::test]
+fn nfs_mount_unmount_cycle_should_not_leak() {
+    let baseline_pids = count_distant_processes();
+    let baseline_fds = count_open_fds();
+    let baseline_tmpfiles = count_tmpfiles();
+
+    for _ in 0..100 {
+        let mp = MountProcess::spawn(...);
+        drop(mp);
+    }
+
+    assert_eq!(count_distant_processes(), baseline_pids);
+    assert_eq!(count_open_fds(), baseline_fds);
+    assert_eq!(count_tmpfiles(), baseline_tmpfiles);
+}
+```
+
+Acceptance: 100 cycles complete without growing process,
+file-descriptor, or tempfile counts beyond a 10% slack
+margin.
+
+#### H5 · Per-backend probe tests
+
+Once Phase 4's coarse "task ended" probes are augmented with
+granular per-backend signals (NFS server task, FUSE
+BackgroundSession, FP runtime ready, WCF watcher), each
+backend gets a probe-specific test that simulates that
+backend's failure mode and asserts the probe returns
+`Failed` within 1s:
+
+- **NFS**: kill the in-process NFS accept loop via a debug
+  helper → probe `Failed("nfs server task exited")`
+- **FUSE**: externally `umount -f` the mount point → probe
+  `Failed("fuse session ended")`
+- **FileProvider**: `removeDomain` via `NSFileProviderManager`
+  directly (bypassing `unmount`) → probe `Failed("FileProvider
+  domain X no longer registered")` (already covered by
+  Phase 4's check, but the test locks it in)
+- **WCF**: `CfDisconnectSyncRoot` directly → probe
+  `Failed("watcher thread exited")`
+
+Acceptance: each backend's probe test passes after its
+granular probe is implemented; tests are gated `#[cfg]` so
+they only run on platforms where the backend is available.
+
+#### H6 · Property-based round-trip tests
+
+Use `proptest` to generate arbitrary instances of every
+protocol type and assert `T::deserialize(serde_json::to_value(&t)?) ==
+t` round-trips losslessly. For each:
+
+- `MountStatus`
+- `Event`
+- `EventTopic`
+- `MountInfo`
+- `ConnectionState`
+- `ManagerRequest` (the variants that are `Clone + Eq` —
+  exclude variants that contain `UntypedRequest`)
+- `ManagerResponse` (same exclusions)
+
+Acceptance: every variant of every type survives 256
+randomly-generated values without panicking or producing a
+mismatched result.
+
+### Phase I — Test infrastructure simplification
+
+#### I1 · Typed `DistantCmd` builder
+
+Add `distant-test-harness::cmd::DistantCmd` with a fluent API
+that maps directly onto the CLI subcommands:
+
+```rust
+let mounts: Vec<MountInfo> = DistantCmd::new(&ctx)
+    .status()
+    .show(ResourceKind::Mount)
+    .format_json()
+    .run()
+    .expect_success()
+    .parse_json()?;
+
+let connection_id = DistantCmd::new(&ctx)
+    .status()
+    .show(ResourceKind::Connection)
+    .format_json()
+    .run()
+    .expect_success()
+    .parse_json::<ConnectionList>()?
+    .first_id();
+
+DistantCmd::new(&ctx)
+    .kill(connection_id)
+    .run()
+    .expect_success();
+```
+
+Each method maps to a real CLI flag, so subcommand typos
+become **compile errors**, not runtime panics. Documented
+inline so test authors know which builder method maps to which
+CLI invocation.
+
+Acceptance: rewriting the HLT-05 test using `DistantCmd` makes
+it ~30% shorter and the two CLI typos I made on the first try
+become compile errors.
+
+#### I2 · Test fixtures for common scenarios
+
+Add `distant-test-harness::fixtures` with:
+
+- `MountedHost::setup() -> Self` — connects to the host
+  singleton, mounts NFS at a fresh tempdir, returns a fixture
+  whose `Drop` unmounts and cleans up.
+- `MountedSsh`, `MountedDocker` — same shape, backed by their
+  respective singletons.
+- `IsolatedManager::setup() -> Self` — owns a fresh
+  manager+server, killed on drop. Used by tests that mutate
+  global state.
+- `EventCapture::subscribe(ctx, topics) -> Self` — opens a
+  subscription, drains events into a `Vec<Event>` in the
+  background, exposes
+  `assert_eventually(timeout, predicate)` and
+  `assert_no_event_within(timeout, predicate)`.
+
+Acceptance: the existing `status_should_show_active_mount`
+test rewrites to <15 lines using fixtures.
+
+#### I3 · Promote `ScriptedMountHandle` to `distant-test-harness`
+
+Move the `ScriptedMountHandle` test double from
+`distant-core::net::manager::server::tests` into a new
+`distant-test-harness::mock` module. Add sibling variants:
+
+- `BlockingMountHandle::new()` — `unmount` blocks forever
+  (tests timeout handling)
+- `FailingMountHandle::new(error)` — `unmount` returns the
+  configured `io::Error`
+- `LaggyMountHandle::new(probe_delay)` — `probe` sleeps for
+  the configured duration before responding (tests
+  `mount_health_interval` slippage)
+
+Acceptance: the existing `monitor_mount_*` unit tests in
+`distant-core::net::manager::server::tests` rewrite to import
+from `distant-test-harness::mock` and the inline definition is
+removed.
+
+#### I4 · Faster build / iter cycle
+
+1. Add `[profile.dev-fast]` to the workspace `Cargo.toml`:
+   ```toml
+   [profile.dev-fast]
+   inherits = "dev"
+   debug = "line-tables-only"
+   incremental = true
+   codegen-units = 256
+   opt-level = 0
+   ```
+2. Document `mold` (Linux) / `lld` (mac) linker setup in
+   `docs/BUILDING.md`. On macOS this means a `[target.x86_64-apple-darwin]
+   linker = "clang"` + `rustflags = ["-C", "link-arg=-fuse-ld=lld"]`
+   stanza in `~/.cargo/config.toml`.
+3. Add a `cargo test-mount-fast` alias in `.cargo/config.toml`
+   that runs `nextest run --profile=dev-fast --all-features
+   -p distant -E 'test(mount::)'`.
+
+Acceptance: a no-op recompile of `distant-core` after touching
+a single line drops from ~25s to ~10s on the reference
+hardware.
+
+### Phase J — CI invocation
+
+#### J1 · `.config/nextest.toml` profile tweaks for mount tests
+
+- Lower the retry count from 5 to 2 for the
+  `mount-integration` test group. Flakes that needed 3+
+  retries are real bugs and should fail the run so they get
+  triaged.
+- Mark the 6 currently-flaky tests with `#[ignore = "tracking
+  #ISSUE"]` until the underlying flakiness is fixed.
+- Add `--no-tests warn` (or `error` in CI) so subset filters
+  that match zero tests fail loudly. Today a typo in the
+  filter silently runs zero tests.
+
+Acceptance: a known-flaky test fails the build twice in a row,
+prompting a triage decision (fix or ignore with tracking
+issue).
+
+#### J2 · `scripts/test-mount-preflight.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. Clean stale state
+"$(dirname "$0")/test-mount-clean.sh"
+
+# 2. Build binaries first to avoid races between cargo build
+#    and the test installer
+cargo build --all-features
+
+# 3. Verify dependencies
+command -v sshd >/dev/null || echo "WARNING: sshd not found, SSH tests will be skipped"
+command -v docker >/dev/null || echo "WARNING: docker not found, Docker tests will be skipped"
+
+# 4. Print the canonical test command and exit
+echo "Ready. Run: cargo nextest run --all-features -p distant -E 'test(mount::)'"
+```
+
+Documented in `docs/TESTING.md` as the one-line preflight
+before mount tests. Acceptance: running the preflight before
+a fresh mount test run produces a green build without any
+manual `pkill`/`rm -f` intervention.
+
+#### J3 · `scripts/test-report.sh`
+
+Parses `cargo nextest run ... --message-format=libtest-json`
+output and produces a categorized markdown report:
+
+```markdown
+# Test Report (2026-04-07)
+
+## Summary
+- 228 tests run, 222 passed, 6 flaky-passed, 0 failed
+
+## Categories
+### Compilation: 0
+### Panic: 0
+### Timeout: 0
+### Flaky (passed on retry): 6
+- cli::mount::edge_cases::rapid_write_read_should_not_corrupt::case_1_host_nfs (3 attempts)
+- cli::mount::file_create::create_file_should_appear_on_remote::case_4_ssh_fuse (2 attempts)
+- ...
+```
+
+Useful for CI artifact upload and historical trend
+analysis. Acceptance: running the report after a flaky test
+run produces an actionable list of which tests need triage.
+
+### Phase K — Documentation & process
+
+#### K1 · `docs/TESTING.md` additions
+
+Add three new sections:
+
+1. **Diagnosing flaky mount tests**: walks through the
+   diagnostic recipes I had to discover this session
+   (`--no-capture`, `--test-threads=1`, log file paths,
+   manager PID lookup, singleton state inspection).
+2. **Cleaning singleton state**: explains the
+   `scripts/test-mount-clean.sh` workflow (Phase E1) and
+   when to run it.
+3. **Why my test sees "No mounts found"**: troubleshooting
+   section with the top 5 root causes (stale singleton, wire
+   format mismatch, wrong socket, plugin not registered,
+   manager log shows registration errors).
+
+Acceptance: a contributor unfamiliar with the suite can
+diagnose a flaky FP test using only TESTING.md as a guide.
+
+#### K2 · CLAUDE.md test author checklist
+
+A one-page checklist in CLAUDE.md (or referenced from there)
+covering:
+
+- [ ] Did you choose the right singleton scope? (Shared for
+      read-only/additive, Owned for state-mutating)
+- [ ] Does every assertion include diagnostic context? (Use
+      `assert_mount_status!`)
+- [ ] If you're testing a wire format change, did you add a
+      fixture in `protocol/fixtures/v0.21.0/`?
+- [ ] If you're testing a backend probe, did you wire it
+      through the per-backend probe test in Phase H5?
+- [ ] If you're using `proptest`, did you cap the cases to
+      ~256 to keep the test runtime reasonable?
+- [ ] If you're adding a new test that's expected to be
+      slow, did you mark it `#[ignore]` and document the
+      `cargo nextest run --run-ignored only` invocation?
+- [ ] Did you spawn the test through the test-implementor
+      agent and gate it with test-validator? (Per CLAUDE.md
+      pipeline rules.)
+
+### Phase ordering & dependencies
+
+```
+E1 (cleanup script) ──→ J2 (preflight)
+E2 (build hash)     ──→ E1 picks up the kill recipe
+E3 (FP cleanup)     ──→ independent
+
+F1 (assert macro)   ──→ I1 (DistantCmd) [F1 uses the builder for context]
+F2 (singleton dump) ──→ F1 [F1 includes F2's output]
+F3 (panic hook)     ──→ independent
+
+G1 (Owned scope)    ──→ H2 (HLT tests use Owned scope)
+G2 (PID locks)      ──→ E1, E2 [cleanup scripts must respect locks]
+G3 (RAII tempdirs)  ──→ independent
+
+H1 (wire fixtures)  ──→ blocks any future protocol-level change
+H2 (HLT tests)      ──→ G1, I2
+H3 (cross-version)  ──→ E2 [needs build-hash plumbing]
+H4 (soak)           ──→ G3 [needs reliable cleanup]
+H5 (per-backend)    ──→ blocked on granular probe implementations
+H6 (proptest)       ──→ independent
+
+I1 (DistantCmd)     ──→ I2, F1 [fixtures and macros use the builder]
+I2 (fixtures)       ──→ I1
+I3 (mock handles)   ──→ independent
+I4 (faster builds)  ──→ independent
+
+J1 (nextest tweaks) ──→ independent
+J2 (preflight)      ──→ E1
+J3 (report)         ──→ independent
+
+K1 (TESTING.md)     ──→ blocks on E1, F1, J2 (documents them)
+K2 (checklist)      ──→ blocks on G1, I1, I2, H1
+```
+
+The natural execution order is E → I → F → G → H → J → K, but
+several phases inside E and I are independent and can run in
+parallel.
