@@ -3,6 +3,7 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::*;
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
@@ -17,7 +18,7 @@ use crate::net::manager::{
     ManagerChannelId, ManagerRequest, ManagerResponse, SemVer,
 };
 use crate::net::server::{RequestCtx, Server, ServerHandler, ServerReply};
-use crate::plugin::{MountHandle, Plugin, extract_scheme};
+use crate::plugin::{MountHandle, MountProbe, Plugin, extract_scheme};
 use crate::protocol::{MountInfo, MountStatus};
 
 mod authentication;
@@ -36,11 +37,20 @@ mod tunnel;
 pub use tunnel::*;
 
 /// A mount whose lifecycle is managed by the manager process.
-#[allow(dead_code)]
+///
+/// `info` is wrapped in `Arc<RwLock<...>>` so the per-mount monitor
+/// task can publish state transitions without holding the outer
+/// `self.mounts` write lock for the duration of the update. `handle`
+/// is wrapped in `Arc<Mutex<Option<...>>>` so the monitor can call
+/// `probe(&self)` while the unmount path retains exclusive access
+/// (it `.lock().await.take()`s the inner value during teardown).
 struct ManagedMount {
-    info: MountInfo,
-    handle: Box<dyn MountHandle>,
+    info: Arc<RwLock<MountInfo>>,
+    handle: Arc<tokio::sync::Mutex<Option<Box<dyn MountHandle>>>>,
     manager_channel: ManagerChannel,
+    /// Per-mount monitor task. Aborted on unmount and on
+    /// connection kill.
+    monitor: tokio::task::JoinHandle<()>,
 }
 
 /// Represents a manager of multiple server connections.
@@ -267,6 +277,43 @@ impl ManagerServer {
                         t.abort();
                     }
                 }
+                drop(tunnels);
+
+                // Tear down mounts belonging to this connection. Without
+                // this loop, killing an SSH/Host/Docker connection that
+                // had mounts on it would orphan the mounts in the map
+                // with stale `Active` status.
+                let mount_ids: Vec<u32> = {
+                    let mounts = self.mounts.read().await;
+                    let mut matching = Vec::new();
+                    for (mount_id, mount) in mounts.iter() {
+                        if mount.info.read().await.connection_id == id {
+                            matching.push(*mount_id);
+                        }
+                    }
+                    matching
+                };
+                if !mount_ids.is_empty() {
+                    let removed: Vec<(u32, ManagedMount)> = {
+                        let mut mounts = self.mounts.write().await;
+                        mount_ids
+                            .iter()
+                            .filter_map(|mid| mounts.remove(mid).map(|m| (*mid, m)))
+                            .collect()
+                    };
+                    for (mid, mount) in removed {
+                        debug!("[Conn {id}] Aborting mount {mid}");
+                        mount.monitor.abort();
+                        let mut handle_slot = mount.handle.lock().await;
+                        if let Some(mut handle) = handle_slot.take()
+                            && let Err(e) = handle.unmount().await
+                        {
+                            warn!("[Conn {id}] Unmount of mount {mid} failed: {e}");
+                        }
+                        drop(handle_slot);
+                        let _ = mount.manager_channel.close();
+                    }
+                }
 
                 // Make sure the connection is aborted so nothing new can happen
                 debug!("[Conn {id}] Aborting");
@@ -367,6 +414,164 @@ fn publish_connection_state(
     state: ConnectionState,
 ) {
     let _ = event_tx.send(Event::ConnectionState { id, state });
+}
+
+/// Publishes a [`MountStatus`] change as an [`Event::MountState`] on the
+/// broadcast bus.
+fn publish_mount_state(event_tx: &broadcast::Sender<Event>, id: u32, state: MountStatus) {
+    let _ = event_tx.send(Event::MountState { id, state });
+}
+
+/// Maps a [`MountProbe`] to a target [`MountStatus`] for the per-mount
+/// monitor task.
+///
+/// Returns `None` when the probe should not change the current state
+/// (e.g. `Healthy` while already `Active`, or `Degraded` which is
+/// informational only).
+fn probe_to_status(probe: MountProbe, current: &MountStatus) -> Option<MountStatus> {
+    match probe {
+        MountProbe::Healthy => match current {
+            MountStatus::Active => None,
+            // A successful probe restores any non-terminal state.
+            MountStatus::Reconnecting | MountStatus::Disconnected => Some(MountStatus::Active),
+            MountStatus::Failed { .. } => None,
+        },
+        MountProbe::Degraded(_) => None,
+        MountProbe::Failed(reason) => match current {
+            MountStatus::Failed { .. } => None,
+            _ => Some(MountStatus::Failed { reason }),
+        },
+    }
+}
+
+/// Maps a [`ConnectionState`] change to a target [`MountStatus`].
+///
+/// Returns `None` when the connection state should not change the
+/// mount's current state.
+fn connection_state_to_mount_status(
+    state: ConnectionState,
+    current: &MountStatus,
+) -> Option<MountStatus> {
+    match (state, current) {
+        // Connection coming back restores Reconnecting/Disconnected
+        // mounts to Active. Active mounts are already there.
+        (ConnectionState::Connected, MountStatus::Reconnecting)
+        | (ConnectionState::Connected, MountStatus::Disconnected) => Some(MountStatus::Active),
+        (ConnectionState::Connected, _) => None,
+        // Reconnecting transitions Active mounts to Reconnecting; the
+        // mount stays in any other state.
+        (ConnectionState::Reconnecting, MountStatus::Active) => Some(MountStatus::Reconnecting),
+        (ConnectionState::Reconnecting, _) => None,
+        // Disconnected transitions Active/Reconnecting mounts to
+        // Disconnected; Failed mounts are terminal.
+        (ConnectionState::Disconnected, MountStatus::Active)
+        | (ConnectionState::Disconnected, MountStatus::Reconnecting) => {
+            Some(MountStatus::Disconnected)
+        }
+        (ConnectionState::Disconnected, _) => None,
+    }
+}
+
+/// Per-mount monitor task body.
+///
+/// Polls the backend's [`MountHandle::probe`] every `interval` and
+/// reacts to [`Event::ConnectionState`] events for `connection_id`
+/// from the shared event bus. Each transition mutates
+/// `info.write().await.status` and publishes a corresponding
+/// [`Event::MountState`] event so subscribers can react.
+///
+/// Exits when:
+/// - The mount handle is dropped (Mutex contains `None`) — the
+///   unmount path takes ownership of the handle and the monitor sees
+///   `None` on its next probe.
+/// - The mount transitions to [`MountStatus::Failed`] — terminal,
+///   no point continuing to poll.
+async fn monitor_mount(
+    mount_id: u32,
+    connection_id: ConnectionId,
+    info: Arc<RwLock<MountInfo>>,
+    handle: Arc<tokio::sync::Mutex<Option<Box<dyn MountHandle>>>>,
+    event_tx: broadcast::Sender<Event>,
+    interval: Duration,
+) {
+    let mut event_rx = event_tx.subscribe();
+    let mut ticker = tokio::time::interval(interval);
+    // First tick fires immediately — burn it so we don't probe at t=0.
+    ticker.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                // Probe under the lock; the lock is held briefly and
+                // probe() is non-async by trait contract.
+                let probe = {
+                    let guard = handle.lock().await;
+                    match guard.as_ref() {
+                        Some(h) => h.probe(),
+                        None => {
+                            debug!("[Mount {mount_id}] handle dropped, monitor exiting");
+                            return;
+                        }
+                    }
+                };
+
+                let new_state = {
+                    let info_guard = info.read().await;
+                    probe_to_status(probe, &info_guard.status)
+                };
+                if let Some(new_state) = new_state {
+                    let terminal = matches!(new_state, MountStatus::Failed { .. });
+                    {
+                        let mut info_guard = info.write().await;
+                        info_guard.status = new_state.clone();
+                    }
+                    info!("[Mount {mount_id}] transitioned to {new_state:?}");
+                    publish_mount_state(&event_tx, mount_id, new_state);
+                    if terminal {
+                        return;
+                    }
+                }
+            }
+            recv = event_rx.recv() => {
+                let event = match recv {
+                    Ok(e) => e,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("[Mount {mount_id}] monitor lagged {n} events");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!("[Mount {mount_id}] event bus closed, monitor exiting");
+                        return;
+                    }
+                };
+
+                let Event::ConnectionState { id, state } = event else {
+                    // We only care about connection state changes; the
+                    // monitor publishes its own MountState events but
+                    // shouldn't react to them.
+                    continue;
+                };
+                if id != connection_id {
+                    continue;
+                }
+
+                let new_state = {
+                    let info_guard = info.read().await;
+                    connection_state_to_mount_status(state, &info_guard.status)
+                };
+                if let Some(new_state) = new_state {
+                    {
+                        let mut info_guard = info.write().await;
+                        info_guard.status = new_state.clone();
+                    }
+                    info!(
+                        "[Mount {mount_id}] connection {id} → {state}, mount → {new_state:?}"
+                    );
+                    publish_mount_state(&event_tx, mount_id, new_state);
+                }
+            }
+        }
+    }
 }
 
 /// Orchestrates reconnection for the connection with the given `id`.
@@ -673,13 +878,17 @@ impl ServerHandler for ManagerServer {
             ManagerRequest::List { ref resources } => {
                 if resources.contains(&crate::protocol::ResourceKind::Mount) {
                     debug!("Attempting to retrieve the list of mounts");
-                    let mounts: Vec<MountInfo> = self
-                        .mounts
-                        .read()
-                        .await
-                        .values()
-                        .map(|m| m.info.clone())
-                        .collect();
+                    // Snapshot info Arcs under the outer lock, then release
+                    // it before locking each individual info to avoid holding
+                    // the outer write lock across .await.
+                    let info_arcs: Vec<Arc<RwLock<MountInfo>>> = {
+                        let mounts = self.mounts.read().await;
+                        mounts.values().map(|m| Arc::clone(&m.info)).collect()
+                    };
+                    let mut mounts: Vec<MountInfo> = Vec::with_capacity(info_arcs.len());
+                    for info_arc in info_arcs {
+                        mounts.push(info_arc.read().await.clone());
+                    }
                     info!("Retrieved {} mount(s)", mounts.len());
                     ManagerResponse::Mounts { mounts }
                 } else {
@@ -879,7 +1088,7 @@ impl ServerHandler for ManagerServer {
                     Ok(handle) => {
                         let mount_id: u32 = rand::random();
                         let mount_point = handle.mount_point().to_string();
-                        let info = MountInfo {
+                        let info = Arc::new(RwLock::new(MountInfo {
                             id: mount_id,
                             connection_id,
                             backend: backend.clone(),
@@ -887,13 +1096,25 @@ impl ServerHandler for ManagerServer {
                             remote_root,
                             readonly,
                             status: MountStatus::Active,
-                        };
+                        }));
+                        let handle = Arc::new(tokio::sync::Mutex::new(Some(handle)));
+
+                        let monitor = tokio::spawn(monitor_mount(
+                            mount_id,
+                            connection_id,
+                            Arc::clone(&info),
+                            Arc::clone(&handle),
+                            self.event_tx.clone(),
+                            self.config.mount_health_interval,
+                        ));
+
                         self.mounts.write().await.insert(
                             mount_id,
                             ManagedMount {
                                 info,
                                 handle,
                                 manager_channel,
+                                monitor,
                             },
                         );
                         info!("Mounted '{backend}' at '{mount_point}' (id={mount_id})");
@@ -922,12 +1143,23 @@ impl ServerHandler for ManagerServer {
                 };
 
                 let mut unmounted = Vec::new();
-                for (id, mut mount) in removed {
-                    if let Err(e) = mount.handle.unmount().await {
-                        warn!("Unmount of mount {id} failed: {e}");
+                for (id, mount) in removed {
+                    // Abort the monitor first so it stops poking the
+                    // handle while we're tearing it down.
+                    mount.monitor.abort();
+
+                    let mut handle_slot = mount.handle.lock().await;
+                    if let Some(mut handle) = handle_slot.take() {
+                        if let Err(e) = handle.unmount().await {
+                            warn!("Unmount of mount {id} failed: {e}");
+                        } else {
+                            info!("Unmounted mount {id}");
+                        }
                     } else {
-                        info!("Unmounted mount {id}");
+                        debug!("[Mount {id}] handle already taken (monitor or other unmounter)");
                     }
+                    drop(handle_slot);
+
                     let _ = mount.manager_channel.close();
                     unmounted.push(id);
                 }
@@ -1086,14 +1318,7 @@ mod tests {
     }
 
     fn test_config() -> Config {
-        Config {
-            launch_fallback_scheme: "ssh".to_string(),
-            connect_fallback_scheme: "distant".to_string(),
-            connection_buffer_size: 100,
-            user: false,
-            plugins: HashMap::new(),
-            mount_plugins: HashMap::new(),
-        }
+        Config::default()
     }
 
     /// Create an untyped client that is detached such that reads and writes will fail
