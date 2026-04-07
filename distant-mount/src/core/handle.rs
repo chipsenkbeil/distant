@@ -38,6 +38,25 @@ impl MountHandle {
         }
     }
 
+    /// Returns `true` while the background mount task has not yet
+    /// completed. Used by [`MountHandle::probe`](distant_core::plugin::MountHandle::probe)
+    /// implementations on the wrapper to detect outer-task death
+    /// (panic or premature exit).
+    ///
+    /// Note: this is a coarse signal. The outer task only ends after
+    /// the inner backend (NFS server / FUSE BackgroundSession /
+    /// FP polling loop / WCF watcher) has been told to shut down,
+    /// so this returns `true` for the entire normal lifetime of the
+    /// mount and only flips to `false` on panic or completion.
+    /// More granular per-backend liveness checks can be layered on
+    /// top in the wrapper.
+    pub(crate) fn is_alive(&self) -> bool {
+        self.join_handle
+            .as_ref()
+            .map(|h| !h.is_finished())
+            .unwrap_or(false)
+    }
+
     /// Detaches the handle, meaning that dropping it will no longer unmount.
     pub(crate) fn detach(mut self) -> Self {
         self.unmount_on_drop = false;

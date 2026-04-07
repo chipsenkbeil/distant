@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::sync::Mutex;
 
 use distant_core::Channel;
-use distant_core::plugin::{MountHandle as MountHandleTrait, MountPlugin};
+use distant_core::plugin::{MountHandle as MountHandleTrait, MountPlugin, MountProbe};
 use distant_core::protocol::MountConfig;
 
 use crate::core::MountHandle as ConcreteMountHandle;
@@ -49,6 +49,44 @@ impl MountHandleTrait for MountHandleWrapper {
 
     fn mount_point(&self) -> &str {
         &self.mount_point
+    }
+
+    fn probe(&self) -> MountProbe {
+        // Outer-task liveness: catches panics and premature exits of
+        // the per-backend background task that owns the mount.
+        let inner = self.inner.lock().unwrap();
+        let alive = inner.as_ref().map(|h| h.is_alive()).unwrap_or(false);
+        if !alive {
+            return MountProbe::Failed("mount task ended".to_string());
+        }
+        drop(inner);
+
+        // FileProvider-specific check: the OS may have unregistered
+        // the domain (e.g. user disabled the File Providers toggle),
+        // in which case the mount is dead even though our task is
+        // still polling. Cheap O(N domains) lookup against the
+        // current domain list.
+        #[cfg(all(target_os = "macos", feature = "macos-file-provider"))]
+        if let Some(ref domain_id) = self.domain_id {
+            match crate::backend::macos_file_provider::list_file_provider_domains() {
+                Ok(domains) => {
+                    if !domains.iter().any(|d| &d.identifier == domain_id) {
+                        return MountProbe::Failed(format!(
+                            "FileProvider domain {domain_id} no longer registered"
+                        ));
+                    }
+                }
+                Err(e) => {
+                    // Listing failed — degraded but not fatal. The
+                    // OS API might be temporarily unavailable.
+                    return MountProbe::Degraded(format!(
+                        "could not list FileProvider domains: {e}"
+                    ));
+                }
+            }
+        }
+
+        MountProbe::Healthy
     }
 }
 
