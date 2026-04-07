@@ -1707,4 +1707,383 @@ mod tests {
         let (event_tx, _) = broadcast::channel::<Event>(16);
         publish_connection_state(&event_tx, 1, ConnectionState::Disconnected);
     }
+
+    #[tokio::test]
+    async fn publish_mount_state_should_broadcast_event() {
+        let (event_tx, mut event_rx) = broadcast::channel::<Event>(16);
+        publish_mount_state(&event_tx, 99, MountStatus::Reconnecting);
+        match event_rx.recv().await.unwrap() {
+            Event::MountState { id, state } => {
+                assert_eq!(id, 99);
+                assert_eq!(state, MountStatus::Reconnecting);
+            }
+            other => panic!("Expected MountState event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_to_status_healthy_returns_none_when_already_active() {
+        assert_eq!(
+            probe_to_status(MountProbe::Healthy, &MountStatus::Active),
+            None
+        );
+    }
+
+    #[test]
+    fn probe_to_status_healthy_restores_active_from_reconnecting() {
+        assert_eq!(
+            probe_to_status(MountProbe::Healthy, &MountStatus::Reconnecting),
+            Some(MountStatus::Active)
+        );
+    }
+
+    #[test]
+    fn probe_to_status_healthy_restores_active_from_disconnected() {
+        assert_eq!(
+            probe_to_status(MountProbe::Healthy, &MountStatus::Disconnected),
+            Some(MountStatus::Active)
+        );
+    }
+
+    #[test]
+    fn probe_to_status_healthy_does_not_revive_failed() {
+        let failed = MountStatus::Failed {
+            reason: "dead".into(),
+        };
+        assert_eq!(probe_to_status(MountProbe::Healthy, &failed), None);
+    }
+
+    #[test]
+    fn probe_to_status_degraded_never_changes_state() {
+        for current in [
+            MountStatus::Active,
+            MountStatus::Reconnecting,
+            MountStatus::Disconnected,
+            MountStatus::Failed { reason: "x".into() },
+        ] {
+            assert_eq!(
+                probe_to_status(MountProbe::Degraded("warning".into()), &current),
+                None,
+                "Degraded should not change {current:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn probe_to_status_failed_transitions_active_to_failed_with_reason() {
+        let probe = MountProbe::Failed("inner task ended".into());
+        let result = probe_to_status(probe, &MountStatus::Active);
+        match result {
+            Some(MountStatus::Failed { reason }) => assert_eq!(reason, "inner task ended"),
+            other => panic!("Expected Failed with reason, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_to_status_failed_does_not_re_trigger_on_already_failed() {
+        let failed = MountStatus::Failed {
+            reason: "old".into(),
+        };
+        assert_eq!(
+            probe_to_status(MountProbe::Failed("new".into()), &failed),
+            None
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_connected_restores_reconnecting() {
+        assert_eq!(
+            connection_state_to_mount_status(
+                ConnectionState::Connected,
+                &MountStatus::Reconnecting
+            ),
+            Some(MountStatus::Active)
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_connected_restores_disconnected() {
+        assert_eq!(
+            connection_state_to_mount_status(
+                ConnectionState::Connected,
+                &MountStatus::Disconnected
+            ),
+            Some(MountStatus::Active)
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_connected_does_not_change_active() {
+        assert_eq!(
+            connection_state_to_mount_status(ConnectionState::Connected, &MountStatus::Active),
+            None
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_reconnecting_transitions_active() {
+        assert_eq!(
+            connection_state_to_mount_status(ConnectionState::Reconnecting, &MountStatus::Active),
+            Some(MountStatus::Reconnecting)
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_reconnecting_does_not_change_other_states() {
+        for current in [
+            MountStatus::Reconnecting,
+            MountStatus::Disconnected,
+            MountStatus::Failed { reason: "x".into() },
+        ] {
+            assert_eq!(
+                connection_state_to_mount_status(ConnectionState::Reconnecting, &current),
+                None,
+                "{current:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_disconnected_transitions_active_and_reconnecting() {
+        assert_eq!(
+            connection_state_to_mount_status(ConnectionState::Disconnected, &MountStatus::Active),
+            Some(MountStatus::Disconnected)
+        );
+        assert_eq!(
+            connection_state_to_mount_status(
+                ConnectionState::Disconnected,
+                &MountStatus::Reconnecting
+            ),
+            Some(MountStatus::Disconnected)
+        );
+    }
+
+    #[test]
+    fn connection_state_to_mount_status_disconnected_does_not_revive_failed() {
+        let failed = MountStatus::Failed { reason: "x".into() };
+        assert_eq!(
+            connection_state_to_mount_status(ConnectionState::Disconnected, &failed),
+            None
+        );
+    }
+
+    /// Test-only [`MountHandle`] that returns scripted [`MountProbe`]
+    /// values from a shared queue. Used by the monitor_mount tests
+    /// below to drive deterministic state transitions.
+    struct ScriptedMountHandle {
+        probes: Arc<std::sync::Mutex<std::collections::VecDeque<MountProbe>>>,
+    }
+
+    impl crate::plugin::MountHandle for ScriptedMountHandle {
+        fn unmount(&mut self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn mount_point(&self) -> &str {
+            "/scripted"
+        }
+
+        fn probe(&self) -> MountProbe {
+            self.probes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(MountProbe::Healthy)
+        }
+    }
+
+    fn make_info(id: u32, connection_id: ConnectionId) -> MountInfo {
+        MountInfo {
+            id,
+            connection_id,
+            backend: "test".to_string(),
+            mount_point: "/scripted".to_string(),
+            remote_root: "/remote".to_string(),
+            readonly: false,
+            status: MountStatus::Active,
+        }
+    }
+
+    /// Helper: spawn a monitor with a scripted probe queue and a
+    /// short interval, then collect MountState events from a
+    /// subscriber until either `expected` events arrive or `timeout`
+    /// elapses.
+    async fn run_monitor_with_probes(
+        probes: Vec<MountProbe>,
+        expected: usize,
+        connection_id: ConnectionId,
+    ) -> (Vec<Event>, Arc<RwLock<MountInfo>>) {
+        let info = Arc::new(RwLock::new(make_info(7, connection_id)));
+        let probes_queue = Arc::new(std::sync::Mutex::new(probes.into()));
+        let scripted = ScriptedMountHandle {
+            probes: Arc::clone(&probes_queue),
+        };
+        let handle: Arc<tokio::sync::Mutex<Option<Box<dyn crate::plugin::MountHandle>>>> =
+            Arc::new(tokio::sync::Mutex::new(Some(Box::new(scripted))));
+        let (event_tx, mut event_rx) = broadcast::channel::<Event>(16);
+
+        let monitor = tokio::spawn(monitor_mount(
+            7,
+            connection_id,
+            Arc::clone(&info),
+            Arc::clone(&handle),
+            event_tx.clone(),
+            Duration::from_millis(50),
+        ));
+
+        let mut collected = Vec::new();
+        let deadline = tokio::time::sleep(Duration::from_secs(2));
+        tokio::pin!(deadline);
+        loop {
+            if collected.len() >= expected {
+                break;
+            }
+            tokio::select! {
+                recv = event_rx.recv() => {
+                    match recv {
+                        Ok(e) => collected.push(e),
+                        Err(_) => break,
+                    }
+                }
+                _ = &mut deadline => break,
+            }
+        }
+
+        monitor.abort();
+        (collected, info)
+    }
+
+    #[tokio::test]
+    async fn monitor_mount_publishes_failed_event_when_probe_returns_failed() {
+        let (events, info) =
+            run_monitor_with_probes(vec![MountProbe::Failed("inner task ended".into())], 1, 42)
+                .await;
+
+        assert_eq!(events.len(), 1, "expected exactly one MountState event");
+        match &events[0] {
+            Event::MountState { id, state } => {
+                assert_eq!(*id, 7);
+                assert!(matches!(state, MountStatus::Failed { .. }));
+            }
+            other => panic!("Expected MountState, got {other:?}"),
+        }
+
+        // info should reflect the terminal state
+        let info_guard = info.read().await;
+        match &info_guard.status {
+            MountStatus::Failed { reason } => assert_eq!(reason, "inner task ended"),
+            other => panic!("Expected Failed status, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn monitor_mount_reacts_to_connection_state_event() {
+        // The monitor subscribes to event_tx itself; we publish a
+        // ConnectionState event and expect a corresponding MountState
+        // transition.
+        let info = Arc::new(RwLock::new(make_info(7, 100)));
+        let probes_queue: Arc<std::sync::Mutex<std::collections::VecDeque<MountProbe>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let scripted = ScriptedMountHandle {
+            probes: Arc::clone(&probes_queue),
+        };
+        let handle: Arc<tokio::sync::Mutex<Option<Box<dyn crate::plugin::MountHandle>>>> =
+            Arc::new(tokio::sync::Mutex::new(Some(Box::new(scripted))));
+        let (event_tx, mut event_rx) = broadcast::channel::<Event>(16);
+
+        let monitor = tokio::spawn(monitor_mount(
+            7,
+            100,
+            Arc::clone(&info),
+            Arc::clone(&handle),
+            event_tx.clone(),
+            // Long interval so the ticker doesn't fire during the test
+            Duration::from_secs(60),
+        ));
+
+        // Drain any pre-existing events the monitor might publish
+        // (it shouldn't publish any since the probe queue is empty
+        // and the ticker won't fire).
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Publish a connection state change. The monitor should
+        // observe it via its subscribe() and publish a corresponding
+        // MountState event.
+        let _ = event_tx.send(Event::ConnectionState {
+            id: 100,
+            state: ConnectionState::Reconnecting,
+        });
+
+        // Drain events; expect to see our own ConnectionState plus the
+        // monitor's MountState transition.
+        let mut saw_mount_state = false;
+        let deadline = tokio::time::sleep(Duration::from_secs(2));
+        tokio::pin!(deadline);
+        loop {
+            if saw_mount_state {
+                break;
+            }
+            tokio::select! {
+                recv = event_rx.recv() => {
+                    match recv {
+                        Ok(Event::MountState { id: 7, state: MountStatus::Reconnecting }) => {
+                            saw_mount_state = true;
+                        }
+                        Ok(_) => continue,
+                        Err(_) => break,
+                    }
+                }
+                _ = &mut deadline => break,
+            }
+        }
+
+        monitor.abort();
+        assert!(
+            saw_mount_state,
+            "expected MountState::Reconnecting after ConnectionState::Reconnecting"
+        );
+
+        let info_guard = info.read().await;
+        assert_eq!(info_guard.status, MountStatus::Reconnecting);
+    }
+
+    #[tokio::test]
+    async fn monitor_mount_ignores_connection_state_for_other_connection() {
+        let info = Arc::new(RwLock::new(make_info(7, 100)));
+        let probes_queue: Arc<std::sync::Mutex<std::collections::VecDeque<MountProbe>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let scripted = ScriptedMountHandle {
+            probes: Arc::clone(&probes_queue),
+        };
+        let handle: Arc<tokio::sync::Mutex<Option<Box<dyn crate::plugin::MountHandle>>>> =
+            Arc::new(tokio::sync::Mutex::new(Some(Box::new(scripted))));
+        let (event_tx, _event_rx) = broadcast::channel::<Event>(16);
+
+        let monitor = tokio::spawn(monitor_mount(
+            7,
+            100,
+            Arc::clone(&info),
+            Arc::clone(&handle),
+            event_tx.clone(),
+            Duration::from_secs(60),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Different connection id — must NOT affect this mount.
+        let _ = event_tx.send(Event::ConnectionState {
+            id: 999,
+            state: ConnectionState::Disconnected,
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        monitor.abort();
+
+        let info_guard = info.read().await;
+        assert_eq!(
+            info_guard.status,
+            MountStatus::Active,
+            "mount status should be unaffected by other connection's state"
+        );
+    }
 }

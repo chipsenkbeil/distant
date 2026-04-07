@@ -61,6 +61,7 @@ mod file_delete;
 mod file_modify;
 mod file_read;
 mod file_rename;
+mod health;
 mod multi_mount;
 mod readonly;
 mod remote_root;

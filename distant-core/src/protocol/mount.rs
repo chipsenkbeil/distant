@@ -162,3 +162,75 @@ pub struct MountInfo {
     /// Current lifecycle state of the mount.
     pub status: MountStatus,
 }
+
+#[cfg(test)]
+mod mount_status_tests {
+    use super::*;
+
+    #[test]
+    fn mount_status_default_is_active() {
+        assert_eq!(MountStatus::default(), MountStatus::Active);
+    }
+
+    #[test]
+    fn mount_status_active_serializes_to_state_active() {
+        let json = serde_json::to_string(&MountStatus::Active).unwrap();
+        assert_eq!(json, r#"{"state":"active"}"#);
+    }
+
+    #[test]
+    fn mount_status_reconnecting_serializes_to_state_reconnecting() {
+        let json = serde_json::to_string(&MountStatus::Reconnecting).unwrap();
+        assert_eq!(json, r#"{"state":"reconnecting"}"#);
+    }
+
+    #[test]
+    fn mount_status_disconnected_serializes_to_state_disconnected() {
+        let json = serde_json::to_string(&MountStatus::Disconnected).unwrap();
+        assert_eq!(json, r#"{"state":"disconnected"}"#);
+    }
+
+    #[test]
+    fn mount_status_failed_includes_reason_in_payload() {
+        let status = MountStatus::Failed {
+            reason: "fuse session ended".to_string(),
+        };
+        let value: serde_json::Value = serde_json::to_value(&status).unwrap();
+        assert_eq!(value["state"], "failed");
+        assert_eq!(value["reason"], "fuse session ended");
+    }
+
+    #[test]
+    fn mount_status_round_trips_through_json_for_every_variant() {
+        let variants = [
+            MountStatus::Active,
+            MountStatus::Reconnecting,
+            MountStatus::Disconnected,
+            MountStatus::Failed {
+                reason: "test failure".to_string(),
+            },
+        ];
+        for original in variants {
+            let json = serde_json::to_string(&original).unwrap();
+            let decoded: MountStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, original);
+        }
+    }
+
+    #[test]
+    fn mount_status_should_reject_unknown_state() {
+        let result = serde_json::from_str::<MountStatus>(r#"{"state":"bogus"}"#);
+        assert!(result.is_err(), "expected unknown state to fail to parse");
+    }
+
+    #[test]
+    fn mount_status_should_reject_failed_without_reason() {
+        // The Failed variant requires the reason field — missing it
+        // should fail to parse rather than silently default to "".
+        let result = serde_json::from_str::<MountStatus>(r#"{"state":"failed"}"#);
+        assert!(
+            result.is_err(),
+            "expected Failed without reason to fail to parse"
+        );
+    }
+}
