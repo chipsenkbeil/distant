@@ -33,8 +33,17 @@ impl<T> ApiServerHandler<T>
 where
     T: Api,
 {
+    /// Creates a new handler that wraps the given API implementation in an [`Arc`].
     pub fn new(api: T) -> Self {
         Self { api: Arc::new(api) }
+    }
+
+    /// Creates a new handler from a pre-existing [`Arc`]-wrapped API implementation.
+    ///
+    /// This is useful when the caller needs to retain a reference to the API
+    /// (e.g., for health monitoring) while also passing it to the server handler.
+    pub fn from_arc(api: Arc<T>) -> Self {
+        Self { api }
     }
 }
 
@@ -1432,5 +1441,98 @@ mod tests {
         let resp = rx.recv().await.unwrap();
         let batch = resp.payload.into_batch().unwrap();
         assert!(batch.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::from_arc
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_creates_handler_that_dispatches_requests() {
+        let api = Arc::new(MockApi);
+        let handler = ApiServerHandler::from_arc(api);
+
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::Version {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::Version(v) => {
+                assert_eq!(v.server_version, semver::Version::new(1, 0, 0));
+                assert_eq!(v.protocol_version, semver::Version::new(0, 1, 0));
+                assert_eq!(v.capabilities, vec![String::from("test")]);
+            }
+            other => panic!("Expected Version response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_shares_api_with_caller() {
+        let api = Arc::new(MockApi);
+        let api_clone = Arc::clone(&api);
+        let handler = ApiServerHandler::from_arc(api);
+
+        // The caller still holds a reference via api_clone
+        assert_eq!(Arc::strong_count(&api_clone), 2);
+
+        // Handler still works
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::SystemInfo {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::SystemInfo(info) => {
+                assert_eq!(info.family, "unix");
+                assert_eq!(info.os, "linux");
+                assert_eq!(info.arch, "x86_64");
+            }
+            other => panic!("Expected SystemInfo response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_and_new_produce_equivalent_handlers() {
+        // from_arc handler
+        let arc_handler = ApiServerHandler::from_arc(Arc::new(MockApi));
+        let (ctx1, mut rx1) = make_request_ctx(
+            Msg::Single(protocol::Request::FileRead {
+                path: RemotePath::from("/test"),
+                options: Default::default(),
+            }),
+            Header::new(),
+        );
+        arc_handler.on_request(ctx1).await;
+        let resp1 = rx1.recv().await.unwrap();
+        let msg1 = resp1.payload.into_single().unwrap();
+
+        // new handler
+        let new_handler = ApiServerHandler::new(MockApi);
+        let (ctx2, mut rx2) = make_request_ctx(
+            Msg::Single(protocol::Request::FileRead {
+                path: RemotePath::from("/test"),
+                options: Default::default(),
+            }),
+            Header::new(),
+        );
+        new_handler.on_request(ctx2).await;
+        let resp2 = rx2.recv().await.unwrap();
+        let msg2 = resp2.payload.into_single().unwrap();
+
+        // Both should produce identical Blob responses
+        match (msg1, msg2) {
+            (protocol::Response::Blob { data: d1 }, protocol::Response::Blob { data: d2 }) => {
+                assert_eq!(d1, d2);
+                assert_eq!(d1, [1, 2, 3]);
+            }
+            (other1, other2) => {
+                panic!("Expected Blob responses from both, got {other1:?} and {other2:?}")
+            }
+        }
     }
 }

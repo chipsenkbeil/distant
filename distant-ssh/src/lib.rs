@@ -23,7 +23,7 @@ use distant_core::constants::{
 use distant_core::net::auth::{AuthHandlerMap, DummyAuthHandler, Verifier};
 use distant_core::net::client::{Client as NetClient, ClientConfig};
 use distant_core::net::common::{InmemoryTransport, OneshotListener, Version};
-use distant_core::net::server::{Server, ServerRef};
+use distant_core::net::server::{Server, ServerRef, ShutdownSender};
 use distant_core::protocol::{PROTOCOL_VERSION, Response, TunnelDirection, TunnelInfo};
 use distant_core::{ApiServerHandler, Client, Credentials};
 use log::*;
@@ -1090,27 +1090,37 @@ impl Ssh {
         Ok(family)
     }
 
-    /// Converts into a distant client
+    /// Converts into a distant client.
+    ///
+    /// Creates an in-memory server/client pair where the server side is backed by [`SshApi`].
+    /// A health monitor task is spawned to detect SSH session death and trigger server shutdown,
+    /// which causes the client to see a disconnect.
     pub async fn into_distant_client(self) -> io::Result<Client> {
         let family = self.detect_family().await?;
         let search_tools = search::probe_search_tools(&self.pool).await;
-        let api = SshApi::new(
+        let api = Arc::new(SshApi::new(
             self.pool,
             family,
             self.user.clone(),
             self.tunnel_state,
             search_tools,
-        );
+        ));
 
         let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
-            .handler(ApiServerHandler::new(api))
+            .handler(ApiServerHandler::from_arc(Arc::clone(&api)))
             .verifier(Verifier::none());
 
-        tokio::spawn(async move {
-            let _ = server.start(OneshotListener::from_value(t2));
-        });
+        let server_ref = server
+            .start(OneshotListener::from_value(t2))
+            .map_err(io::Error::other)?;
+
+        // Spawn health monitor that detects SSH session death
+        tokio::spawn(Self::ssh_health_monitor(
+            Arc::clone(&api),
+            server_ref.shutdown_sender(),
+        ));
 
         let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
@@ -1123,27 +1133,35 @@ impl Ssh {
         Ok(client)
     }
 
-    /// Converts into a pair of distant client and server ref
+    /// Converts into a pair of distant client and server ref.
+    ///
+    /// A health monitor task is spawned to detect SSH session death and trigger server shutdown.
     pub async fn into_distant_pair(self) -> io::Result<(Client, ServerRef)> {
         let family = self.detect_family().await?;
         let search_tools = search::probe_search_tools(&self.pool).await;
-        let api = SshApi::new(
+        let api = Arc::new(SshApi::new(
             self.pool,
             family,
             self.user.clone(),
             self.tunnel_state,
             search_tools,
-        );
+        ));
 
         let (t1, t2) = InmemoryTransport::pair(INMEMORY_TRANSPORT_BUFFER_SIZE);
 
         let server = Server::new()
-            .handler(ApiServerHandler::new(api))
+            .handler(ApiServerHandler::from_arc(Arc::clone(&api)))
             .verifier(Verifier::none());
 
         let server_ref = server
             .start(OneshotListener::from_value(t2))
             .map_err(io::Error::other)?;
+
+        // Spawn health monitor that detects SSH session death
+        tokio::spawn(Self::ssh_health_monitor(
+            Arc::clone(&api),
+            server_ref.shutdown_sender(),
+        ));
 
         let client = NetClient::build()
             .auth_handler(DummyAuthHandler)
@@ -1154,6 +1172,24 @@ impl Ssh {
             .map_err(io::Error::other)?;
 
         Ok((client, server_ref))
+    }
+
+    /// Monitors the SSH session health and triggers server shutdown when the session closes.
+    ///
+    /// Polls every 2 seconds. When the underlying russh connection task terminates
+    /// (e.g., the remote end disconnects or the network drops), the health monitor
+    /// sends a shutdown signal, which drops the in-memory transport and causes the
+    /// client to see a disconnect.
+    async fn ssh_health_monitor(api: Arc<SshApi>, shutdown: ShutdownSender) {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            interval.tick().await;
+            if api.is_session_closed().await {
+                warn!("SSH session closed, triggering server shutdown for reconnection");
+                shutdown.shutdown();
+                return;
+            }
+        }
     }
 
     /// Launch a distant server on the remote machine without consuming the [`Ssh`] handle,
