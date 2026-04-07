@@ -7,8 +7,8 @@ a fully green mount test matrix with zero workarounds.
 
 Read these at the start of every iteration:
 
-1. `docs/mount-tests-PRD.md` — architecture, phases, dependencies
-2. `docs/mount-tests-progress.md` — current completion status
+1. `PRD.md` — architecture, phases, dependencies, active plan
+2. `PROGRESS.md` — current completion status
 3. `docs/MANUAL_TESTING.md` — full test case descriptions
 4. `docs/TESTING.md` — naming conventions
 

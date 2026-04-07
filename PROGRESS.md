@@ -4,6 +4,55 @@
 
 ---
 
+## Active plan
+
+The next chunk of work is **Network Resilience + Mount Health**,
+which incorporates the unfinished
+[chipsenkbeil/distant#288](https://github.com/chipsenkbeil/distant/pull/288)
+network resilience stack and layers mount health on top.
+
+> **The full step-by-step lives in
+> [PRD.md § Plan: Network Resilience + Mount Health](PRD.md#plan-network-resilience--mount-health).**
+> Refer to that section for cherry-pick targets, refactor details,
+> and acceptance criteria. The checklist below is the trail of
+> work in progress.
+
+### Phase 0 — PR #288 incorporation
+
+- [-] **0a** Move + correct PRD/PROGRESS docs, embed plan into PRD
+- [ ] **0b** TCP keepalive (cherry-pick `61e48c0`, public API
+      instead of `pub(crate) use`)
+- [ ] **0c** Heartbeat failure escalation (cherry-pick `fa40953`)
+- [ ] **0d** `Plugin::reconnect` + `reconnect_strategy`
+      (cherry-pick `3660e62`)
+- [ ] **0e** Backend health monitors — SSH + Docker (cherry-pick
+      `993ed8d`)
+- [ ] **0f** `ManagerConnection` connection-watcher plumbing
+      (cherry-pick `594c3ca`)
+- [ ] **0g** Generic `Subscribe` / `Event` protocol (refactored
+      from `5b1c439`, addresses review comments 2933812110,
+      2933814790, 2933821911, 2933826601)
+- [ ] **0h** Manager reconnection orchestration (cherry-pick
+      `aa035a8`, adapt to new protocol)
+- [ ] **0i** CLI integration: `subscribe_and_display_events`,
+      `distant client reconnect`, `--no-reconnect`,
+      `--heartbeat-interval`, `--max-heartbeat-failures`
+- [ ] **0j** Step 0 validation gate (fmt + clippy + nextest +
+      code-validator)
+
+### Phase 1–6 (mount health on top of generic event bus)
+
+- [ ] **Phase 1** `MountStatus` enum + `Event::MountState`
+- [ ] **Phase 2** `MountHandle::probe` trait extension
+- [ ] **Phase 3** `ManagedMount` restructure + per-mount monitor
+      task + kill-leak fix
+- [ ] **Phase 4** Backend probe implementations (NFS / FUSE / FP /
+      WCF)
+- [ ] **Phase 5** Tests (HLT-01..05, EVT-01..02, unit tests)
+- [ ] **Phase 6** Documentation roll-up
+
+---
+
 ## Phase A: Production Code Fixes
 
 - [x] **A1** Fix FUSE+SSH EIO bug
@@ -101,13 +150,23 @@
   - [x] unmount_all test isolated with own HostManagerCtx
   - [x] Mount test parallelism increased from 2 to 8 threads
   - [x] Deleted redundant daemon.rs (identical to browse test)
+  - [x] FP enumeration timing — wait_for_path + working set polling
+        (commits `df782cd`, `5b5dcb9`, `86d794d` got the FP suite to
+        37/37 and the overall total to **228/228**)
 
-  **Phase 5: Health monitoring + connection resilience**
+  **Phase 5: Health monitoring + connection resilience** —
+  superseded by [PRD.md § Plan: Network Resilience + Mount
+  Health](PRD.md#plan-network-resilience--mount-health). The new
+  plan incorporates PR #288 instead of building bespoke
+  infrastructure. Tracked in the "Active plan" section at the top
+  of this file.
   - [ ] Periodic health check per mount (FUSE task alive, NFS socket bound,
-        FP domain registered, WCF sync root registered)
-  - [ ] Connection drop → mount status = "disconnected"
-  - [ ] Reconnect → mount resumes
-  - [ ] Permanent failure → mount status = "failed"
+        FP domain registered, WCF sync root registered) → Phase 4
+  - [ ] Connection drop → mount status = "disconnected" → Phase 3
+  - [ ] Reconnect → mount resumes → Step 0h + Phase 3
+  - [ ] Permanent failure → mount status = "failed" → Phase 4
+  - [ ] Generic event subscription system (incorporated from PR
+        #288) → Step 0g
 
   **Phase 6: Process count audit**
   - [ ] Audit during full test run: expect ~5 distant processes + FP appex
@@ -131,9 +190,9 @@
 
 ## Phase C: Test Quality
 
-- [-] **C1** Full cross-backend parity
+- [x] **C1** Full cross-backend parity
   - [x] All tests work for Host, SSH, Docker, FUSE
-  - [-] FileProvider: 22/35 pass, 13 fail (blocked on A6)
+  - [x] FileProvider: 37/37 pass
   - [x] Readonly enforced at RemoteFs level
 
 - [ ] **C2** Missing test coverage (large files, cache TTL)
@@ -158,55 +217,39 @@
 - [x] `--shutdown lonely=N` on distant manager listen
 - [x] Process leak fixes, daemon test rewrite
 
-**Result:** 219/228 tests pass. Run time ~250s with 8 parallel threads.
+**Result:** 228/228 tests pass. Run time ~250s with 8 parallel threads.
 Singletons: Host + SSH + Docker + FileProvider + mount singletons.
 
 ---
 
-## Current State (2026-04-05)
+## Current State (2026-04-06)
 
-**223/228 mount tests passing (97.8%).** 26 FP failures remain — all are
-"appex cannot reach manager" (file reads through the mount time out).
-11/37 FP tests pass (tests that don't read through the mount).
+**228/228 mount tests passing (100%).** All FP failures resolved.
 
-| Backend | Tests | Result |
-|---------|-------|--------|
-| Host NFS | 37 | All pass |
-| Host FUSE | 37 | All pass |
-| SSH NFS | 37 | All pass |
-| SSH FUSE | 37 | All pass |
-| Docker NFS | 18 | All pass |
-| Host FP | 37 | 11 pass, 26 fail (appex connectivity) |
+| Backend     | Tests | Result   |
+|-------------|-------|----------|
+| Host NFS    | 37    | All pass |
+| Host FUSE   | 37    | All pass |
+| SSH NFS     | 37    | All pass |
+| SSH FUSE    | 37    | All pass |
+| Docker NFS  | 18    | All pass |
+| Host FP     | 37    | All pass |
+| Other       | 25    | All pass |
+| **Total**   | **228** | **All pass** |
 
-**Fixed (commit 8232a59):**
-- FP plugin returns actual CloudStorage path via `getUserVisibleURL` API
-- Test harness parses mount_point from stdout (no more CloudStorage diff)
-- Socket mismatch fixed: status/unmount tests route through FP socket
-- Password stripped from FP display names
-- Stale FP domain cleanup via `distant unmount --include-all-macos-file-provider-domains`
-- 4 of original 9 failures fixed: unmount_by_id, readonly_write,
-  remote_root_nonexistent, status_json
+**Final FP fix series:**
+- `9f0c834` — only `remove_domain_blocking` when an existing domain
+  with the same ID is present (was unconditional, churned the appex).
+- `05f9685` — FP unmount actually removes the macOS domain (was a
+  no-op).
+- `df782cd` — signal enumerator on bootstrap, wait for FP mount
+  readiness.
+- `5b5dcb9` — FP working set polling, configurable `poll_interval`,
+  `--extra` CLI flag.
+- `86d794d` — `mount::wait_for_path` helper + working set polling
+  brings the FP suite to 37/37.
 
-**26 remaining FP failures (all appex connectivity):**
-The FileProvider extension (appex) cannot reach the manager to serve file
-content. All 26 failing tests attempt to read/write through the mount and
-get "Operation timed out (os error 60)". Tests that don't read through
-the mount (unmount, status, readonly-write-fail, etc.) pass.
-
-**Root cause found and fixed (commit 9f0c834):**
-- `register_domain` called `removeDomain` unconditionally before `addDomain`.
-  When no domain existed, this caused `fileproviderd` to unregister the
-  extension, preventing the appex from ever launching.
-- Additionally, the File Providers toggle in System Settings was disabled by
-  macOS during the domain churn era. Must be manually re-enabled.
-- Fix: only call `remove_domain_blocking` when `get_all_domains()` confirms
-  a domain with the same ID exists.
-
-**20/37 FP tests now pass.** 17 remaining failures are "No such file or
-directory" (enumeration timing) — the appex bootstraps and connects but
-files aren't materialized before the test tries to read them.
-
-**Next: Fix FP enumeration timing for remaining 17 tests**
+**Next:** see [Active plan](#active-plan) at the top of this file.
 
 ---
 
