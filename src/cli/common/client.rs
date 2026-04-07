@@ -7,7 +7,9 @@ use anyhow::Context;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
-use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
+use distant_core::net::manager::{
+    Event, EventTopic, ManagerClient, ManagerResponse, PROTOCOL_VERSION,
+};
 use log::*;
 
 use crate::cli::common::ui::{Spinner, Ui};
@@ -492,6 +494,70 @@ pub async fn try_connect(
                 .using_json_auth_handler()
                 .connect()
                 .await
+        }
+    }
+}
+
+/// Subscribe to event notifications and spawn a background task that
+/// displays them to the user.
+///
+/// `topics` selects which event variants the spawned task will print:
+/// pass `vec![EventTopic::Connection]` to receive only connection
+/// state changes, `vec![EventTopic::All]` for everything, or any
+/// other combination. Long-running CLI commands typically subscribe
+/// to both `Connection` and `Mount` so the user sees mount failures
+/// alongside connection drops.
+///
+/// Events are printed to stderr in shell format or to stdout as JSON,
+/// matching the project's output conventions (`ui.rs:10`). The
+/// background task runs until the mailbox closes (i.e., the manager
+/// connection drops).
+///
+/// Subscription failures are logged but do not fail the caller, since
+/// event display is best-effort and should not block the primary
+/// command.
+pub async fn subscribe_and_display_events(
+    client: &mut ManagerClient,
+    topics: Vec<EventTopic>,
+    format: Format,
+) {
+    match client.subscribe(topics).await {
+        Ok(mut mailbox) => {
+            tokio::spawn(async move {
+                while let Some(res) = mailbox.next().await {
+                    match res.payload {
+                        ManagerResponse::Event { event } => display_event(event, format),
+                        _ => {
+                            trace!("Ignoring non-event response on subscription mailbox");
+                        }
+                    }
+                }
+                trace!("Event subscription mailbox closed");
+            });
+        }
+        Err(err) => {
+            debug!("Failed to subscribe to events: {err}");
+        }
+    }
+}
+
+fn display_event(event: Event, format: Format) {
+    match (event, format) {
+        (Event::ConnectionState { id, state }, Format::Shell) => {
+            eprintln!("[distant] connection {id}: {state}");
+        }
+        (Event::ConnectionState { id, state }, Format::Json) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "event",
+                    "event": {
+                        "type": "connection_state",
+                        "id": id,
+                        "state": state.to_string(),
+                    }
+                })
+            );
         }
     }
 }

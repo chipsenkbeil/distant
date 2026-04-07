@@ -4,10 +4,10 @@ use crate::auth::AuthHandler;
 use crate::auth::msg::{Authentication, AuthenticationResponse};
 use log::*;
 
-use crate::net::client::Client;
-use crate::net::common::{ConnectionId, Destination, Map, Request};
+use crate::net::client::{Client, Mailbox};
+use crate::net::common::{ConnectionId, Destination, Map, Request, Response};
 use crate::net::manager::data::{
-    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagedTunnelInfo, ManagerRequest,
+    ConnectionInfo, ConnectionList, EventTopic, ManagedTunnelId, ManagedTunnelInfo, ManagerRequest,
     ManagerResponse, SemVer,
 };
 
@@ -476,6 +476,90 @@ impl ManagerClient {
             .await?;
         match res.payload {
             ManagerResponse::Mounts { mounts } => Ok(mounts),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Subscribe to event notifications.
+    ///
+    /// Returns a [`Mailbox`] that will receive `ManagerResponse::Event { event }`
+    /// pushes whenever the manager broadcasts an event whose
+    /// [`Event::topic`](Event::topic) is in `topics`. Pass
+    /// `vec![EventTopic::All]` to receive every event variant.
+    ///
+    /// The mailbox stays open until the underlying channel closes.
+    /// Callers should `unsubscribe()` (or just drop the mailbox) when
+    /// no longer interested.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the subscription handshake never completes
+    /// (e.g. the manager closes the channel before acking).
+    pub async fn subscribe(
+        &mut self,
+        topics: Vec<EventTopic>,
+    ) -> io::Result<Mailbox<Response<ManagerResponse>>> {
+        trace!("subscribe({topics:?})");
+        let mut mailbox = self.mail(ManagerRequest::Subscribe { topics }).await?;
+
+        // Wait for the Subscribed acknowledgement before returning the
+        // mailbox so callers don't see the ack mixed in with events.
+        while let Some(res) = mailbox.next().await {
+            match res.payload {
+                ManagerResponse::Subscribed => return Ok(mailbox),
+                ManagerResponse::Error { description } => {
+                    return Err(io::Error::other(description));
+                }
+                _ => continue,
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Connection closed before subscription confirmed",
+        ))
+    }
+
+    /// Cancel a previous [`Self::subscribe`] call on this channel.
+    ///
+    /// Currently a best-effort hint: the manager acks immediately and
+    /// the in-flight forwarder task exits when the channel's reply
+    /// stream closes (i.e. when the mailbox is dropped). Per-channel
+    /// teardown that keeps the channel open is a future refinement.
+    pub async fn unsubscribe(&mut self) -> io::Result<()> {
+        trace!("unsubscribe()");
+        let res = self.send(ManagerRequest::Unsubscribe).await?;
+        match res.payload {
+            ManagerResponse::Unsubscribed => Ok(()),
+            ManagerResponse::Error { description } => Err(io::Error::other(description)),
+            x => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Got unexpected response: {x:?}"),
+            )),
+        }
+    }
+
+    /// Manually trigger reconnection of the connection with `id`.
+    ///
+    /// The manager spawns the reconnection orchestration in the
+    /// background and returns immediately with `ReconnectInitiated`.
+    /// Subscribers receive subsequent `Event::ConnectionState`
+    /// pushes for the actual `Reconnecting`/`Connected`/`Disconnected`
+    /// transitions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no connection exists with the given id, or
+    /// if the manager closes the channel before acking.
+    pub async fn reconnect(&mut self, id: ConnectionId) -> io::Result<()> {
+        trace!("reconnect({id})");
+        let res = self.send(ManagerRequest::Reconnect { id }).await?;
+        match res.payload {
+            ManagerResponse::ReconnectInitiated { .. } => Ok(()),
             ManagerResponse::Error { description } => Err(io::Error::other(description)),
             x => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
