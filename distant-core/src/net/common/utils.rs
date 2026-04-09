@@ -15,11 +15,22 @@ pub fn serialize_to_vec<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, format!("Serialize failed: {x}")))
 }
 
+/// Deserialize `T` from a MessagePack byte slice.
+///
+/// # Errors
+///
+/// Returns an `io::Error` with `InvalidData` kind if the bytes cannot be
+/// decoded as `T`. The error message includes the target type name and
+/// the slice length to aid diagnosis of wire-protocol mismatches.
 pub fn deserialize_from_slice<T: DeserializeOwned>(slice: &[u8]) -> io::Result<T> {
-    rmp_serde::decode::from_slice(slice).map_err(|x| {
+    rmp_serde::decode::from_slice(slice).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Deserialize failed: {x}"),
+            format!(
+                "Failed to deserialize {} from {} bytes: {e}",
+                std::any::type_name::<T>(),
+                slice.len(),
+            ),
         )
     })
 }
@@ -218,6 +229,42 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(300)).await;
 
             assert!(rx.try_recv().is_ok(), "Callback not triggered");
+        }
+    }
+
+    mod deserialize_from_slice {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+        struct Sample {
+            x: u32,
+        }
+
+        #[test]
+        fn should_include_type_name_and_byte_length_when_deserialize_fails() {
+            // Garbage bytes that don't decode as Sample.
+            let bytes = [0xffu8; 5];
+            let err = super::super::deserialize_from_slice::<Sample>(&bytes).unwrap_err();
+            let msg = err.to_string();
+
+            // Use the real type_name for exact matching (not a substring trap).
+            let expected_type = std::any::type_name::<Sample>();
+            assert!(
+                msg.contains(expected_type),
+                "expected type name {expected_type:?} in error, got: {msg}"
+            );
+            assert!(
+                msg.contains("5 bytes"),
+                "expected byte length in error, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn should_decode_valid_payload_without_error() {
+            // Happy-path regression guard: a successful deserialize still works.
+            let bytes = rmp_serde::encode::to_vec_named(&Sample { x: 42 }).unwrap();
+            let decoded: Sample = super::super::deserialize_from_slice(&bytes).unwrap();
+            assert_eq!(decoded, Sample { x: 42 });
         }
     }
 }
