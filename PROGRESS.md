@@ -11,6 +11,47 @@ which incorporates the unfinished
 [chipsenkbeil/distant#288](https://github.com/chipsenkbeil/distant/pull/288)
 network resilience stack and layers mount health on top.
 
+### Interlude: wire-protocol error visibility (2026-04-09)
+
+A small, targeted slice that came out of rescoping the original Phase
+E+F (wire-format hardening + schema-hash-in-singleton-path). The user
+rejected those as solving a non-problem and redirected to an actual
+pain point: production deserialize failures surfacing as
+`Deserialize failed: data did not match any variant of untagged enum
+Msg`, with no indication of which type failed, no raw payload, and
+the buried error gated behind `--log-level debug`.
+
+- [x] **Sub-phase 1** Custom `Deserialize for Msg<T>` that dispatches
+      via `deserialize_any` + Visitor (`visit_seq` → `Batch`,
+      `visit_map` → `Single`) and forwards the real inner error from
+      `T::deserialize` unchanged, eliminating the untagged-enum
+      collapse. Narrows `Msg<T>` to map/seq payloads (the only shape
+      used in production). 8 new `failure_paths` tests (commit
+      `cb4ca00`).
+- [x] **Sub-phase 2** Enrich `deserialize_from_slice` error with
+      `std::any::type_name::<T>()` and slice length so every
+      downstream caller inherits the context (commit `4629160`).
+- [x] **Sub-phase 3** New `utils::hex_preview` + `HEX_PREVIEW_BYTES`
+      helper (lowercase hex via `hex::encode`, binary-safe). Rewrite
+      both decode-error arms of the server receive loop at
+      `net/server/connection.rs:538-577` to always log at `error!`
+      with byte length + hex preview; drop the `log_enabled!(Debug)`
+      gate and the lossy `String::from_utf8_lossy` dump. 5 new
+      `hex_preview` tests (commit `7198146`).
+- [x] **Sub-phase 4** Same treatment for the client receive path at
+      `net/client/channel.rs::map_to_typed_mailbox` (commit
+      `6c84af0`).
+
+After this slice, an `info`-level log of a failing decode emits one
+line with the target type, byte length, hex preview, and the actual
+inner deserialize error — no debug/trace rerun required. 15 new unit
+tests total; `distant-core` lib passes 2306/2306.
+
+The Phase E+F plan from PRD.md is explicitly **dropped** — the
+visibility improvements make unknown-variant failures self-diagnosing,
+and the user confirmed the singleton-path mismatch isn't a real
+pain point.
+
 > **The full step-by-step lives in
 > [PRD.md § Plan: Network Resilience + Mount Health](PRD.md#plan-network-resilience--mount-health).**
 > Refer to that section for cherry-pick targets, refactor details,
