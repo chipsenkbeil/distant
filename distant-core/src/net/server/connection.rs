@@ -13,6 +13,7 @@ use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::{ConnectionState, RequestCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
+use crate::net::common::utils;
 use crate::net::common::{
     Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest, Version,
 };
@@ -562,18 +563,24 @@ where
                                 tokio::spawn(async move { handler.on_request(ctx).await });
                             }
                             Err(x) => {
-                                if log::log_enabled!(Level::Debug) {
-                                    error!(
-                                        "[Conn {id}] Failed receiving {}",
-                                        String::from_utf8_lossy(&request.payload),
-                                    );
-                                }
-
-                                error!("[Conn {id}] Invalid request: {x}");
+                                error!(
+                                    "[Conn {id}] Failed to decode typed request \
+                                     ({} bytes, preview {}): {x}",
+                                    request.payload.len(),
+                                    utils::hex_preview(&request.payload, utils::HEX_PREVIEW_BYTES),
+                                );
                             }
                         },
                         Err(x) => {
-                            error!("[Conn {id}] Invalid request payload: {x}");
+                            // At this point we only have the raw frame bytes, not the
+                            // inner payload — include the frame preview instead.
+                            let raw = frame.as_item();
+                            error!(
+                                "[Conn {id}] Failed to parse raw request wire format \
+                                 ({} bytes, preview {}): {x}",
+                                raw.len(),
+                                utils::hex_preview(raw, utils::HEX_PREVIEW_BYTES),
+                            );
                         }
                     },
                     Ok(None) => {

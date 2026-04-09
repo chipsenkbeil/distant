@@ -15,6 +15,22 @@ pub fn serialize_to_vec<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
         .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, format!("Serialize failed: {x}")))
 }
 
+/// Maximum number of payload bytes to dump in error log previews.
+pub(crate) const HEX_PREVIEW_BYTES: usize = 64;
+
+/// Renders the first `max` bytes of `bytes` as lowercase hex. If the
+/// slice has more than `max` bytes, appends `...` to signal truncation.
+/// Safe for binary data (does not produce lossy UTF-8). Total output
+/// length is at most `2 * max + 3` characters.
+pub(crate) fn hex_preview(bytes: &[u8], max: usize) -> String {
+    let take = bytes.len().min(max);
+    let mut out = hex::encode(&bytes[..take]);
+    if bytes.len() > max {
+        out.push_str("...");
+    }
+    out
+}
+
 /// Deserialize `T` from a MessagePack byte slice.
 ///
 /// # Errors
@@ -265,6 +281,40 @@ mod tests {
             let bytes = rmp_serde::encode::to_vec_named(&Sample { x: 42 }).unwrap();
             let decoded: Sample = super::super::deserialize_from_slice(&bytes).unwrap();
             assert_eq!(decoded, Sample { x: 42 });
+        }
+    }
+
+    mod hex_preview {
+        #[test]
+        fn should_dump_entire_slice_when_shorter_than_max() {
+            assert_eq!(super::super::hex_preview(&[0x01, 0xab, 0xff], 16), "01abff");
+        }
+
+        #[test]
+        fn should_truncate_with_ellipsis_when_slice_exceeds_max() {
+            let bytes: Vec<u8> = (0..100).collect();
+            let out = super::super::hex_preview(&bytes, 4);
+            assert_eq!(out, "00010203...");
+        }
+
+        #[test]
+        fn should_not_truncate_when_slice_length_equals_max() {
+            let bytes = [0x10u8, 0x20, 0x30, 0x40];
+            assert_eq!(super::super::hex_preview(&bytes, 4), "10203040");
+        }
+
+        #[test]
+        fn should_return_empty_string_when_slice_is_empty() {
+            assert_eq!(super::super::hex_preview(&[], 16), "");
+        }
+
+        #[test]
+        fn should_render_high_bit_bytes_as_lowercase_hex() {
+            // Guards against accidentally using `{:02X}` (uppercase).
+            assert_eq!(
+                super::super::hex_preview(&[0xde, 0xad, 0xbe, 0xef], 16),
+                "deadbeef"
+            );
         }
     }
 }
