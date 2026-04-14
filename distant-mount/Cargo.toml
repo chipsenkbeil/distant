@@ -1,0 +1,63 @@
+[package]
+name = "distant-mount"
+description = "Mount remote filesystems via distant protocol"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[features]
+default = ["fuse", "nfs", "macos-file-provider"]
+fuse = ["dep:fuser", "dep:libc"]
+nfs = ["dep:nfsserve"]
+windows-cloud-files = ["dep:windows"]
+macos-file-provider = ["dep:objc2", "dep:objc2-file-provider", "dep:objc2-foundation", "dep:objc2-uniform-type-identifiers", "dep:block2"]
+
+[dependencies]
+distant-core = { workspace = true }
+async-trait = "0.1"
+log = "0.4.29"
+tokio = { version = "1.50.0", features = ["full"] }
+lru = "0.14"
+typed-path = "0.12.3"
+nfsserve = { version = "0.10", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
+fuser = { version = "0.17", optional = true }
+libc = { version = "0.2", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-file-provider = { version = "0.3", optional = true, features = [
+    "Extension",
+    "NSFileProviderReplicatedExtension",
+    "NSFileProviderEnumerating",
+    "NSFileProviderItem",
+    "NSFileProviderDomain",
+    "NSFileProviderRequest",
+    "NSFileProviderError",
+    "block2",
+    "bitflags",
+    "objc2-uniform-type-identifiers",
+] }
+objc2-foundation = { version = "0.3", optional = true, features = [
+    "NSObject", "NSString", "NSError", "NSProgress", "NSURL",
+    "NSData", "NSArray", "NSDictionary", "NSBundle", "NSUserDefaults", "NSFileManager",
+    "NSPathUtilities", "NSValue",
+] }
+objc2-uniform-type-identifiers = { version = "0.3", optional = true, features = ["UTType", "UTCoreTypes"] }
+block2 = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_CloudFilters",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_CorrelationVector",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
+
+[lints]
+workspace = true

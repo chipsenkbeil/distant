@@ -3,10 +3,13 @@ use std::io;
 use std::pin::Pin;
 
 use crate::auth::Authenticator;
-use crate::net::client::UntypedClient;
+use crate::net::client::{ReconnectStrategy, UntypedClient};
 use crate::net::common::{Destination, Map};
 
+mod mount;
 mod process;
+
+pub use mount::{MountHandle, MountPlugin, MountProbe};
 pub use process::ProcessPlugin;
 
 /// Object-safe plugin interface used by the manager.
@@ -51,6 +54,34 @@ pub trait Plugin: Send + Sync {
                 "launch not supported",
             ))
         })
+    }
+
+    /// Attempt to re-establish a previously connected session.
+    ///
+    /// Called by the manager when a connection dies. Receives the same
+    /// destination and options from the original `connect()` call. The
+    /// default returns `Unsupported` (no reconnection capability).
+    fn reconnect<'a>(
+        &'a self,
+        _raw_destination: &'a str,
+        _options: &'a Map,
+        _authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "reconnect not supported",
+            ))
+        })
+    }
+
+    /// Reconnection retry strategy for this plugin.
+    ///
+    /// Returns the strategy the manager should use when orchestrating
+    /// reconnection attempts. The default is `Fail` (no automatic
+    /// reconnection). Plugins override this to specify backoff behavior.
+    fn reconnect_strategy(&self) -> ReconnectStrategy {
+        ReconnectStrategy::Fail
     }
 }
 
@@ -254,6 +285,50 @@ mod tests {
 
         // All references point to the same allocation
         assert_eq!(Arc::strong_count(&plugin), 3);
+    }
+
+    #[test(tokio::test)]
+    async fn default_reconnect_returns_unsupported_error() {
+        let plugin = MockPlugin::new("test");
+        let options = Map::new();
+        let mut auth = TestAuthenticator::default();
+
+        let result = plugin
+            .reconnect("ssh://localhost", &options, &mut auth)
+            .await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "reconnect not supported");
+    }
+
+    #[test]
+    fn default_reconnect_strategy_returns_fail() {
+        let plugin = MockPlugin::new("test");
+        let strategy = plugin.reconnect_strategy();
+        assert!(strategy.is_fail());
+    }
+
+    #[test(tokio::test)]
+    async fn arc_dyn_plugin_reconnect_returns_unsupported() {
+        let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("arctest"));
+        let options = Map::new();
+        let mut auth = TestAuthenticator::default();
+
+        let result = plugin.reconnect("ssh://host", &options, &mut auth).await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(err.to_string(), "reconnect not supported");
+    }
+
+    #[test]
+    fn arc_dyn_plugin_reconnect_strategy_returns_fail() {
+        let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("arctest"));
+        let strategy = plugin.reconnect_strategy();
+        assert!(strategy.is_fail());
     }
 
     // -----------------------------------------------------------------------

@@ -11,6 +11,10 @@ pub(crate) use commands::common::PredictMode;
 pub(crate) use common::Manager;
 #[cfg_attr(unix, allow(unused_imports))]
 pub(crate) use common::Spawner;
+#[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+pub(crate) mod logger {
+    pub(crate) use super::common::logger::*;
+}
 
 /// Represents the primary CLI entrypoint
 #[derive(Debug)]
@@ -45,6 +49,13 @@ impl Cli {
         modules.push("distant_docker".to_string());
         #[cfg(feature = "host")]
         modules.push("distant_host".to_string());
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider"
+        ))]
+        modules.push("distant_mount".to_string());
         #[cfg(feature = "ssh")]
         modules.push("russh".to_string());
 
@@ -58,7 +69,12 @@ impl Cli {
         // NOTE: We can unwrap here as we assign the log file earlier
         let path = self.options.logging.log_file.as_ref().unwrap();
 
-        common::logger::FileLogger::init(modules, level, path);
+        common::logger::Logger::builder()
+            .modules(modules)
+            .level(level)
+            .file(path)
+            .init()
+            .expect("Failed to initialize logger");
     }
 
     #[cfg(windows)]

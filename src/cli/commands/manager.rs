@@ -19,6 +19,40 @@ mod plugins;
 /// Collect all plugins (built-in + external from config) and register them by scheme.
 /// Returns an error if two plugins claim the same scheme.
 #[allow(clippy::vec_init_then_push)]
+/// Builds the mount plugin map from enabled features.
+fn build_mount_plugin_map() -> HashMap<String, Arc<dyn distant_core::plugin::MountPlugin>> {
+    let mut map: HashMap<String, Arc<dyn distant_core::plugin::MountPlugin>> = HashMap::new();
+
+    #[cfg(feature = "mount-nfs")]
+    map.insert(
+        "nfs".into(),
+        Arc::new(distant_mount::plugin::NfsMountPlugin),
+    );
+
+    #[cfg(all(
+        feature = "mount-fuse",
+        any(target_os = "linux", target_os = "freebsd", target_os = "macos")
+    ))]
+    map.insert(
+        "fuse".into(),
+        Arc::new(distant_mount::plugin::FuseMountPlugin),
+    );
+
+    #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+    map.insert(
+        "macos-file-provider".into(),
+        Arc::new(distant_mount::plugin::FileProviderMountPlugin),
+    );
+
+    #[cfg(all(feature = "mount-windows-cloud-files", target_os = "windows"))]
+    map.insert(
+        "windows-cloud-files".into(),
+        Arc::new(distant_mount::plugin::CloudFilesMountPlugin),
+    );
+
+    map
+}
+
 fn build_plugin_map(
     extra_plugins: Vec<(String, PathBuf)>,
 ) -> anyhow::Result<HashMap<String, Arc<dyn Plugin>>> {
@@ -110,6 +144,7 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
             daemon: _daemon,
             network,
             user,
+            shutdown,
             plugin: extra_plugins,
         } => {
             #[cfg(unix)]
@@ -129,6 +164,7 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
             );
 
             let plugins = build_plugin_map(extra_plugins).context("Failed to register plugins")?;
+            let mount_plugins = build_mount_plugin_map();
 
             let manager = Manager {
                 #[cfg(unix)]
@@ -136,8 +172,10 @@ async fn async_run(cmd: ManagerSubcommand, quiet: bool) -> CliResult {
                 config: NetManagerConfig {
                     user,
                     plugins,
+                    mount_plugins,
                     ..Default::default()
                 },
+                shutdown: shutdown.into_inner(),
                 network,
             }
             .listen()

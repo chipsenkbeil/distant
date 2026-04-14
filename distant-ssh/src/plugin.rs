@@ -8,11 +8,12 @@ use std::future::Future;
 use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::time::Duration;
 
 use distant_core::Plugin;
 use distant_core::auth::Authenticator;
 use distant_core::auth::msg::*;
-use distant_core::net::client::UntypedClient;
+use distant_core::net::client::{ReconnectStrategy, UntypedClient};
 use distant_core::net::common::{Destination, Map};
 use log::*;
 use tokio::sync::Mutex;
@@ -93,6 +94,27 @@ impl Plugin for SshPlugin {
             debug!("Launching via ssh: {opts:?}");
             ssh.launch(opts).await?.try_to_destination()
         })
+    }
+
+    fn reconnect<'a>(
+        &'a self,
+        raw_destination: &'a str,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        // russh doesn't support session resumption. Must establish a new SSH
+        // session with full authentication (key files or ssh-agent).
+        self.connect(raw_destination, options, authenticator)
+    }
+
+    fn reconnect_strategy(&self) -> ReconnectStrategy {
+        ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_secs(2),
+            factor: 2.0,
+            max_duration: Some(Duration::from_secs(30)),
+            max_retries: Some(5),
+            timeout: Some(Duration::from_secs(30)),
+        }
     }
 }
 
@@ -248,4 +270,29 @@ async fn load_ssh(destination: &Destination, options: &Map) -> io::Result<SshSes
 #[inline]
 fn invalid(label: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid {label}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use distant_core::Plugin;
+
+    use super::*;
+
+    #[test]
+    fn ssh_plugin_name_is_ssh() {
+        let plugin = SshPlugin;
+        assert_eq!(Plugin::name(&plugin), "ssh");
+    }
+
+    #[test]
+    fn ssh_reconnect_strategy_returns_exponential_backoff() {
+        let plugin = SshPlugin;
+        let strategy = Plugin::reconnect_strategy(&plugin);
+        assert!(strategy.is_exponential_backoff());
+        assert_eq!(strategy.max_retries(), Some(5));
+        assert_eq!(strategy.max_duration(), Some(Duration::from_secs(30)));
+        assert_eq!(strategy.timeout(), Some(Duration::from_secs(30)));
+    }
 }

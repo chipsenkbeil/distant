@@ -35,7 +35,7 @@ async fn should_handle_large_files(#[future] ctx: ClientCtx) {
     // Perform the read
     eprintln!("Reading file using distant");
     let mut new_data = channel
-        .read_file(file.path().to_path_buf())
+        .read_file(file.path().to_path_buf(), Default::default())
         .await
         .expect("Failed to read large file");
     assert_eq!(new_data, data, "Data mismatch");
@@ -44,7 +44,11 @@ async fn should_handle_large_files(#[future] ctx: ClientCtx) {
     eprintln!("Writing file using distant");
     new_data[LARGE_FILE_LEN - 1] = new_data[LARGE_FILE_LEN - 1].overflowing_add(1).0;
     channel
-        .write_file(file.path().to_path_buf(), new_data.clone())
+        .write_file(
+            file.path().to_path_buf(),
+            new_data.clone(),
+            Default::default(),
+        )
         .await
         .expect("Failed to write large file");
     let data = tokio::fs::read(file.path())

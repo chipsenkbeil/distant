@@ -55,11 +55,7 @@ impl Listener for TcpListener {
 
     async fn accept(&mut self) -> io::Result<Self::Output> {
         let (stream, peer_addr) = TokioTcpListener::accept(&self.inner).await?;
-        Ok(TcpTransport {
-            addr: peer_addr.ip(),
-            port: peer_addr.port(),
-            inner: stream,
-        })
+        Ok(TcpTransport::from_accepted(stream, peer_addr))
     }
 }
 
@@ -166,5 +162,37 @@ mod tests {
 
         // Verify that the task has completed by waiting on it
         let _ = task.await.expect("Listener task failed unexpectedly");
+    }
+
+    #[test(tokio::test)]
+    async fn accept_should_produce_transport_with_keepalive_enabled() {
+        let addr = IpAddr::V6(Ipv6Addr::LOCALHOST);
+        let mut listener = TcpListener::bind(addr, 0u16)
+            .await
+            .expect("Failed to bind listener");
+
+        let server_addr = SocketAddr::from((addr, listener.port()));
+
+        // Connect a client in a background task so accept() can complete
+        let connect_task: JoinHandle<io::Result<tokio::net::TcpStream>> =
+            tokio::spawn(async move {
+                let stream = tokio::net::TcpStream::connect(server_addr).await?;
+                Ok(stream)
+            });
+
+        let transport = listener
+            .accept()
+            .await
+            .expect("Failed to accept connection");
+
+        // Verify keepalive is enabled on the accepted transport's inner stream
+        let sock_ref = socket2::SockRef::from(&transport.inner);
+        assert!(
+            sock_ref.keepalive().expect("Failed to query keepalive"),
+            "SO_KEEPALIVE should be enabled on accepted TcpTransport"
+        );
+
+        // Clean up
+        let _ = connect_task.await;
     }
 }

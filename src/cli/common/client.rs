@@ -7,7 +7,9 @@ use anyhow::Context;
 use distant_core::net::auth::msg::*;
 use distant_core::net::auth::{AuthHandler, AuthMethodHandler};
 use distant_core::net::client::{Client as NetClient, ClientConfig, ReconnectStrategy};
-use distant_core::net::manager::{ManagerClient, PROTOCOL_VERSION};
+use distant_core::net::manager::{
+    Event, EventTopic, ManagerClient, ManagerResponse, PROTOCOL_VERSION,
+};
 use log::*;
 
 use crate::cli::common::ui::{Spinner, Ui};
@@ -377,11 +379,14 @@ impl AuthMethodHandler for PromptAuthHandler {
 
 /// Attempt to start the manager daemon by spawning `distant manager listen --daemon`.
 /// Returns Ok(()) if the process was spawned successfully, Err otherwise.
-fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
+///
+/// Uses `tokio::process::Command` so the call is non-blocking on the
+/// tokio runtime.
+async fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
     let exe = std::env::current_exe().context("Failed to determine distant executable path")?;
 
-    let mut cmd = std::process::Command::new(exe);
-    cmd.args(["manager", "listen", "--daemon"]);
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.args(["manager", "listen", "--daemon", "--user"]);
 
     // Forward custom socket/pipe settings so the new manager listens on the same address
     #[cfg(unix)]
@@ -398,6 +403,7 @@ fn start_manager_daemon(network: &NetworkSettings) -> anyhow::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
+        .await
         .context("Failed to spawn distant manager")?;
 
     if status.success() {
@@ -432,7 +438,7 @@ pub async fn connect_to_manager(
     // Connection failed — try to auto-start the manager
     sp.set_message("Starting manager...");
     ui.warning("Manager not running, starting it...");
-    if let Err(err) = start_manager_daemon(&network) {
+    if let Err(err) = start_manager_daemon(&network).await {
         warn!("Failed to auto-start manager: {err}");
         sp.fail("Could not start manager");
         return Err(first_err.context(
@@ -488,6 +494,98 @@ pub async fn try_connect(
                 .using_json_auth_handler()
                 .connect()
                 .await
+        }
+    }
+}
+
+/// Subscribe to event notifications and spawn a background task that
+/// displays them to the user.
+///
+/// `topics` selects which event variants the spawned task will print:
+/// pass `vec![EventTopic::Connection]` to receive only connection
+/// state changes, `vec![EventTopic::All]` for everything, or any
+/// other combination. Long-running CLI commands typically subscribe
+/// to both `Connection` and `Mount` so the user sees mount failures
+/// alongside connection drops.
+///
+/// Events are printed to stderr in shell format or to stdout as JSON,
+/// matching the project's output conventions (`ui.rs:10`). The
+/// background task runs until the mailbox closes (i.e., the manager
+/// connection drops).
+///
+/// Subscription failures are logged but do not fail the caller, since
+/// event display is best-effort and should not block the primary
+/// command.
+pub async fn subscribe_and_display_events(
+    client: &mut ManagerClient,
+    topics: Vec<EventTopic>,
+    format: Format,
+) {
+    match client.subscribe(topics).await {
+        Ok(mut mailbox) => {
+            tokio::spawn(async move {
+                while let Some(res) = mailbox.next().await {
+                    match res.payload {
+                        ManagerResponse::Event { event } => display_event(event, format),
+                        _ => {
+                            trace!("Ignoring non-event response on subscription mailbox");
+                        }
+                    }
+                }
+                trace!("Event subscription mailbox closed");
+            });
+        }
+        Err(err) => {
+            debug!("Failed to subscribe to events: {err}");
+        }
+    }
+}
+
+fn display_event(event: Event, format: Format) {
+    match (event, format) {
+        (Event::ConnectionState { id, state }, Format::Shell) => {
+            eprintln!("[distant] connection {id}: {state}");
+        }
+        (Event::ConnectionState { id, state }, Format::Json) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "event",
+                    "event": {
+                        "type": "connection_state",
+                        "id": id,
+                        "state": state.to_string(),
+                    }
+                })
+            );
+        }
+        (Event::MountState { id, state }, Format::Shell) => {
+            use distant_core::protocol::MountStatus;
+            let label = match &state {
+                MountStatus::Active => "active".to_string(),
+                MountStatus::Reconnecting => "reconnecting".to_string(),
+                MountStatus::Disconnected => "disconnected".to_string(),
+                MountStatus::Failed { reason } => format!("failed ({reason})"),
+            };
+            eprintln!("[distant] mount {id}: {label}");
+        }
+        (Event::MountState { id, state }, Format::Json) => {
+            // The state already has its own #[serde(tag = "state")]
+            // shape, so we can flatten it into the event payload
+            // through serde_json directly.
+            let state_json =
+                serde_json::to_value(&state).expect("MountStatus serialization is infallible");
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "event",
+                    "event": {
+                        "type": "mount_state",
+                        "id": id,
+                        "state": state_json,
+                    }
+                })
+            );
         }
     }
 }

@@ -3,6 +3,9 @@ pub type ManagerAuthenticationId = u32;
 pub type ManagedTunnelId = u32;
 pub use semver::Version as SemVer;
 
+mod event;
+pub use event::*;
+
 mod info;
 pub use info::*;
 

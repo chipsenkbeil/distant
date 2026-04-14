@@ -5,7 +5,7 @@ mod format;
 pub(crate) mod logger;
 mod manager;
 mod msg;
-mod spawner;
+pub(crate) mod spawner;
 #[allow(dead_code)]
 mod ui;
 

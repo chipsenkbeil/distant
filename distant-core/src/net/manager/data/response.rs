@@ -1,12 +1,24 @@
 use crate::auth::msg::Authentication;
-use crate::protocol::TunnelDirection;
+use crate::protocol::{MountInfo, TunnelDirection};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ConnectionInfo, ConnectionList, ManagedTunnelId, ManagerAuthenticationId, ManagerChannelId,
-    SemVer,
+    ConnectionInfo, ConnectionList, Event, ManagedTunnelId, ManagerAuthenticationId,
+    ManagerChannelId, SemVer,
 };
 use crate::net::common::{ConnectionId, Destination, UntypedResponse};
+
+/// Detailed information about any managed resource, returned by `Info { id }`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum ResourceInfo {
+    /// Connection details.
+    Connection(ConnectionInfo),
+    /// Tunnel details.
+    Tunnel(ManagedTunnelInfo),
+    /// Mount details.
+    Mount(MountInfo),
+}
 
 /// Information about a tunnel managed by the manager process.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +96,45 @@ pub enum ManagerResponse {
 
     /// List of managed tunnels
     ManagedTunnels { tunnels: Vec<ManagedTunnelInfo> },
+
+    /// Confirmation that a mount was created.
+    Mounted {
+        /// Unique mount identifier.
+        id: u32,
+        /// Local mount point path.
+        mount_point: String,
+        /// Backend name.
+        backend: String,
+    },
+
+    /// Acknowledgement that mounts were removed.
+    Unmounted {
+        /// IDs that were successfully unmounted.
+        ids: Vec<u32>,
+    },
+
+    /// List of active mounts.
+    Mounts { mounts: Vec<MountInfo> },
+
+    /// Acknowledgement of a `Subscribe` request.
+    Subscribed,
+
+    /// Acknowledgement of an `Unsubscribe` request.
+    Unsubscribed,
+
+    /// Push notification — only sent on subscribed channels.
+    Event {
+        /// The event payload.
+        event: Event,
+    },
+
+    /// Acknowledgement that a manual reconnection was started.
+    /// The actual state transition arrives later via an
+    /// `Event::ConnectionState` push.
+    ReconnectInitiated {
+        /// Id of the connection being reconnected.
+        id: ConnectionId,
+    },
 }
 
 impl<T: std::error::Error> From<T> for ManagerResponse {
@@ -300,5 +351,64 @@ mod tests {
             result.is_err(),
             "Expected deserialization to fail on unknown field"
         );
+    }
+
+    #[test]
+    fn subscribed_should_serialize_with_snake_case_tag() {
+        let response = ManagerResponse::Subscribed;
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(json, "{\"type\":\"subscribed\"}");
+        let deserialized: ManagerResponse = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, ManagerResponse::Subscribed));
+    }
+
+    #[test]
+    fn unsubscribed_should_serialize_with_snake_case_tag() {
+        let response = ManagerResponse::Unsubscribed;
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(json, "{\"type\":\"unsubscribed\"}");
+        let deserialized: ManagerResponse = serde_json::from_str(&json).unwrap();
+        assert!(matches!(deserialized, ManagerResponse::Unsubscribed));
+    }
+
+    #[test]
+    fn reconnect_initiated_should_round_trip_via_json() {
+        let response = ManagerResponse::ReconnectInitiated { id: 7 };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"reconnect_initiated\""), "got {json}");
+        assert!(json.contains("\"id\":7"), "got {json}");
+        let deserialized: ManagerResponse = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ManagerResponse::ReconnectInitiated { id } => assert_eq!(id, 7),
+            other => panic!("Expected ReconnectInitiated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn event_response_should_wrap_inner_event_via_json() {
+        use crate::net::client::ConnectionState;
+        let response = ManagerResponse::Event {
+            event: Event::ConnectionState {
+                id: 11,
+                state: ConnectionState::Reconnecting,
+            },
+        };
+        let value: serde_json::Value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["type"], "event");
+        assert_eq!(value["event"]["type"], "connection_state");
+        assert_eq!(value["event"]["id"], 11);
+        assert_eq!(value["event"]["state"], "reconnecting");
+
+        let json = serde_json::to_string(&response).unwrap();
+        let decoded: ManagerResponse = serde_json::from_str(&json).unwrap();
+        match decoded {
+            ManagerResponse::Event {
+                event: Event::ConnectionState { id, state },
+            } => {
+                assert_eq!(id, 11);
+                assert_eq!(state, ConnectionState::Reconnecting);
+            }
+            other => panic!("Expected Event(ConnectionState), got {other:?}"),
+        }
     }
 }

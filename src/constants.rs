@@ -53,11 +53,21 @@ pub mod user {
         LazyLock::new(|| PROJECT_DIR.cache_dir().join("generate.log"));
 
     /// For Linux & BSD, this uses the runtime path. For Mac, this uses the tmp path
+    /// unless running inside a `.app` bundle, in which case the App Group container
+    /// is used so the sandboxed `.appex` extension can reach the manager.
     ///
     /// * `/run/user/1001/distant/{user}.distant.sock` on Linux
     /// * `/var/run/{user}.distant.sock` on BSD
-    /// * `/tmp/{user}.distant.dock` on MacOS
+    /// * `/tmp/{user}.distant.sock` on macOS (standalone)
+    /// * `~/Library/Group Containers/39C6AGD73Z.group.dev.distant/distant.sock` on macOS (bundled)
     pub static UNIX_SOCKET_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+        // On macOS with the FileProvider feature, prefer the App Group container
+        // if running inside a .app or .appex bundle.
+        #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+        if let Some(path) = macos_app_group_socket_path() {
+            return path;
+        }
+
         // Form of {user}.distant.sock
         let mut file_name = whoami::username_os().unwrap_or_else(|_| "unknown".into());
         file_name.push(".");
@@ -69,6 +79,25 @@ pub mod user {
             .unwrap_or_else(std::env::temp_dir)
             .join(file_name)
     });
+
+    /// On macOS, checks if the current binary is running inside a `.app` or
+    /// `.appex` bundle and returns a socket path inside the App Group container.
+    ///
+    /// Uses `NSFileManager` (via `distant_mount::macos::fp::appex::app_group_container_path`)
+    /// to resolve the App Group container, which works correctly regardless of
+    /// sandbox state.
+    #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+    fn macos_app_group_socket_path() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let exe_str = exe.to_str()?;
+        if !exe_str.contains(".app/Contents/MacOS/") && !exe_str.contains(".appex/") {
+            return None;
+        }
+
+        let group_container = distant_mount::macos::fp::appex::app_group_container_path()?;
+        let _ = std::fs::create_dir_all(&group_container);
+        Some(group_container.join(SOCKET_FILE_STR))
+    }
 
     /// Name of the pipe used by Windows in the form of `{user}.distant`
     pub static WINDOWS_PIPE_NAME: LazyLock<String> = LazyLock::new(|| {

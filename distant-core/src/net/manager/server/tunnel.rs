@@ -1,5 +1,4 @@
 use std::io;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use log::*;
 use tokio::net::TcpListener;
@@ -12,8 +11,6 @@ use crate::protocol::TunnelDirection;
 
 use super::InternalRawChannel;
 use super::connection::ManagerChannel;
-
-static NEXT_MANAGED_TUNNEL_ID: AtomicU32 = AtomicU32::new(1);
 
 /// A tunnel whose lifecycle is managed by the manager process.
 ///
@@ -61,7 +58,7 @@ pub async fn start_forward_tunnel(
         .map_err(|e| io::Error::other(format!("Failed to bind on port {bind_port}: {e}")))?;
     let actual_port = listener.local_addr()?.port();
 
-    let id = NEXT_MANAGED_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+    let id: ManagedTunnelId = rand::random();
     let host = remote_host.clone();
     let port = remote_port;
 
@@ -160,7 +157,7 @@ pub async fn start_reverse_tunnel(
         })?;
 
     let actual_port = listener.port();
-    let id = NEXT_MANAGED_TUNNEL_ID.fetch_add(1, Ordering::Relaxed);
+    let id: ManagedTunnelId = rand::random();
     let host = local_host.clone();
     let port = local_port;
 

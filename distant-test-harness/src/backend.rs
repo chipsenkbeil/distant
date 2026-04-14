@@ -13,7 +13,7 @@ use std::process::{Command as StdCommand, Stdio};
 
 use assert_cmd::Command;
 
-use crate::manager;
+use crate::{manager, singleton};
 
 /// Identifies which plugin backend a test should exercise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +66,18 @@ impl BackendCtx {
             Self::Ssh(ctx) => ctx.new_assert_cmd(subcommands),
             #[cfg(feature = "docker")]
             Self::Docker(ctx) => ctx.new_assert_cmd(subcommands),
+        }
+    }
+
+    /// Returns the socket/pipe path used by this context's manager.
+    ///
+    /// On Unix this is a Unix socket path; on Windows a named pipe name.
+    pub fn socket_or_pipe(&self) -> &str {
+        match self {
+            Self::Host(ctx) => ctx.socket_or_pipe(),
+            Self::Ssh(ctx) => ctx.socket_or_pipe(),
+            #[cfg(feature = "docker")]
+            Self::Docker(ctx) => ctx.socket_or_pipe(),
         }
     }
 
@@ -205,7 +217,15 @@ impl BackendCtx {
     pub async fn prepare_binary(&self, bin_name: &str) -> io::Result<String> {
         match self {
             #[cfg(feature = "docker")]
-            Self::Docker(ctx) => ctx.container().prepare_binary(bin_name).await,
+            Self::Docker(ctx) => match ctx.container() {
+                Some(container) => container.prepare_binary(bin_name).await,
+                None => {
+                    // Singleton mode: container() is None, but the container
+                    // is still running. Use the container name directly.
+                    crate::docker::prepare_binary_for_container(ctx.container_name(), bin_name)
+                        .await
+                }
+            },
             _ => {
                 let path = crate::exe::build_harness_bin(bin_name, None).await?;
                 Ok(path.to_string_lossy().to_string())
@@ -285,34 +305,33 @@ impl BackendCtx {
 ///   Linux Docker daemon.
 pub fn ctx_for_backend(backend: Backend) -> Option<BackendCtx> {
     match backend {
-        Backend::Host => Some(BackendCtx::Host(manager::HostManagerCtx::start())),
+        Backend::Host => {
+            let handle = singleton::get_or_start_host();
+            Some(BackendCtx::Host(manager::HostManagerCtx::from_singleton(
+                handle,
+            )))
+        }
         Backend::Ssh => {
             which::which("sshd").ok()?;
-            Some(BackendCtx::Ssh(manager::SshManagerCtx::start()))
+            let handle = singleton::get_or_start_ssh();
+            Some(BackendCtx::Ssh(manager::SshManagerCtx::from_singleton(
+                handle,
+            )))
         }
         Backend::Docker => ctx_for_docker(),
     }
 }
 
-/// Attempts to create a Docker backend context.
+/// Attempts to create a Docker backend context using the singleton.
 ///
 /// Separated so the `#[cfg]` gate is in one place rather than scattered
 /// across match arms.
 #[cfg(feature = "docker")]
 fn ctx_for_docker() -> Option<BackendCtx> {
-    // Spawn the Docker context creation on a separate thread to avoid
-    // "Cannot start a runtime from within a runtime" when called from
-    // within a #[tokio::test] context.
-    std::thread::spawn(|| {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create runtime");
-        rt.block_on(crate::docker::DockerManagerCtx::start())
-            .map(BackendCtx::Docker)
-    })
-    .join()
-    .expect("Docker context thread panicked")
+    let (handle, container_name) = singleton::get_or_start_docker()?;
+    Some(BackendCtx::Docker(
+        crate::docker::DockerManagerCtx::from_singleton(handle, container_name),
+    ))
 }
 
 /// Returns `None` when the `docker` feature is not enabled.

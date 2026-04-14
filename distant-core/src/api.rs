@@ -8,8 +8,8 @@ use log::*;
 
 use crate::protocol::{
     self, ChangeKind, DirEntry, Environment, Error, Metadata, Permissions, ProcessId, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId,
-    Version,
+    ReadFileOptions, RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo,
+    SystemInfo, TunnelId, Version, WriteFileOptions,
 };
 
 mod reply;
@@ -33,8 +33,17 @@ impl<T> ApiServerHandler<T>
 where
     T: Api,
 {
+    /// Creates a new handler that wraps the given API implementation in an [`Arc`].
     pub fn new(api: T) -> Self {
         Self { api: Arc::new(api) }
+    }
+
+    /// Creates a new handler from a pre-existing [`Arc`]-wrapped API implementation.
+    ///
+    /// This is useful when the caller needs to retain a reference to the API
+    /// (e.g., for health monitoring) while also passing it to the server handler.
+    pub fn from_arc(api: Arc<T>) -> Self {
+        Self { api }
     }
 }
 
@@ -72,6 +81,7 @@ pub trait Api {
     /// Reads bytes from a file.
     ///
     /// * `path` - the path to the file
+    /// * `options` - controls offset and length for range reads
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
@@ -79,28 +89,16 @@ pub trait Api {
         &self,
         ctx: Ctx,
         path: RemotePath,
+        options: ReadFileOptions,
     ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
         async { unsupported("read_file") }
     }
 
-    /// Reads bytes from a file as text.
-    ///
-    /// * `path` - the path to the file
-    ///
-    /// *Override this, otherwise it will return "unsupported" as an error.*
-    #[allow(unused_variables)]
-    fn read_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-    ) -> impl Future<Output = io::Result<String>> + Send {
-        async { unsupported("read_file_text") }
-    }
-
-    /// Writes bytes to a file, overwriting the file if it exists.
+    /// Writes bytes to a file, creating it if it does not exist.
     ///
     /// * `path` - the path to the file
     /// * `data` - the data to write
+    /// * `options` - controls offset writes and append mode
     ///
     /// *Override this, otherwise it will return "unsupported" as an error.*
     #[allow(unused_variables)]
@@ -109,56 +107,9 @@ pub trait Api {
         ctx: Ctx,
         path: RemotePath,
         data: Vec<u8>,
+        options: WriteFileOptions,
     ) -> impl Future<Output = io::Result<()>> + Send {
         async { unsupported("write_file") }
-    }
-
-    /// Writes text to a file, overwriting the file if it exists.
-    ///
-    /// * `path` - the path to the file
-    /// * `data` - the data to write
-    ///
-    /// *Override this, otherwise it will return "unsupported" as an error.*
-    #[allow(unused_variables)]
-    fn write_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        async { unsupported("write_file_text") }
-    }
-
-    /// Writes bytes to the end of a file, creating it if it is missing.
-    ///
-    /// * `path` - the path to the file
-    /// * `data` - the data to append
-    ///
-    /// *Override this, otherwise it will return "unsupported" as an error.*
-    #[allow(unused_variables)]
-    fn append_file(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: Vec<u8>,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        async { unsupported("append_file") }
-    }
-
-    /// Writes bytes to the end of a file, creating it if it is missing.
-    ///
-    /// * `path` - the path to the file
-    /// * `data` - the data to append
-    ///
-    /// *Override this, otherwise it will return "unsupported" as an error.*
-    #[allow(unused_variables)]
-    fn append_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        async { unsupported("append_file_text") }
     }
 
     /// Reads entries from a directory.
@@ -632,33 +583,17 @@ where
             .await
             .map(protocol::Response::Version)
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileRead { path } => api
-            .read_file(ctx, path)
+        protocol::Request::FileRead { path, options } => api
+            .read_file(ctx, path, options)
             .await
             .map(|data| protocol::Response::Blob { data })
             .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileReadText { path } => api
-            .read_file_text(ctx, path)
-            .await
-            .map(|data| protocol::Response::Text { data })
-            .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileWrite { path, data } => api
-            .write_file(ctx, path, data)
-            .await
-            .map(|_| protocol::Response::Ok)
-            .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileWriteText { path, text } => api
-            .write_file_text(ctx, path, text)
-            .await
-            .map(|_| protocol::Response::Ok)
-            .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileAppend { path, data } => api
-            .append_file(ctx, path, data)
-            .await
-            .map(|_| protocol::Response::Ok)
-            .unwrap_or_else(protocol::Response::from),
-        protocol::Request::FileAppendText { path, text } => api
-            .append_file_text(ctx, path, text)
+        protocol::Request::FileWrite {
+            path,
+            data,
+            options,
+        } => api
+            .write_file(ctx, path, data, options)
             .await
             .map(|_| protocol::Response::Ok)
             .unwrap_or_else(protocol::Response::from),
@@ -864,18 +799,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .read_file(ctx, RemotePath::from("/tmp"))
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn default_read_file_text_returns_unsupported() {
-        let api = DefaultApi;
-        let (ctx, _rx) = make_ctx();
-        let err = api
-            .read_file_text(ctx, RemotePath::from("/tmp"))
+            .read_file(ctx, RemotePath::from("/tmp"), Default::default())
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -886,40 +810,7 @@ mod tests {
         let api = DefaultApi;
         let (ctx, _rx) = make_ctx();
         let err = api
-            .write_file(ctx, RemotePath::from("/tmp"), vec![1])
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn default_write_file_text_returns_unsupported() {
-        let api = DefaultApi;
-        let (ctx, _rx) = make_ctx();
-        let err = api
-            .write_file_text(ctx, RemotePath::from("/tmp"), String::new())
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn default_append_file_returns_unsupported() {
-        let api = DefaultApi;
-        let (ctx, _rx) = make_ctx();
-        let err = api
-            .append_file(ctx, RemotePath::from("/tmp"), vec![1])
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn default_append_file_text_returns_unsupported() {
-        let api = DefaultApi;
-        let (ctx, _rx) = make_ctx();
-        let err = api
-            .append_file_text(ctx, RemotePath::from("/tmp"), String::new())
+            .write_file(ctx, RemotePath::from("/tmp"), vec![1], Default::default())
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -1194,7 +1085,12 @@ mod tests {
             })
         }
 
-        async fn read_file(&self, _ctx: Ctx, _path: RemotePath) -> io::Result<Vec<u8>> {
+        async fn read_file(
+            &self,
+            _ctx: Ctx,
+            _path: RemotePath,
+            _options: ReadFileOptions,
+        ) -> io::Result<Vec<u8>> {
             Ok(vec![1, 2, 3])
         }
 
@@ -1268,6 +1164,7 @@ mod tests {
         let (ctx, mut rx) = make_request_ctx(
             Msg::Single(protocol::Request::FileRead {
                 path: RemotePath::from("/test"),
+                options: Default::default(),
             }),
             Header::new(),
         );
@@ -1305,8 +1202,9 @@ mod tests {
     async fn on_request_single_unsupported_method_returns_error() {
         let handler = ApiServerHandler::new(MockApi);
         let (ctx, mut rx) = make_request_ctx(
-            Msg::Single(protocol::Request::FileReadText {
+            Msg::Single(protocol::Request::DirCreate {
                 path: RemotePath::from("/test"),
+                all: false,
             }),
             Header::new(),
         );
@@ -1345,17 +1243,18 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn on_request_batch_parallel_some_fail_all_run() {
         let handler = ApiServerHandler::new(MockApi);
-        // FileReadText is unsupported in our MockApi, but Version is supported.
+        // DirCreate is unsupported in our MockApi, but Version is supported.
         // In parallel mode, all should run regardless of failures.
         let (ctx, mut rx) = make_request_ctx(
             Msg::Batch(vec![
-                protocol::Request::FileReadText {
+                protocol::Request::DirCreate {
                     path: RemotePath::from("/missing"),
+                    all: false,
                 },
                 protocol::Request::Version {},
-                protocol::Request::FileWriteText {
+                protocol::Request::Remove {
                     path: RemotePath::from("/x"),
-                    text: String::from("data"),
+                    force: false,
                 },
             ]),
             Header::new(),
@@ -1416,8 +1315,9 @@ mod tests {
         let (ctx, mut rx) = make_request_ctx(
             Msg::Batch(vec![
                 protocol::Request::Version {},
-                protocol::Request::FileReadText {
+                protocol::Request::DirCreate {
                     path: RemotePath::from("/missing"),
+                    all: false,
                 },
                 protocol::Request::SystemInfo {},
             ]),
@@ -1450,8 +1350,9 @@ mod tests {
         header.insert("sequence", true);
         let (ctx, mut rx) = make_request_ctx(
             Msg::Batch(vec![
-                protocol::Request::FileReadText {
+                protocol::Request::DirCreate {
                     path: RemotePath::from("/missing"),
+                    all: false,
                 },
                 protocol::Request::Version {},
                 protocol::Request::SystemInfo {},
@@ -1540,5 +1441,98 @@ mod tests {
         let resp = rx.recv().await.unwrap();
         let batch = resp.payload.into_batch().unwrap();
         assert!(batch.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // ApiServerHandler::from_arc
+    // ---------------------------------------------------------------
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_creates_handler_that_dispatches_requests() {
+        let api = Arc::new(MockApi);
+        let handler = ApiServerHandler::from_arc(api);
+
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::Version {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::Version(v) => {
+                assert_eq!(v.server_version, semver::Version::new(1, 0, 0));
+                assert_eq!(v.protocol_version, semver::Version::new(0, 1, 0));
+                assert_eq!(v.capabilities, vec![String::from("test")]);
+            }
+            other => panic!("Expected Version response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_shares_api_with_caller() {
+        let api = Arc::new(MockApi);
+        let api_clone = Arc::clone(&api);
+        let handler = ApiServerHandler::from_arc(api);
+
+        // The caller still holds a reference via api_clone
+        assert_eq!(Arc::strong_count(&api_clone), 2);
+
+        // Handler still works
+        let (ctx, mut rx) =
+            make_request_ctx(Msg::Single(protocol::Request::SystemInfo {}), Header::new());
+
+        handler.on_request(ctx).await;
+
+        let resp = rx.recv().await.unwrap();
+        let msg = resp.payload.into_single().unwrap();
+        match msg {
+            protocol::Response::SystemInfo(info) => {
+                assert_eq!(info.family, "unix");
+                assert_eq!(info.os, "linux");
+                assert_eq!(info.arch, "x86_64");
+            }
+            other => panic!("Expected SystemInfo response, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn from_arc_and_new_produce_equivalent_handlers() {
+        // from_arc handler
+        let arc_handler = ApiServerHandler::from_arc(Arc::new(MockApi));
+        let (ctx1, mut rx1) = make_request_ctx(
+            Msg::Single(protocol::Request::FileRead {
+                path: RemotePath::from("/test"),
+                options: Default::default(),
+            }),
+            Header::new(),
+        );
+        arc_handler.on_request(ctx1).await;
+        let resp1 = rx1.recv().await.unwrap();
+        let msg1 = resp1.payload.into_single().unwrap();
+
+        // new handler
+        let new_handler = ApiServerHandler::new(MockApi);
+        let (ctx2, mut rx2) = make_request_ctx(
+            Msg::Single(protocol::Request::FileRead {
+                path: RemotePath::from("/test"),
+                options: Default::default(),
+            }),
+            Header::new(),
+        );
+        new_handler.on_request(ctx2).await;
+        let resp2 = rx2.recv().await.unwrap();
+        let msg2 = resp2.payload.into_single().unwrap();
+
+        // Both should produce identical Blob responses
+        match (msg1, msg2) {
+            (protocol::Response::Blob { data: d1 }, protocol::Response::Blob { data: d2 }) => {
+                assert_eq!(d1, d2);
+                assert_eq!(d1, [1, 2, 3]);
+            }
+            (other1, other2) => {
+                panic!("Expected Blob responses from both, got {other1:?} and {other2:?}")
+            }
+        }
     }
 }
