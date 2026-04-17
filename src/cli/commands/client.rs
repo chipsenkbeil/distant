@@ -862,6 +862,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .send(protocol::Msg::Batch(vec![
                     protocol::Request::FileRead {
                         path: RemotePath::from(path.as_path()),
+                        options: Default::default(),
                     },
                     protocol::Request::DirRead {
                         path: RemotePath::from(path.as_path()),
@@ -1131,7 +1132,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 channel
                     .into_client()
                     .into_channel()
-                    .write_file(path.as_path(), data)
+                    .write_file(path.as_path(), data, Default::default())
                     .await
                     .with_context(|| {
                         format!("Failed to write to {path:?} using connection {connection_id}")

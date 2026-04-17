@@ -15,9 +15,9 @@ use distant_core::constants::TUNNEL_CHANNEL_CAPACITY;
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
     ChangeKind, DirEntry, Environment, FileType, Metadata, PROTOCOL_VERSION, Permissions,
-    ProcessId, PtySize, RemotePath, Response, SearchId, SearchQuery, SearchQueryTarget,
-    SetPermissionsOptions, StatusInfo, SystemInfo, TunnelDirection, TunnelId, TunnelInfo,
-    UnixMetadata, Version,
+    ProcessId, PtySize, ReadFileOptions, RemotePath, Response, SearchId, SearchQuery,
+    SearchQueryTarget, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelDirection, TunnelId,
+    TunnelInfo, UnixMetadata, Version, WriteFileOptions,
 };
 use distant_core::{Api, Ctx};
 use futures::StreamExt;
@@ -218,6 +218,7 @@ impl Api for DockerApi {
         &self,
         _ctx: Ctx,
         path: RemotePath,
+        options: ReadFileOptions,
     ) -> impl std::future::Future<Output = io::Result<Vec<u8>>> + Send {
         async move {
             let path_str = path.as_str();
@@ -233,23 +234,23 @@ impl Api for DockerApi {
                 ));
             }
 
-            utils::tar_read_file(self.client.inner(), &self.container, path_str).await
-        }
-    }
+            let data = utils::tar_read_file(self.client.inner(), &self.container, path_str).await?;
 
-    fn read_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-    ) -> impl std::future::Future<Output = io::Result<String>> + Send {
-        async move {
-            let data = self.read_file(ctx, path).await?;
-            String::from_utf8(data).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("File is not valid UTF-8: {}", e),
-                )
-            })
+            // Apply byte-range slicing when offset or len is specified
+            match (options.offset, options.len) {
+                (None, None) => Ok(data),
+                (offset, len) => {
+                    let start = offset.unwrap_or(0) as usize;
+                    if start >= data.len() {
+                        return Ok(Vec::new());
+                    }
+                    let end = match len {
+                        Some(n) => data.len().min(start + n as usize),
+                        None => data.len(),
+                    };
+                    Ok(data[start..end].to_vec())
+                }
+            }
         }
     }
 
@@ -258,68 +259,60 @@ impl Api for DockerApi {
         _ctx: Ctx,
         path: RemotePath,
         data: Vec<u8>,
+        options: WriteFileOptions,
     ) -> impl std::future::Future<Output = io::Result<()>> + Send {
         async move {
             let path_str = path.as_str();
-            utils::tar_write_file(self.client.inner(), &self.container, path_str, &data).await
-        }
-    }
 
-    fn write_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl std::future::Future<Output = io::Result<()>> + Send {
-        async move { self.write_file(ctx, path, data.into_bytes()).await }
-    }
+            if options.append {
+                // Primary: try exec-based append
+                let quoted = path_str.to_string();
+                let result = utils::execute_with_stdin(
+                    self.client.inner(),
+                    &self.container,
+                    &[
+                        "sh",
+                        "-c",
+                        &format!("cat >> {}", utils::shell_quote(&quoted)),
+                    ],
+                    &data,
+                    self.user(),
+                )
+                .await;
 
-    fn append_file(
-        &self,
-        _ctx: Ctx,
-        path: RemotePath,
-        data: Vec<u8>,
-    ) -> impl std::future::Future<Output = io::Result<()>> + Send {
-        async move {
-            let path_str = path.as_str().to_string();
+                if let Ok(output) = result
+                    && output.success()
+                {
+                    return Ok(());
+                }
 
-            // Primary: try exec-based append
-            let result = utils::execute_with_stdin(
-                self.client.inner(),
-                &self.container,
-                &[
-                    "sh",
-                    "-c",
-                    &format!("cat >> {}", utils::shell_quote(&path_str)),
-                ],
-                &data,
-                self.user(),
-            )
-            .await;
+                // Fallback: tar-read, append in memory, tar-write back
+                let existing = utils::tar_read_file(self.client.inner(), &self.container, path_str)
+                    .await
+                    .unwrap_or_default();
+                let mut combined = existing;
+                combined.extend_from_slice(&data);
+                utils::tar_write_file(self.client.inner(), &self.container, path_str, &combined)
+                    .await
+            } else if let Some(offset) = options.offset {
+                // Offset write: read existing content, patch the range, write back.
+                let mut existing =
+                    utils::tar_read_file(self.client.inner(), &self.container, path_str)
+                        .await
+                        .unwrap_or_default();
 
-            if let Ok(output) = result
-                && output.success()
-            {
-                return Ok(());
+                let end = offset as usize + data.len();
+                if end > existing.len() {
+                    existing.resize(end, 0);
+                }
+                existing[offset as usize..end].copy_from_slice(&data);
+
+                utils::tar_write_file(self.client.inner(), &self.container, path_str, &existing)
+                    .await
+            } else {
+                utils::tar_write_file(self.client.inner(), &self.container, path_str, &data).await
             }
-
-            // Fallback: tar-read, append in memory, tar-write back
-            let existing = utils::tar_read_file(self.client.inner(), &self.container, &path_str)
-                .await
-                .unwrap_or_default();
-            let mut combined = existing;
-            combined.extend_from_slice(&data);
-            utils::tar_write_file(self.client.inner(), &self.container, &path_str, &combined).await
         }
-    }
-
-    fn append_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl std::future::Future<Output = io::Result<()>> + Send {
-        async move { self.append_file(ctx, path, data.into_bytes()).await }
     }
 
     fn read_dir(

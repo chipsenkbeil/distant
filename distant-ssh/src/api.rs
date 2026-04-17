@@ -8,9 +8,9 @@ use async_once_cell::OnceCell;
 use distant_core::constants::{TUNNEL_CHANNEL_CAPACITY, TUNNEL_RELAY_BUFFER_SIZE};
 use distant_core::net::server::Reply;
 use distant_core::protocol::{
-    DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize, RemotePath,
-    Response, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo,
-    TunnelDirection, TunnelId, TunnelInfo, Version,
+    DirEntry, Environment, Metadata, PROTOCOL_VERSION, Permissions, ProcessId, PtySize,
+    ReadFileOptions, RemotePath, Response, SearchId, SearchQuery, SetPermissionsOptions,
+    StatusInfo, SystemInfo, TunnelDirection, TunnelId, TunnelInfo, Version, WriteFileOptions,
 };
 use distant_core::{Api, Ctx};
 use log::*;
@@ -230,39 +230,69 @@ impl SshApi {
     }
 }
 
+fn sftp_io_error(e: russh_sftp::client::error::Error, context: &str) -> io::Error {
+    use russh_sftp::client::error::Error as SftpError;
+    use russh_sftp::protocol::StatusCode;
+
+    let (kind, detail) = match &e {
+        SftpError::Status(status) => {
+            let kind = match status.status_code {
+                StatusCode::NoSuchFile => io::ErrorKind::NotFound,
+                StatusCode::PermissionDenied => io::ErrorKind::PermissionDenied,
+                StatusCode::OpUnsupported => io::ErrorKind::Unsupported,
+                StatusCode::Eof => io::ErrorKind::UnexpectedEof,
+                _ => io::ErrorKind::Other,
+            };
+            (
+                kind,
+                format!("{}: {}", status.status_code, status.error_message),
+            )
+        }
+        SftpError::Timeout => (io::ErrorKind::TimedOut, e.to_string()),
+        SftpError::IO(msg) => (io::ErrorKind::Other, msg.clone()),
+        _ => (io::ErrorKind::Other, e.to_string()),
+    };
+
+    io::Error::new(kind, format!("{context}: {detail}"))
+}
+
 impl Api for SshApi {
     fn read_file(
         &self,
         ctx: Ctx,
         path: RemotePath,
+        options: ReadFileOptions,
     ) -> impl Future<Output = io::Result<Vec<u8>>> + Send {
         let sftp_path = self.sftp_path(&path);
         async move {
-            debug!("[Conn {}] Reading file {}", ctx.connection_id, path);
+            debug!(
+                "[Conn {}] Reading file {} (options: {:?})",
+                ctx.connection_id, path, options
+            );
 
             let sftp = self.get_sftp().await?;
 
-            use tokio::io::AsyncReadExt;
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
             let mut file = sftp
                 .open(sftp_path.as_str())
                 .await
-                .map_err(|e| io::Error::other(format!("SFTP open '{}': {e}", sftp_path)))?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP open '{}'", sftp_path)))?;
+
+            if let Some(offset) = options.offset {
+                file.seek(io::SeekFrom::Start(offset)).await?;
+            }
 
             let mut contents = Vec::new();
-            file.read_to_end(&mut contents).await?;
+            match options.len {
+                Some(len) => {
+                    file.take(len).read_to_end(&mut contents).await?;
+                }
+                None => {
+                    file.read_to_end(&mut contents).await?;
+                }
+            }
 
             Ok(contents)
-        }
-    }
-
-    fn read_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-    ) -> impl Future<Output = io::Result<String>> + Send {
-        async move {
-            let data = self.read_file(ctx, path).await?;
-            String::from_utf8(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
         }
     }
 
@@ -271,74 +301,60 @@ impl Api for SshApi {
         ctx: Ctx,
         path: RemotePath,
         data: Vec<u8>,
+        options: WriteFileOptions,
     ) -> impl Future<Output = io::Result<()>> + Send {
         let sftp_path = self.sftp_path(&path);
         async move {
-            debug!("[Conn {}] Writing file {}", ctx.connection_id, path);
-
-            let sftp = self.get_sftp().await?;
-
-            use tokio::io::AsyncWriteExt;
-            let mut file = sftp
-                .create(sftp_path.as_str())
-                .await
-                .map_err(|e| io::Error::other(format!("SFTP create '{}': {e}", sftp_path)))?;
-
-            file.write_all(&data).await?;
-            file.flush().await?;
-
-            Ok(())
-        }
-    }
-
-    fn write_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        async move { self.write_file(ctx, path, data.into_bytes()).await }
-    }
-
-    fn append_file(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: Vec<u8>,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        let sftp_path = self.sftp_path(&path);
-        async move {
-            debug!("[Conn {}] Appending to file {}", ctx.connection_id, path);
+            debug!(
+                "[Conn {}] Writing file {} (options: {:?})",
+                ctx.connection_id, path, options
+            );
 
             let sftp = self.get_sftp().await?;
 
             use russh_sftp::protocol::OpenFlags;
-            use tokio::io::AsyncWriteExt;
+            use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+
+            if options.append {
+                let mut file = sftp
+                    .open_with_flags(
+                        sftp_path.as_str(),
+                        OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::APPEND,
+                    )
+                    .await
+                    .map_err(|e| {
+                        sftp_io_error(e, &format!("SFTP open_with_flags '{}'", sftp_path))
+                    })?;
+
+                file.write_all(&data).await?;
+                file.flush().await?;
+                return Ok(());
+            }
+
+            if let Some(offset) = options.offset {
+                let mut file = sftp
+                    .open_with_flags(sftp_path.as_str(), OpenFlags::WRITE | OpenFlags::CREATE)
+                    .await
+                    .map_err(|e| {
+                        sftp_io_error(e, &format!("SFTP open_with_flags '{}'", sftp_path))
+                    })?;
+
+                file.seek(io::SeekFrom::Start(offset)).await?;
+                file.write_all(&data).await?;
+                file.flush().await?;
+                return Ok(());
+            }
 
             let mut file = sftp
-                .open_with_flags(
-                    sftp_path.as_str(),
-                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::APPEND,
-                )
+                .create(sftp_path.as_str())
                 .await
-                .map_err(|e| {
-                    io::Error::other(format!("SFTP open_with_flags '{}': {e}", sftp_path))
-                })?;
+                .map_err(|e| sftp_io_error(e, &format!("SFTP create '{}'", sftp_path)))?;
 
             file.write_all(&data).await?;
             file.flush().await?;
 
             Ok(())
         }
-    }
-
-    fn append_file_text(
-        &self,
-        ctx: Ctx,
-        path: RemotePath,
-        data: String,
-    ) -> impl Future<Output = io::Result<()>> + Send {
-        async move { self.append_file(ctx, path, data.into_bytes()).await }
     }
 
     fn read_dir(
