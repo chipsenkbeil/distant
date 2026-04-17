@@ -355,16 +355,11 @@ fn parse_ssh_g_output(output: &str) -> Option<ResolvedConfig> {
             "identityfile" => {
                 identity_files.push(PathBuf::from(value));
             }
-            "proxycommand" => {
-                if !value.eq_ignore_ascii_case("none") {
-                    config.proxy_command = Some(value.to_string());
-                }
+            "proxycommand" if !value.eq_ignore_ascii_case("none") => {
+                config.proxy_command = Some(value.to_string());
             }
-            "proxyjump" => {
-                if !value.eq_ignore_ascii_case("none") {
-                    config.proxy_jump =
-                        Some(value.split(',').map(|s| s.trim().to_string()).collect());
-                }
+            "proxyjump" if !value.eq_ignore_ascii_case("none") => {
+                config.proxy_jump = Some(value.split(',').map(|s| s.trim().to_string()).collect());
             }
             "identitiesonly" => {
                 config.identities_only = Some(value.to_string());
@@ -417,10 +412,8 @@ fn parse_ssh_g_output(output: &str) -> Option<ResolvedConfig> {
                 config.pubkey_accepted_algorithms =
                     value.split(',').map(|s| s.trim().to_string()).collect();
             }
-            "identityagent" => {
-                if !value.eq_ignore_ascii_case("none") {
-                    config.identity_agent = Some(value.to_string());
-                }
+            "identityagent" if !value.eq_ignore_ascii_case("none") => {
+                config.identity_agent = Some(value.to_string());
             }
             _ => {
                 // Ignore other fields

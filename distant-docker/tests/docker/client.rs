@@ -28,10 +28,13 @@ async fn write_file_and_read_file_should_roundtrip(#[future] client: Option<Ctx<
     let data = b"hello from distant!";
 
     client
-        .write_file(path.clone(), data.to_vec())
+        .write_file(path.clone(), data.to_vec(), Default::default())
         .await
         .unwrap();
-    let result = client.read_file(path.clone()).await.unwrap();
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
     assert_eq!(result, data);
 
     let _ = client.remove(path, false).await;
@@ -43,7 +46,7 @@ async fn read_file_should_fail_if_missing(#[future] client: Option<Ctx<Client>>)
     let mut client = skip_if_no_docker!(client.await);
     let path = test_temp_dir().join("distant-test-nonexistent-file.txt");
     let err = client
-        .read_file(path)
+        .read_file(path, Default::default())
         .await
         .expect_err("Expected error reading nonexistent file");
     let err_msg = err.to_string().to_lowercase();
@@ -81,7 +84,7 @@ async fn append_file_should_append_data(#[future] client: Option<Ctx<Client>>) {
     let path = test_temp_dir().join("distant-test-append.txt");
 
     client
-        .write_file(path.clone(), b"hello".to_vec())
+        .write_file(path.clone(), b"hello".to_vec(), Default::default())
         .await
         .unwrap();
     client
@@ -89,7 +92,10 @@ async fn append_file_should_append_data(#[future] client: Option<Ctx<Client>>) {
         .await
         .unwrap();
 
-    let result = client.read_file(path.clone()).await.unwrap();
+    let result = client
+        .read_file(path.clone(), Default::default())
+        .await
+        .unwrap();
     assert_eq!(result, b"hello world");
 
     let _ = client.remove(path, false).await;
@@ -140,11 +146,11 @@ async fn read_dir_should_list_entries(#[future] client: Option<Ctx<Client>>) {
     let _ = client.remove(dir.clone(), true).await;
     client.create_dir(dir.clone(), false).await.unwrap();
     client
-        .write_file(dir.join("file1.txt"), b"a".to_vec())
+        .write_file(dir.join("file1.txt"), b"a".to_vec(), Default::default())
         .await
         .unwrap();
     client
-        .write_file(dir.join("file2.txt"), b"b".to_vec())
+        .write_file(dir.join("file2.txt"), b"b".to_vec(), Default::default())
         .await
         .unwrap();
 
@@ -178,12 +184,15 @@ async fn copy_should_duplicate_file(#[future] client: Option<Ctx<Client>>) {
     let _ = client.remove(dst.clone(), false).await;
 
     client
-        .write_file(src.clone(), b"copy me".to_vec())
+        .write_file(src.clone(), b"copy me".to_vec(), Default::default())
         .await
         .unwrap();
     client.copy(src.clone(), dst.clone()).await.unwrap();
 
-    let result = client.read_file(dst.clone()).await.unwrap();
+    let result = client
+        .read_file(dst.clone(), Default::default())
+        .await
+        .unwrap();
     assert_eq!(result, b"copy me");
 
     let _ = client.remove(src, false).await;
@@ -200,7 +209,7 @@ async fn rename_should_move_file(#[future] client: Option<Ctx<Client>>) {
     let _ = client.remove(dst.clone(), false).await;
 
     client
-        .write_file(src.clone(), b"rename me".to_vec())
+        .write_file(src.clone(), b"rename me".to_vec(), Default::default())
         .await
         .unwrap();
     client.rename(src.clone(), dst.clone()).await.unwrap();
@@ -208,7 +217,10 @@ async fn rename_should_move_file(#[future] client: Option<Ctx<Client>>) {
     let exists_src = client.exists(src).await.unwrap();
     assert!(!exists_src, "Source should not exist after rename");
 
-    let result = client.read_file(dst.clone()).await.unwrap();
+    let result = client
+        .read_file(dst.clone(), Default::default())
+        .await
+        .unwrap();
     assert_eq!(result, b"rename me");
 
     let _ = client.remove(dst, false).await;
@@ -236,7 +248,7 @@ async fn metadata_should_return_file_info(#[future] client: Option<Ctx<Client>>)
     let path = test_temp_dir().join("distant-test-metadata.txt");
 
     client
-        .write_file(path.clone(), b"metadata test".to_vec())
+        .write_file(path.clone(), b"metadata test".to_vec(), Default::default())
         .await
         .unwrap();
 
@@ -277,7 +289,7 @@ async fn remove_should_delete_file(#[future] client: Option<Ctx<Client>>) {
     let path = test_temp_dir().join("distant-test-remove.txt");
 
     client
-        .write_file(path.clone(), b"remove me".to_vec())
+        .write_file(path.clone(), b"remove me".to_vec(), Default::default())
         .await
         .unwrap();
     client.remove(path.clone(), false).await.unwrap();
@@ -296,7 +308,7 @@ async fn remove_should_delete_directory_recursively(#[future] client: Option<Ctx
     let sub = dir.join("sub");
     client.create_dir(sub.clone(), true).await.unwrap();
     client
-        .write_file(sub.join("file.txt"), b"nested".to_vec())
+        .write_file(sub.join("file.txt"), b"nested".to_vec(), Default::default())
         .await
         .unwrap();
 
@@ -450,7 +462,10 @@ async fn search_path_should_find_file_by_name(#[future] client: Option<Ctx<Clien
 
     let _ = client.remove(dir.clone(), true).await;
     client.create_dir(dir.clone(), true).await.unwrap();
-    client.write_file(file, b"content".to_vec()).await.unwrap();
+    client
+        .write_file(file, b"content".to_vec(), Default::default())
+        .await
+        .unwrap();
 
     let query = distant_core::protocol::SearchQuery::path(
         SearchQueryCondition::Contains {

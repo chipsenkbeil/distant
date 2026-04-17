@@ -11,8 +11,8 @@ use crate::client::{
 };
 use crate::protocol::{
     self, ChangeKindSet, DirEntry, Environment, Error as Failure, Metadata, Permissions, PtySize,
-    RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo, SystemInfo, TunnelId,
-    Version,
+    ReadFileOptions, RemotePath, SearchId, SearchQuery, SetPermissionsOptions, StatusInfo,
+    SystemInfo, TunnelId, Version, WriteFileOptions,
 };
 
 pub type AsyncReturn<'a, T, E = io::Error> =
@@ -87,7 +87,11 @@ pub trait ChannelExt {
     ) -> AsyncReturn<'_, (Vec<DirEntry>, Vec<Failure>)>;
 
     /// Reads a remote file as a collection of bytes
-    fn read_file(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, Vec<u8>>;
+    fn read_file(
+        &mut self,
+        path: impl Into<RemotePath>,
+        options: ReadFileOptions,
+    ) -> AsyncReturn<'_, Vec<u8>>;
 
     /// Returns a remote file as a string
     fn read_file_text(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, String>;
@@ -156,6 +160,7 @@ pub trait ChannelExt {
         &mut self,
         path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
+        options: WriteFileOptions,
     ) -> AsyncReturn<'_, ()>;
 
     /// Writes a remote file with the data from a string
@@ -216,7 +221,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            protocol::Request::FileAppend { path: path.into(), data: data.into() },
+            protocol::Request::FileWrite {
+                path: path.into(),
+                data: data.into(),
+                options: WriteFileOptions { append: true, ..Default::default() },
+            },
             @ok
         )
     }
@@ -228,7 +237,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            protocol::Request::FileAppendText { path: path.into(), text: data.into() },
+            protocol::Request::FileWrite {
+                path: path.into(),
+                data: data.into().into_bytes(),
+                options: WriteFileOptions { append: true, ..Default::default() },
+            },
             @ok
         )
     }
@@ -350,10 +363,17 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         )
     }
 
-    fn read_file(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, Vec<u8>> {
+    fn read_file(
+        &mut self,
+        path: impl Into<RemotePath>,
+        options: ReadFileOptions,
+    ) -> AsyncReturn<'_, Vec<u8>> {
         make_body!(
             self,
-            protocol::Request::FileRead { path: path.into() },
+            protocol::Request::FileRead {
+                path: path.into(),
+                options
+            },
             |data| match data {
                 protocol::Response::Blob { data } => Ok(data),
                 protocol::Response::Error(x) => Err(io::Error::from(x)),
@@ -363,15 +383,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
     }
 
     fn read_file_text(&mut self, path: impl Into<RemotePath>) -> AsyncReturn<'_, String> {
-        make_body!(
-            self,
-            protocol::Request::FileReadText { path: path.into() },
-            |data| match data {
-                protocol::Response::Text { data } => Ok(data),
-                protocol::Response::Error(x) => Err(io::Error::from(x)),
-                _ => Err(mismatched_response()),
-            }
-        )
+        let path = path.into();
+        Box::pin(async move {
+            let data = self.read_file(path, Default::default()).await?;
+            Ok(String::from_utf8_lossy(&data).into_owned())
+        })
     }
 
     fn remove(&mut self, path: impl Into<RemotePath>, force: bool) -> AsyncReturn<'_, ()> {
@@ -507,10 +523,15 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
         &mut self,
         path: impl Into<RemotePath>,
         data: impl Into<Vec<u8>>,
+        options: WriteFileOptions,
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            protocol::Request::FileWrite { path: path.into(), data: data.into() },
+            protocol::Request::FileWrite {
+                path: path.into(),
+                data: data.into(),
+                options,
+            },
             @ok
         )
     }
@@ -522,7 +543,11 @@ impl ChannelExt for Channel<protocol::Msg<protocol::Request>, protocol::Msg<prot
     ) -> AsyncReturn<'_, ()> {
         make_body!(
             self,
-            protocol::Request::FileWriteText { path: path.into(), text: data.into() },
+            protocol::Request::FileWrite {
+                path: path.into(),
+                data: data.into().into_bytes(),
+                options: Default::default(),
+            },
             @ok
         )
     }
@@ -590,9 +615,14 @@ mod tests {
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileAppend { path, data } => {
+            protocol::Request::FileWrite {
+                path,
+                data,
+                options,
+            } => {
                 assert_eq!(path, RemotePath::from("/test/path"));
                 assert_eq!(data, [1, 2, 3]);
+                assert!(options.append);
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -660,9 +690,14 @@ mod tests {
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileAppendText { path, text } => {
+            protocol::Request::FileWrite {
+                path,
+                data,
+                options,
+            } => {
                 assert_eq!(path, RemotePath::from("/test/path"));
-                assert_eq!(text, "hello");
+                assert_eq!(data, b"hello".to_vec());
+                assert!(options.append);
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1080,11 +1115,12 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move { channel.read_file("/test/file").await });
+        let task =
+            tokio::spawn(async move { channel.read_file("/test/file", Default::default()).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileRead { path } => {
+            protocol::Request::FileRead { path, .. } => {
                 assert_eq!(path, RemotePath::from("/test/file"));
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -1109,7 +1145,8 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task = tokio::spawn(async move { channel.read_file("/test/file").await });
+        let task =
+            tokio::spawn(async move { channel.read_file("/test/file", Default::default()).await });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -1136,7 +1173,7 @@ mod tests {
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileReadText { path } => {
+            protocol::Request::FileRead { path, .. } => {
                 assert_eq!(path, RemotePath::from("/test/file"));
             }
             x => panic!("Unexpected request: {:?}", x),
@@ -1145,8 +1182,8 @@ mod tests {
         transport
             .write_frame_for(&Response::new(
                 req.id,
-                protocol::Response::Text {
-                    data: String::from("hello world"),
+                protocol::Response::Blob {
+                    data: b"hello world".to_vec(),
                 },
             ))
             .await
@@ -1154,28 +1191,6 @@ mod tests {
 
         let result = task.await.unwrap().unwrap();
         assert_eq!(result, "hello world");
-    }
-
-    #[test(tokio::test)]
-    async fn read_file_text_should_return_error_on_mismatched_response() {
-        let (mut transport, session) = make_session();
-        let mut channel = session.clone_channel();
-
-        let task = tokio::spawn(async move { channel.read_file_text("/test/file").await });
-
-        let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
-        transport
-            .write_frame_for(&Response::new(
-                req.id,
-                protocol::Response::Blob {
-                    data: vec![1, 2, 3],
-                },
-            ))
-            .await
-            .unwrap();
-
-        let err = task.await.unwrap().unwrap_err();
-        assert_eq!(err.to_string(), "Mismatched response");
     }
 
     #[test(tokio::test)]
@@ -1432,14 +1447,22 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task =
-            tokio::spawn(async move { channel.write_file("/test/file", vec![4, 5, 6]).await });
+        let task = tokio::spawn(async move {
+            channel
+                .write_file("/test/file", vec![4, 5, 6], Default::default())
+                .await
+        });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileWrite { path, data } => {
+            protocol::Request::FileWrite {
+                path,
+                data,
+                options,
+            } => {
                 assert_eq!(path, RemotePath::from("/test/file"));
                 assert_eq!(data, [4, 5, 6]);
+                assert!(!options.append);
             }
             x => panic!("Unexpected request: {:?}", x),
         }
@@ -1457,8 +1480,11 @@ mod tests {
         let (mut transport, session) = make_session();
         let mut channel = session.clone_channel();
 
-        let task =
-            tokio::spawn(async move { channel.write_file("/test/file", vec![4, 5, 6]).await });
+        let task = tokio::spawn(async move {
+            channel
+                .write_file("/test/file", vec![4, 5, 6], Default::default())
+                .await
+        });
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         transport
@@ -1486,9 +1512,14 @@ mod tests {
 
         let req: Request<protocol::Request> = transport.read_frame_as().await.unwrap().unwrap();
         match req.payload {
-            protocol::Request::FileWriteText { path, text } => {
+            protocol::Request::FileWrite {
+                path,
+                data,
+                options,
+            } => {
                 assert_eq!(path, RemotePath::from("/test/file"));
-                assert_eq!(text, "hello world");
+                assert_eq!(data, b"hello world".to_vec());
+                assert!(!options.append);
             }
             x => panic!("Unexpected request: {:?}", x),
         }
