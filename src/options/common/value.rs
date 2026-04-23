@@ -74,6 +74,8 @@ where
     }
 }
 
+impl<T> Eq for Value<T> where T: Eq {}
+
 impl<T> PartialEq<T> for Value<T>
 where
     T: PartialEq,

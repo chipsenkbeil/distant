@@ -12,7 +12,7 @@ use distant_core::net::common::{
 };
 use distant_core::net::manager::ManagerClient;
 use distant_core::protocol::{
-    self, ChangeKind, ChangeKindSet, FileType, Permissions, RemotePath, SearchQuery,
+    self, ChangeKind, ChangeKindSet, FileType, MountStatus, Permissions, RemotePath, SearchQuery,
     SearchQueryContentsMatch, SearchQueryMatch, SearchQueryPathMatch, SetPermissionsOptions,
     SystemInfo, Version, semver,
 };
@@ -27,7 +27,7 @@ use dialoguer::theme::ColorfulTheme;
 
 use crate::cli::common::{
     Cache, JsonAuthHandler, MsgReceiver, MsgSender, PromptAuthHandler, Ui, connect_to_manager,
-    format_connection, try_connect as try_connect_no_autostart,
+    format_connection, subscribe_and_display_events, try_connect as try_connect_no_autostart,
 };
 use crate::constants::MAX_PIPE_CHUNK_SIZE;
 use crate::options::{
@@ -35,6 +35,7 @@ use crate::options::{
     Shell as ShellOption,
 };
 use crate::{CliError, CliResult};
+use distant_core::net::manager::EventTopic;
 
 mod copy;
 mod lsp;
@@ -69,9 +70,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             destination,
             format,
             network,
-            options,
+            mut options,
             new,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -202,7 +207,11 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
             format,
             network,
             mut options,
+            no_reconnect,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager");
             let mut client = connect_to_manager(format, network, &ui).await?;
 
@@ -341,6 +350,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                      Is it running? Start it with: distant manager listen --daemon",
                 )?;
 
+            subscribe_and_display_events(
+                &mut client,
+                vec![EventTopic::Connection, EventTopic::Mount],
+                Format::Json,
+            )
+            .await;
+
             let mut cache = read_cache(&cache).await;
             let connection_id =
                 use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
@@ -457,6 +473,169 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
 
             debug!("Shutting down repl");
         }
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider",
+        ))]
+        ClientSubcommand::Mount {
+            cache,
+            connection,
+            network,
+            remote_root,
+            readonly,
+            attr_ttl,
+            dir_ttl,
+            read_ttl,
+            backend,
+            mount_point,
+            extras,
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            let mut cache = read_cache(&cache).await;
+            let connection_id =
+                use_or_lookup_connection_id(&mut cache, connection, &mut client).await?;
+
+            #[cfg(all(feature = "mount-macos-file-provider", target_os = "macos"))]
+            if matches!(backend, distant_mount::MountBackend::MacosFileProvider)
+                && mount_point.is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "macOS FileProvider does not accept a mount path \
+                     — files appear in Finder automatically"
+                )
+                .into());
+            }
+
+            let config = distant_core::protocol::MountConfig {
+                mount_point: mount_point.clone(),
+                remote_root: remote_root.map(RemotePath::new),
+                readonly,
+                cache: distant_core::protocol::CacheConfig {
+                    attr_ttl: Duration::from_secs_f64(attr_ttl),
+                    dir_ttl: Duration::from_secs_f64(dir_ttl),
+                    read_ttl: Duration::from_secs_f64(read_ttl),
+                    ..Default::default()
+                },
+                extra: {
+                    let mut map = Map::new();
+                    for (key, value) in &extras {
+                        map.insert(key.clone(), value.clone());
+                    }
+                    map
+                },
+            };
+
+            let (id, mount_point, _backend) = client
+                .mount(connection_id, backend.as_str(), config)
+                .await
+                .context("Failed to mount filesystem")?;
+
+            println!("Mounted at {mount_point} (id: {id})");
+        }
+        #[cfg(any(
+            feature = "mount-fuse",
+            feature = "mount-nfs",
+            feature = "mount-windows-cloud-files",
+            feature = "mount-macos-file-provider",
+        ))]
+        ClientSubcommand::Unmount {
+            cache: _,
+            network,
+            id,
+            all,
+            include_all_macos_file_provider_domains,
+        } => {
+            // Clean up FileProvider domains if requested. Runs before
+            // manager connection since stale domains may not have
+            // corresponding active mounts in any running manager.
+            #[cfg(all(target_os = "macos", feature = "mount-macos-file-provider"))]
+            if include_all_macos_file_provider_domains {
+                match distant_mount::macos::remove_all_file_provider_domains() {
+                    Ok(()) => println!("All FileProvider domains removed"),
+                    Err(e) => eprintln!("warning: failed to clean up FileProvider domains: {e}"),
+                }
+
+                // If only cleaning up domains (no --all and no id), exit early
+                if !all && id.is_none() {
+                    return Ok(());
+                }
+            }
+
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            if all {
+                let mounts = client
+                    .list_mounts()
+                    .await
+                    .context("Failed to list mounts")?;
+                if mounts.is_empty() {
+                    println!("No active mounts");
+                    return Ok(());
+                }
+                let ids: Vec<u32> = mounts.iter().map(|m| m.id).collect();
+                client
+                    .unmount(ids)
+                    .await
+                    .context("Failed to unmount all mounts")?;
+                println!("Unmounted all mounts");
+                return Ok(());
+            }
+
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    let mounts = client
+                        .list_mounts()
+                        .await
+                        .context("Failed to list mounts")?;
+                    if mounts.is_empty() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No active mounts.\n\n\
+                             Mount a remote filesystem first:\n  \
+                             distant mount"
+                        )));
+                    }
+
+                    if !Term::stderr().is_term() {
+                        return Err(CliError::Error(anyhow::anyhow!(
+                            "No mount ID specified. See active mounts:\n  \
+                             distant status"
+                        )));
+                    }
+
+                    let items: Vec<String> = mounts
+                        .iter()
+                        .map(|m| format!("{} — {} ({})", m.id, m.mount_point, m.backend))
+                        .collect();
+                    let selection = Select::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Select mount to unmount")
+                        .items(&items)
+                        .default(0)
+                        .interact_on_opt(&Term::stderr())
+                        .context("Failed to render prompt")?;
+                    match selection {
+                        Some(index) => mounts[index].id,
+                        None => return Ok(()),
+                    }
+                }
+            };
+
+            let unmounted = client
+                .unmount(vec![id])
+                .await
+                .with_context(|| format!("Failed to unmount mount {id}"))?;
+
+            if unmounted.contains(&id) {
+                println!("Unmounted {id}");
+            } else {
+                return Err(CliError::Error(anyhow::anyhow!("No mount with id {id}")));
+            }
+        }
         ClientSubcommand::Shell {
             cache,
             cmd,
@@ -468,6 +647,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            subscribe_and_display_events(
+                &mut client,
+                vec![EventTopic::Connection, EventTopic::Mount],
+                Format::Shell,
+            )
+            .await;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -512,6 +698,13 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         } => {
             debug!("Connecting to manager");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            subscribe_and_display_events(
+                &mut client,
+                vec![EventTopic::Connection, EventTopic::Mount],
+                Format::Shell,
+            )
+            .await;
 
             let mut cache = read_cache(&cache).await;
             let connection_id =
@@ -862,6 +1055,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 .send(protocol::Msg::Batch(vec![
                     protocol::Request::FileRead {
                         path: RemotePath::from(path.as_path()),
+                        options: Default::default(),
                     },
                     protocol::Request::DirRead {
                         path: RemotePath::from(path.as_path()),
@@ -1131,7 +1325,7 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 channel
                     .into_client()
                     .into_channel()
-                    .write_file(path.as_path(), data)
+                    .write_file(path.as_path(), data, Default::default())
                     .await
                     .with_context(|| {
                         format!("Failed to write to {path:?} using connection {connection_id}")
@@ -1142,16 +1336,27 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         ClientSubcommand::Ssh {
             cache,
             destination,
-            options,
+            mut options,
             network,
             current_dir,
             environment,
             predict,
             new,
+            no_reconnect,
             cmd,
         } => {
+            if no_reconnect {
+                options.insert("no_reconnect".to_string(), "true".to_string());
+            }
             debug!("Connecting to manager (auto-start enabled)");
             let mut client = connect_to_manager(Format::Shell, network, &ui).await?;
+
+            subscribe_and_display_events(
+                &mut client,
+                vec![EventTopic::Connection, EventTopic::Mount],
+                Format::Shell,
+            )
+            .await;
 
             // Ensure destination has ssh:// scheme
             let destination = ensure_scheme(&destination, "ssh");
@@ -1234,10 +1439,15 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
         }
         ClientSubcommand::Status {
             id,
+            show,
             format,
             network,
             cache,
         } => {
+            let show_mount = show.iter().any(|s| s.eq_ignore_ascii_case("mount"));
+            let show_connection = show.iter().any(|s| s.eq_ignore_ascii_case("connection"));
+            let show_all = show.is_empty() && !show_mount && !show_connection;
+
             match id {
                 Some(id) => {
                     // Detail mode: show info about a specific connection
@@ -1272,50 +1482,95 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                         }
                     }
                 }
-                None => {
-                    // Overview mode: show manager status + connection list
+                None if show_mount => {
+                    // Mount-only mode: show active mounts.
+                    // No auto-start — if the manager isn't running, there
+                    // are no mounts to show.
                     match try_connect_no_autostart(Format::Shell, &network).await {
                         Ok(mut client) => {
-                            let list = client
-                                .list()
+                            let mounts = client
+                                .list_mounts()
                                 .await
-                                .context("Failed to get list of connections")?;
-
-                            let selected = read_cache(&cache).await.data.selected;
+                                .context("Failed to list mounts")?;
 
                             match format {
                                 Format::Json => {
                                     println!(
                                         "{}",
-                                        serde_json::to_string(&list)
-                                            .context("Failed to format connection list as json")?
+                                        serde_json::to_string(&mounts)
+                                            .context("Failed to format mounts as json")?
                                     );
                                 }
                                 Format::Shell => {
-                                    ui.status(
-                                        "Manager",
-                                        "running",
-                                        crate::cli::common::StatusColor::Green,
-                                    );
-
-                                    if list.is_empty() {
-                                        ui.dim("\nNo active connections.");
+                                    if mounts.is_empty() {
+                                        println!("No mounts found");
                                     } else {
-                                        ui.header("\nConnections:");
-                                        for (id, dest) in list {
-                                            if *selected == id {
-                                                ui.write_line(&format!(
-                                                    "  {} {} -> {}",
-                                                    style("*").green(),
-                                                    style(id).bold(),
-                                                    dest
-                                                ));
-                                            } else {
-                                                ui.write_line(&format!(
-                                                    "    {} -> {}",
-                                                    style(id).dim(),
-                                                    dest
-                                                ));
+                                        for m in &mounts {
+                                            println!(
+                                                "{} — {} ({}) [{}]",
+                                                style(m.id).bold(),
+                                                m.mount_point,
+                                                m.backend,
+                                                format_mount_status(&m.status),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => match format {
+                            Format::Shell => println!("No mounts found"),
+                            Format::Json => println!("[]"),
+                        },
+                    }
+                }
+                None => {
+                    // Overview mode: show manager status + connection list
+                    match try_connect_no_autostart(Format::Shell, &network).await {
+                        Ok(mut client) => {
+                            if show_all || show_connection {
+                                let list = client
+                                    .list()
+                                    .await
+                                    .context("Failed to get list of connections")?;
+
+                                let selected = read_cache(&cache).await.data.selected;
+
+                                match format {
+                                    Format::Json => {
+                                        println!(
+                                            "{}",
+                                            serde_json::to_string(&list).context(
+                                                "Failed to format connection list as json"
+                                            )?
+                                        );
+                                    }
+                                    Format::Shell => {
+                                        ui.status(
+                                            "Manager",
+                                            "running",
+                                            crate::cli::common::StatusColor::Green,
+                                        );
+
+                                        if list.is_empty() {
+                                            ui.dim("\nNo active connections.");
+                                        } else {
+                                            ui.header("\nConnections:");
+                                            for (id, dest) in list {
+                                                if *selected == id {
+                                                    ui.write_line(&format!(
+                                                        "  {} {} -> {}",
+                                                        style("*").green(),
+                                                        style(id).bold(),
+                                                        dest
+                                                    ));
+                                                } else {
+                                                    ui.write_line(&format!(
+                                                        "    {} -> {}",
+                                                        style(id).dim(),
+                                                        dest
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -1585,6 +1840,28 @@ async fn async_run(cmd: ClientSubcommand, quiet: bool) -> CliResult {
                 }
             }
         }
+        ClientSubcommand::Reconnect {
+            id,
+            format,
+            network,
+            ..
+        } => {
+            debug!("Connecting to manager");
+            let mut client = connect_to_manager(format, network, &ui).await?;
+
+            debug!("Requesting reconnection for connection {}", id);
+            client
+                .reconnect(id)
+                .await
+                .with_context(|| format!("Failed to initiate reconnection for connection {id}"))?;
+
+            match format {
+                Format::Json => println!("{}", json!({"type": "reconnect_initiated", "id": id})),
+                Format::Shell => {
+                    ui.success(&format!("Reconnection initiated for connection {id}"));
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1599,6 +1876,20 @@ fn format_change_kind(kind: ChangeKind) -> &'static str {
         x if x.is_modify() => "(Modified)",
         x if x.is_rename() => "(Renamed)",
         _ => "(Affected)",
+    }
+}
+
+/// Format a [`MountStatus`] as a single shell-readable label.
+///
+/// Active/Reconnecting/Disconnected render as their lowercase variant
+/// names; Failed renders as `failed: <reason>` so the failure cause
+/// is visible in the same row as the mount.
+fn format_mount_status(status: &MountStatus) -> String {
+    match status {
+        MountStatus::Active => "active".to_string(),
+        MountStatus::Reconnecting => "reconnecting".to_string(),
+        MountStatus::Disconnected => "disconnected".to_string(),
+        MountStatus::Failed { reason } => format!("failed: {reason}"),
     }
 }
 

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Generic event subscription protocol** for the manager. Clients open a
+  `Subscribe { topics: Vec<EventTopic> }` request and the manager pushes
+  `ManagerResponse::Event { event }` notifications whenever something
+  changes. Topics: `connection`, `mount`, `all`.
+- `Event::ConnectionState { id, state }` and
+  `Event::MountState { id, state }` cover the two subsystems currently.
+  New variants plug in here without protocol additions.
+- `MountStatus` enum (Active / Reconnecting / Disconnected /
+  Failed { reason }) replaces the previous free-form `String` on
+  `MountInfo.status`. Wire shape: `{"state":"active"}` and
+  `{"state":"failed","reason":"…"}`.
+- `MountHandle::probe` trait method returning `MountProbe` (Healthy /
+  Degraded / Failed). The default impl is `Healthy`; backends override
+  to surface real liveness signals.
+- Per-mount monitor task in the manager polls each mount's `probe` every
+  `Config::mount_health_interval` (default 5s) and reacts to
+  `Event::ConnectionState` events for the mount's underlying connection,
+  transitioning `MountStatus` and publishing `Event::MountState` events.
+- Network resilience stack from PR #288: TCP keepalive on every socket,
+  server-side heartbeat failure escalation (`max_heartbeat_failures` on
+  `ServerConfig`), `Plugin::reconnect` and `reconnect_strategy` trait
+  methods with per-plugin `ExponentialBackoff` (Host: 3 retries, SSH: 5,
+  Docker: 10), per-backend health monitors that self-shutdown the
+  in-process server when the backend dies, manager-driven reconnection
+  orchestration via `handle_reconnection`.
+- `distant client reconnect <id>` subcommand for manual reconnection.
+- `--no-reconnect` flag on Connect/Launch/Ssh subcommands.
+- `--heartbeat-interval` and `--max-heartbeat-failures` flags on the
+  server `Listen` subcommand.
+- Long-running CLI commands (Shell, Api, Spawn, Ssh) subscribe to
+  `[Connection, Mount]` event topics and stream
+  `[distant] connection N: reconnecting` /
+  `[distant] mount N: failed (...)` lines on stderr.
+
+### Changed
+
+- **BREAKING**: `MountInfo.status` is now a `MountStatus` enum, not a
+  `String`. Old wire format `"status": "active"` becomes
+  `"status": {"state": "active"}`. The CLI shell rendering of
+  `distant status --show mount` is unchanged.
+- **BREAKING**: `ManagerServer::kill(id)` now tears down every mount
+  whose `connection_id` matches the killed connection. Previously the
+  mounts orphaned with stale `Active` status. Regression test: HLT-05.
+
 ## [0.21.0]
 
 ### Changed

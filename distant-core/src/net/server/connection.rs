@@ -13,6 +13,7 @@ use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::{ConnectionState, RequestCtx, ServerHandler, ServerReply, ServerState, ShutdownTimer};
+use crate::net::common::utils;
 use crate::net::common::{
     Backup, Connection, Frame, Interest, Keychain, Response, Transport, UntypedRequest, Version,
 };
@@ -24,6 +25,9 @@ const SLEEP_DURATION: Duration = Duration::from_millis(1);
 
 /// Minimum time between heartbeats to communicate to the client connection.
 const MINIMUM_HEARTBEAT_DURATION: Duration = Duration::from_secs(5);
+
+/// Default maximum consecutive heartbeat write failures before terminating the connection.
+const DEFAULT_MAX_HEARTBEAT_FAILURES: u32 = 3;
 
 /// Represents an individual connection on the server.
 pub(super) struct ConnectionTask(JoinHandle<io::Result<()>>);
@@ -64,6 +68,7 @@ pub(super) struct ConnectionTaskBuilder<H, S, T> {
     shutdown_timer: Weak<RwLock<ShutdownTimer>>,
     sleep_duration: Duration,
     heartbeat_duration: Duration,
+    max_heartbeat_failures: u32,
     verifier: Weak<Verifier>,
     version: Version,
 }
@@ -80,6 +85,7 @@ impl ConnectionTaskBuilder<(), (), ()> {
             shutdown_timer: Weak::new(),
             sleep_duration: SLEEP_DURATION,
             heartbeat_duration: MINIMUM_HEARTBEAT_DURATION,
+            max_heartbeat_failures: DEFAULT_MAX_HEARTBEAT_FAILURES,
             verifier: Weak::new(),
             version: Version::default(),
         }
@@ -97,6 +103,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -112,6 +119,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -127,6 +135,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -142,6 +151,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -157,6 +167,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -175,6 +186,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -190,6 +202,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -208,6 +221,26 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
+            verifier: self.verifier,
+            version: self.version,
+        }
+    }
+
+    pub fn max_heartbeat_failures(
+        self,
+        max_heartbeat_failures: u32,
+    ) -> ConnectionTaskBuilder<H, S, T> {
+        ConnectionTaskBuilder {
+            handler: self.handler,
+            state: self.state,
+            keychain: self.keychain,
+            transport: self.transport,
+            shutdown: self.shutdown,
+            shutdown_timer: self.shutdown_timer,
+            sleep_duration: self.sleep_duration,
+            heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures,
             verifier: self.verifier,
             version: self.version,
         }
@@ -223,6 +256,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier,
             version: self.version,
         }
@@ -238,6 +272,7 @@ impl<H, S, T> ConnectionTaskBuilder<H, S, T> {
             shutdown_timer: self.shutdown_timer,
             sleep_duration: self.sleep_duration,
             heartbeat_duration: self.heartbeat_duration,
+            max_heartbeat_failures: self.max_heartbeat_failures,
             verifier: self.verifier,
             version,
         }
@@ -265,6 +300,7 @@ where
             shutdown_timer,
             sleep_duration,
             heartbeat_duration,
+            max_heartbeat_failures,
             verifier,
             version,
         } = self;
@@ -459,6 +495,7 @@ where
         }
 
         let mut last_heartbeat = Instant::now();
+        let mut consecutive_heartbeat_failures: u32 = 0;
 
         // Restore our connection's channels if we have them, otherwise make new ones
         let (tx, mut rx) = match state.connections.write().await.remove(&id) {
@@ -526,18 +563,24 @@ where
                                 tokio::spawn(async move { handler.on_request(ctx).await });
                             }
                             Err(x) => {
-                                if log::log_enabled!(Level::Debug) {
-                                    error!(
-                                        "[Conn {id}] Failed receiving {}",
-                                        String::from_utf8_lossy(&request.payload),
-                                    );
-                                }
-
-                                error!("[Conn {id}] Invalid request: {x}");
+                                error!(
+                                    "[Conn {id}] Failed to decode typed request \
+                                     ({} bytes, preview {}): {x}",
+                                    request.payload.len(),
+                                    utils::hex_preview(&request.payload, utils::HEX_PREVIEW_BYTES),
+                                );
                             }
                         },
                         Err(x) => {
-                            error!("[Conn {id}] Invalid request payload: {x}");
+                            // At this point we only have the raw frame bytes, not the
+                            // inner payload — include the frame preview instead.
+                            let raw = frame.as_item();
+                            error!(
+                                "[Conn {id}] Failed to parse raw request wire format \
+                                 ({} bytes, preview {}): {x}",
+                                raw.len(),
+                                utils::hex_preview(raw, utils::HEX_PREVIEW_BYTES),
+                            );
                         }
                     },
                     Ok(None) => {
@@ -557,9 +600,23 @@ where
                 if last_heartbeat.elapsed() >= heartbeat_duration {
                     trace!("[Conn {id}] Sending heartbeat via empty frame");
                     match connection.try_write_frame(Frame::empty()) {
-                        Ok(()) => (),
+                        Ok(()) => {
+                            consecutive_heartbeat_failures = 0;
+                        }
                         Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
-                        Err(x) => error!("[Conn {id}] Send failed: {x}"),
+                        Err(x) => {
+                            consecutive_heartbeat_failures += 1;
+                            error!(
+                                "[Conn {id}] Heartbeat send failed ({consecutive_heartbeat_failures}/{max_heartbeat_failures}): {x}"
+                            );
+                            if max_heartbeat_failures > 0
+                                && consecutive_heartbeat_failures >= max_heartbeat_failures
+                            {
+                                terminate_connection!(@error(tx, rx)
+                                    "[Conn {id}] Terminated after {consecutive_heartbeat_failures} consecutive heartbeat failures"
+                                );
+                            }
+                        }
                     }
                     last_heartbeat = Instant::now();
                 }
@@ -580,7 +637,9 @@ where
 
                     match response.to_vec() {
                         Ok(data) => match connection.try_write_frame(data) {
-                            Ok(()) => (),
+                            Ok(()) => {
+                                consecutive_heartbeat_failures = 0;
+                            }
                             Err(x) if x.kind() == io::ErrorKind::WouldBlock => write_blocked = true,
                             Err(x) => error!("[Conn {id}] Send failed: {x}"),
                         },

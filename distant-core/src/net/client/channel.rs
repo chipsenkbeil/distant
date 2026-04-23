@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
+use crate::net::common::utils;
 use crate::net::common::{Request, Response, UntypedRequest, UntypedResponse};
 
 mod mailbox;
@@ -157,16 +158,12 @@ fn map_to_typed_mailbox<T: Send + DeserializeOwned + 'static>(
     mailbox.map_opt(|res| match res.to_typed_response() {
         Ok(res) => Some(res),
         Err(x) => {
-            if log::log_enabled!(Level::Trace) {
-                trace!(
-                    "Invalid response payload: {}",
-                    String::from_utf8_lossy(&res.payload)
-                );
-            }
-
             error!(
-                "Unable to parse response payload into {}: {x}",
-                std::any::type_name::<T>()
+                "Unable to parse response payload into {} \
+                 ({} bytes, preview {}): {x}",
+                std::any::type_name::<T>(),
+                res.payload.len(),
+                utils::hex_preview(&res.payload, utils::HEX_PREVIEW_BYTES),
             );
             None
         }

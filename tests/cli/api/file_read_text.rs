@@ -1,6 +1,7 @@
-//! Integration tests for the `file_read_text` JSON API endpoint.
+//! Integration tests for reading a file as text via the `file_read` JSON API endpoint.
 //!
-//! Tests reading a file as text and error handling when the file does not exist.
+//! Tests reading a file as raw bytes (the text convenience variants have been removed
+//! from the protocol) and error handling when the file does not exist.
 
 use assert_fs::prelude::*;
 use rstest::*;
@@ -28,7 +29,7 @@ async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_read_text",
+            "type": "file_read",
             "path": file.to_path_buf(),
         },
     });
@@ -39,8 +40,8 @@ async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
     assert_eq!(
         res["payload"],
         json!({
-            "type": "text",
-            "data": FILE_CONTENTS.to_string()
+            "type": "blob",
+            "data": FILE_CONTENTS.as_bytes().to_vec()
         }),
         "JSON: {res}"
     );
@@ -58,7 +59,7 @@ async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiPro
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_read_text",
+            "type": "file_read",
             "path": file.to_path_buf(),
         },
     });

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use distant_core::net::auth::Verifier;
 use distant_core::net::manager::{Config as ManagerConfig, ManagerServer, PROTOCOL_VERSION};
-use distant_core::net::server::ServerRef;
+use distant_core::net::server::{ServerConfig, ServerRef, Shutdown};
 use log::*;
 
 use crate::constants::{global as global_paths, user as user_paths};
@@ -13,6 +13,7 @@ pub struct Manager {
     #[cfg(unix)]
     pub access: AccessControl,
     pub config: ManagerConfig,
+    pub shutdown: Shutdown,
     pub network: NetworkSettings,
 }
 
@@ -44,6 +45,10 @@ impl Manager {
             }
 
             let server = ManagerServer::new(self.config)
+                .config(ServerConfig {
+                    shutdown: self.shutdown,
+                    ..Default::default()
+                })
                 .verifier(Verifier::none())
                 .version(version)
                 .start(
@@ -67,6 +72,10 @@ impl Manager {
             debug!("Manager wants to use windows pipe @ {:?}", pipe_name);
 
             let server = ManagerServer::new(self.config)
+                .config(ServerConfig {
+                    shutdown: self.shutdown,
+                    ..Default::default()
+                })
                 .verifier(Verifier::none())
                 .version(version)
                 .start(WindowsPipeListener::bind_local(pipe_name)?)

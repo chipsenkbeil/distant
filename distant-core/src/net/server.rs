@@ -240,6 +240,7 @@ where
                     .shutdown_timer(Arc::downgrade(&timer))
                     .sleep_duration(config.connection_sleep)
                     .heartbeat_duration(config.connection_heartbeat)
+                    .max_heartbeat_failures(config.max_heartbeat_failures)
                     .verifier(Arc::downgrade(&verifier))
                     .version(version.clone())
                     .spawn(),

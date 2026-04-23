@@ -1,4 +1,5 @@
-//! Integration tests for the `file_append` (binary/byte) JSON API endpoint.
+//! Integration tests for appending binary data via the `file_write` JSON API endpoint
+//! with `append: true` in the options.
 //!
 //! Tests appending raw byte data to an existing file and error handling
 //! when the target file's parent directory is missing.
@@ -34,9 +35,12 @@ async fn should_support_json_output(mut api_process: CtxCommand<ApiProcess>) {
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_append",
+            "type": "file_write",
             "path": file.to_path_buf(),
             "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+            "options": {
+                "append": true
+            },
         },
     });
 
@@ -70,9 +74,12 @@ async fn should_support_json_output_for_error(mut api_process: CtxCommand<ApiPro
     let req = json!({
         "id": id,
         "payload": {
-            "type": "file_append",
+            "type": "file_write",
             "path": file.to_path_buf(),
             "data": APPENDED_FILE_CONTENTS.as_bytes().to_vec(),
+            "options": {
+                "append": true
+            },
         },
     });
 

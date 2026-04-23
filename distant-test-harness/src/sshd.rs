@@ -373,7 +373,7 @@ impl fmt::Display for SshdConfig {
 
 /// Context for some sshd instance
 pub struct Sshd {
-    child: Mutex<Option<Child>>,
+    pub(crate) child: Mutex<Option<Child>>,
 
     /// Port that sshd is listening on
     pub port: u16,

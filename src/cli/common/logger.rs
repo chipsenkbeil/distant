@@ -1,43 +1,47 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use log::{LevelFilter, Log, Metadata, Record};
 
-/// A file-based logger implementing [`log::Log`].
+/// A logger implementing [`log::Log`] that writes to one or more outputs.
 ///
-/// Filters log messages by module prefix and level, writing matching records to a file.
-/// The format replicates `flexi_logger::opt_format`:
+/// Filters log messages by module prefix and level, writing matching records to every
+/// configured output (file, stderr, or both). The format replicates `flexi_logger::opt_format`:
 /// ```text
 /// [2016-01-13 15:25:01.640870 +01:00] INFO [src/foo/bar:26] Task message
 /// ```
-pub struct FileLogger {
+///
+/// Construct via [`Logger::builder`] to configure outputs before installing.
+pub struct Logger {
     modules: Vec<String>,
     level: LevelFilter,
-    file: Mutex<File>,
+    outputs: Vec<Mutex<Box<dyn Write + Send>>>,
 }
 
-impl FileLogger {
-    /// Initializes the global logger.
+/// Builder for configuring and installing a [`Logger`].
+///
+/// Supports file output, stderr output, or both. At least one output must be
+/// configured before calling [`init`](LoggerBuilder::init).
+pub struct LoggerBuilder {
+    modules: Vec<String>,
+    level: LevelFilter,
+    file_path: Option<PathBuf>,
+    stderr: bool,
+}
+
+impl Logger {
+    /// Returns a new [`LoggerBuilder`] with default settings.
     ///
-    /// Writes to `path`, accepting records from `modules` at or above `level`.
-    /// Panics if the logger cannot be set (i.e. a logger is already installed).
-    pub fn init(modules: Vec<String>, level: LevelFilter, path: &Path) {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .unwrap_or_else(|e| panic!("Failed to open log file {path:?}: {e}"));
-
-        let logger = Box::new(Self {
-            modules,
-            level,
-            file: Mutex::new(file),
-        });
-
-        log::set_boxed_logger(logger).expect("Failed to set logger");
-        log::set_max_level(level);
+    /// The defaults are: no modules, [`LevelFilter::Info`], no outputs.
+    pub fn builder() -> LoggerBuilder {
+        LoggerBuilder {
+            modules: Vec::new(),
+            level: LevelFilter::Info,
+            file_path: None,
+            stderr: false,
+        }
     }
 
     /// Returns `true` if the record's module path starts with one of our allowed prefixes.
@@ -69,7 +73,82 @@ impl FileLogger {
     }
 }
 
-impl Log for FileLogger {
+impl LoggerBuilder {
+    /// Sets the module prefixes that this logger will accept records from.
+    pub fn modules(mut self, modules: Vec<String>) -> Self {
+        self.modules = modules;
+        self
+    }
+
+    /// Sets the maximum log level.
+    pub fn level(mut self, level: LevelFilter) -> Self {
+        self.level = level;
+        self
+    }
+
+    /// Configures the logger to append to a file at `path`.
+    pub fn file(mut self, path: &Path) -> Self {
+        self.file_path = Some(path.to_path_buf());
+        self
+    }
+
+    /// Configures the logger to also write to stderr.
+    #[allow(dead_code)]
+    pub fn stderr(mut self) -> Self {
+        self.stderr = true;
+        self
+    }
+
+    /// Installs the logger as the global logger.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no outputs could be opened or the global logger
+    /// is already set. If the file fails to open but stderr is enabled,
+    /// logs the failure to stderr and continues stderr-only.
+    pub fn init(self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut outputs: Vec<Mutex<Box<dyn Write + Send>>> = Vec::new();
+
+        if let Some(ref path) = self.file_path {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match OpenOptions::new().create(true).append(true).open(path) {
+                Ok(f) => outputs.push(Mutex::new(Box::new(f))),
+                Err(e) => {
+                    if self.stderr {
+                        eprintln!(
+                            "warning: failed to open log file {path:?}: {e}, \
+                             logging to stderr only"
+                        );
+                    } else {
+                        return Err(format!("Failed to open log file {path:?}: {e}").into());
+                    }
+                }
+            }
+        }
+
+        if self.stderr {
+            outputs.push(Mutex::new(Box::new(std::io::stderr())));
+        }
+
+        if outputs.is_empty() {
+            return Err("no log outputs configured".into());
+        }
+
+        let logger = Box::new(Logger {
+            modules: self.modules,
+            level: self.level,
+            outputs,
+        });
+
+        log::set_boxed_logger(logger).map_err(|e| format!("Failed to set logger: {e}"))?;
+        log::set_max_level(self.level);
+        Ok(())
+    }
+}
+
+impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         metadata.level() <= self.level
     }
@@ -83,20 +162,25 @@ impl Log for FileLogger {
         }
 
         let line = Self::format(record);
-        if let Ok(mut f) = self.file.lock() {
-            let _ = writeln!(f, "{line}");
+        for output in &self.outputs {
+            if let Ok(mut w) = output.lock() {
+                let _ = writeln!(w, "{line}");
+            }
         }
     }
 
     fn flush(&self) {
-        if let Ok(mut f) = self.file.lock() {
-            let _ = f.flush();
+        for output in &self.outputs {
+            if let Ok(mut w) = output.lock() {
+                let _ = w.flush();
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::io::Read;
 
     use log::Level;
@@ -104,19 +188,19 @@ mod tests {
 
     use super::*;
 
-    /// Helper: create a FileLogger without installing it as the global logger
+    /// Helper: create a Logger without installing it as the global logger
     /// (since tests run in parallel and only one global logger can exist).
-    fn make_logger(modules: Vec<String>, level: LevelFilter, path: &Path) -> FileLogger {
+    fn make_logger(modules: Vec<String>, level: LevelFilter, path: &Path) -> Logger {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .unwrap();
 
-        FileLogger {
+        Logger {
             modules,
             level,
-            file: Mutex::new(file),
+            outputs: vec![Mutex::new(Box::new(file))],
         }
     }
 
@@ -205,6 +289,7 @@ mod tests {
             contents.contains("] INFO [src/test.rs:42] task completed"),
             "got: {contents}"
         );
+
         // Verify timestamp bracket
         assert!(contents.starts_with('['), "got: {contents}");
     }

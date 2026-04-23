@@ -322,6 +322,25 @@ impl Plugin for HostPlugin {
             }
         })
     }
+
+    fn reconnect<'a>(
+        &'a self,
+        raw_destination: &'a str,
+        options: &'a Map,
+        authenticator: &'a mut dyn Authenticator,
+    ) -> Pin<Box<dyn Future<Output = io::Result<UntypedClient>> + Send + 'a>> {
+        self.connect(raw_destination, options, authenticator)
+    }
+
+    fn reconnect_strategy(&self) -> ReconnectStrategy {
+        ReconnectStrategy::ExponentialBackoff {
+            base: Duration::from_secs(2),
+            factor: 2.0,
+            max_duration: Some(Duration::from_secs(30)),
+            max_retries: Some(3),
+            timeout: Some(Duration::from_secs(60)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -557,5 +576,15 @@ mod tests {
             .cloned()
             .unwrap_or_else(|| "any".to_string());
         assert_eq!(bind_server, "any");
+    }
+
+    #[test]
+    fn host_plugin_reconnect_strategy_returns_exponential_backoff() {
+        let plugin = HostPlugin::new();
+        let strategy = Plugin::reconnect_strategy(&plugin);
+        assert!(strategy.is_exponential_backoff());
+        assert_eq!(strategy.max_retries(), Some(3));
+        assert_eq!(strategy.max_duration(), Some(Duration::from_secs(30)));
+        assert_eq!(strategy.timeout(), Some(Duration::from_secs(60)));
     }
 }
